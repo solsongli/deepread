@@ -24,6 +24,14 @@
   const HIDE_DELAY = 280;
   const TRANSLATION_DELAY = 160; // dwell before the hovered paragraph turns into its translation
   const CLICK_SLOP = 5; // px a press may move and still count as a click
+  const STRUCTURE_CSS = `
+:is(.deepread-layer,.deepread-rail,.deepread-card) .dr-layout-unit { box-sizing: border-box; margin: 0; text-indent: 0; }
+:is(.deepread-layer,.deepread-rail,.deepread-card) .dr-layout-unit p { margin: 0; text-indent: inherit; }
+:is(.deepread-layer,.deepread-rail,.deepread-card) .dr-layout-list { display: grid; grid-template-columns: var(--dr-hang, 1.2em) minmax(0, 1fr); align-items: start; }
+:is(.deepread-layer,.deepread-rail,.deepread-card) .dr-list-marker { text-indent: 0; text-align: start; padding-inline-end: 0.2em; }
+:is(.deepread-layer,.deepread-rail,.deepread-card) .dr-list-body { min-width: 0; text-indent: 0; }
+:is(.deepread-rail,.deepread-card) .dr-layout-unit + .dr-layout-unit { margin-block-start: 0.45em; }
+`;
 
   const PAGE_CSS = `
 .deepread-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
@@ -44,9 +52,11 @@
 .deepread-layer .dr-translation .katex { font-size: 1em; }
 :root[data-color-scheme="dark"] .deepread-layer .dr-rect { mix-blend-mode: screen; }
 :root[data-color-scheme="dark"] .deepread-layer .dr-translation { background: #22252a; color: #e6e6e6; }
+${STRUCTURE_CSS}
 `;
 
   const CARD_CSS = `
+${STRUCTURE_CSS}
 .deepread-card { position: fixed; z-index: 2147483000; width: 340px; max-height: 70vh; overflow: auto;
   box-sizing: border-box; padding: 10px 12px 8px; border-radius: 10px;
   background: #ffffff; color: #1f2328; border: 1px solid rgba(0,0,0,0.10);
@@ -498,18 +508,24 @@
     _paragraphTranslation(paragraph) {
       const joined = this.session.continuationFor?.(paragraph);
       if (joined) return joined.translation;
+      const structured = DeepRead.TranslationLayout?.markdown(paragraph.translationLayout);
+      if (structured) return structured;
       const parts = (paragraph.points || []).map((p) => (p.translation || "").trim()).filter(Boolean);
       return parts.join(" ");
     }
 
     translationsFor(paragraphs) {
+      return this.translationEntriesFor(paragraphs).map((p) => p.text);
+    }
+
+    translationEntriesFor(paragraphs) {
       const seen = new Set(), parts = [];
       for (const paragraph of paragraphs || []) {
         const joined = this.session.continuationFor?.(paragraph);
         if (joined && seen.has(joined.lead)) continue;
         if (joined) seen.add(joined.lead);
         const text = this._paragraphTranslation(paragraph);
-        if (text) parts.push(text);
+        if (text) parts.push({ paragraph, text });
       }
       return parts;
     }
@@ -577,10 +593,28 @@
     }
 
     _translationContent(paragraph, text) {
+      const layout = this.session.continuationFor?.(paragraph) ? null : paragraph.translationLayout;
       const cached = this._trContent.get(paragraph);
-      let frag = cached?.text === text ? cached.frag : null;
+      let frag = cached?.text === text && cached?.layout === layout ? cached.frag : null;
       if (!frag) {
-        frag = inlineMarkdown(this.pdfDoc, text);
+        if (DeepRead.TranslationLayout?.ready(layout)) {
+          frag = this.pdfDoc.createDocumentFragment();
+          for (const unit of layout.units) {
+            const node = el(this.pdfDoc, "div", `dr-layout-unit${unit.kind === "list-item" ? " dr-layout-list" : " dr-layout-paragraph"}`);
+            node.dataset.share = String(unit.share || 1 / layout.units.length);
+            if (unit.kind === "list-item") {
+              node.style.marginInlineStart = `${unit.insetEm || 0}em`;
+              node.style.setProperty("--dr-hang", `${unit.hangingEm || 1.2}em`);
+              node.append(el(this.pdfDoc, "span", "dr-list-marker", unit.marker));
+              const body = el(this.pdfDoc, "div", "dr-list-body");
+              body.append(inlineMarkdown(this.pdfDoc, unit.translation));
+              node.append(body);
+            }
+            else { node.style.textIndent = `${unit.indentEm || 0}em`; node.append(inlineMarkdown(this.pdfDoc, unit.translation)); }
+            frag.append(node);
+          }
+        }
+        else frag = inlineMarkdown(this.pdfDoc, text);
         // CommonMark rejects closing emphasis after CJK punctuation immediately
         // followed by CJK text (e.g. **图 1：**结果). Repair literal markers in
         // sanitized text nodes only; never reinterpret HTML or formula/code nodes.
@@ -603,7 +637,7 @@
           }
           if (end) { parts.append(value.slice(end)); node.replaceWith(parts); }
         }
-        this._trContent.set(paragraph, { text, frag });
+        this._trContent.set(paragraph, { text, layout, frag });
       }
       return frag.cloneNode(true);
     }
@@ -647,6 +681,12 @@
       // One-line boxes need space for the border; multiline prose follows its source
       // height. Unmapped legacy figure boxes must never dictate a caption's height.
       const target = Math.max(metrics.lineHeight + 6, sources.length > 1 ? Math.min(rawHeight, Math.max(0, visibleBottom - visibleTop) * 0.5) : rawHeight);
+      const units = [...box.querySelectorAll(".dr-layout-unit")];
+      if (units.length) {
+        box.style.textIndent = "0";
+        box.dataset.layoutUnits = String(units.length);
+        for (const unit of units) unit.style.minHeight = `${Math.max(0, target - 6) * Number(unit.dataset.share)}px`;
+      }
       const ratio = metrics.lineHeight / metrics.fontSize || 1.2;
       const setScale = (k, pitch = ratio) => {
         box.style.fontSize = `${metrics.fontSize * k}px`;
@@ -992,7 +1032,7 @@
         let open = DeepRead.prefs.get("cards.translationOpen") === true;
         const toggle = el(doc, "span", "dr-trtoggle");
         const body = el(doc, "div", "dr-trbody");
-        body.append(inlineMarkdown(doc, translation));
+        body.append(this._translationContent(paragraph, translation));
         const sync = () => {
           toggle.textContent = `${open ? "▾" : "▸"} ${DeepRead.bilingual("译文", "Translation")}`;
           body.hidden = !open;

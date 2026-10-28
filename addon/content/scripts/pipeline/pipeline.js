@@ -3704,6 +3704,8 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
         // 始终等长对齐——否则 \n\n→' '（2 chars→1）会使后续句子的 charMapping 切片偏移。
         // list 类型保留 \n\n，因为它是真实的列表项分隔符（如 "(1) ...\n\n(2) ..."）。
         let paraCharMapping = para.charMapping ? para.charMapping.slice() : [];
+        const translationLayout = DeepRead.TranslationLayout?.analyze(paraText, paraCharMapping,
+          this._summaryManager.charsDataList || [], { type: paraType }) || null;
         if (paraType === 'text' || paraType === 'title') {
           const normalized = this._normalizeTextAndMapping(paraText, paraCharMapping);
           paraText = normalized.text;
@@ -3782,6 +3784,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
             paragraph_type: paraType,
             paragraph_text: paraText,
             typography: para.typography,
+            translationLayout,
             bbox: para.bbox,
             // 保留 MinerU 原始 ID 和 image/table 特有字段
             minerUid: para.minerUid,
@@ -4137,6 +4140,9 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
 
     // 后处理：使用映射关系处理equation的智能合并，确保equation作为独立point
     let finalResults = this._postProcessLLMResult(llmResults, equationMapping);
+    if (DeepRead.TranslationLayout) finalResults = await DeepRead.TranslationLayout.complete(finalResults, {
+      request: (options) => this._llm(options), targetLang: this._llmPromptLanguage, signal: this._signal,
+    });
     if (DeepRead.Continuations) {
       const prepared = finalResults.map((p) => ({ ...p, sourceStyledText: (p.sentences || []).map((s) =>
         DeepRead.Typography?.styledSentence(s, this._summaryManager.charsDataList || []) ?? s.text).join(" ") }));
@@ -4610,6 +4616,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
           point_split: matched.point_split || [],
           point_summaries: matched.point_summaries || [],
           point_translations: pointTranslations,
+          translationLayout: DeepRead.TranslationLayout?.accept(para.translationLayout, matched.layout_translations) || para.translationLayout,
           point_importance_levels: Array.isArray(matched.point_importance_levels)
             && matched.point_importance_levels.length === (matched.point_split || []).length
             && matched.point_importance_levels.every((v) => Number.isInteger(v) && v >= 1 && v <= 3)
@@ -4708,11 +4715,16 @@ Output (if target language is English):
     const formattedParagraphs = paragraphs.map((para) => {
       const paraId = `${para.page_idx}_${para.paragraph_idx}`;
       const sentences = para.sentences.map((s, idx) => `[${idx}] ${JSON.stringify(DeepRead.Typography?.styledSentence(s, this._summaryManager.charsDataList || []) ?? s.text)}`).join('\n  ');
-      return `{ id: “${paraId}”, sentences: [\n  ${sentences}\n] }`;
+      const layout = para.translationLayout?.units || [];
+      const structure = layout.length > 1 ? `\nSource layout units for ${paraId}: ${JSON.stringify(layout.map((u) => ({ unit_id: u.id, kind: u.kind, source_text: u.styledText || u.sourceText })))}` : "";
+      return `{ id: “${paraId}”, sentences: [\n  ${sentences}\n] }${structure}`;
     }).join('\n\n');
-    const jsonInstructions = this._useChinesePrompt() ? `只返回一个 JSON 对象，其中包含 'paragraphs' 数组。每个 item 必须包含：id、paragraph_summary、point_split、point_summaries、point_translations、point_importance_levels。key 和字符串值必须使用英文双引号。不要返回解释、Markdown 代码块或其他文本。` : `Return only a JSON object containing a 'paragraphs' array. Each item must contain: id, paragraph_summary, point_split, point_summaries, point_translations, point_importance_levels. Use double quotes for keys and values.`;
+    const jsonInstructions = this._useChinesePrompt() ? `只返回一个 JSON 对象，其中包含 'paragraphs' 数组。每个 item 必须包含：id、paragraph_summary、point_split、point_summaries、point_translations、point_importance_levels、layout_translations。key 和字符串值必须使用英文双引号。不要返回解释、Markdown 代码块或其他文本。` : `Return only a JSON object containing a 'paragraphs' array. Each item must contain: id, paragraph_summary, point_split, point_summaries, point_translations, point_importance_levels, layout_translations. Use double quotes for keys and values.`;
     const paragraphListLabel = this._useChinesePrompt() ? '段落列表' : 'Paragraph list';
-    return `${taskDescription}\n\n${paragraphListLabel}:\n${formattedParagraphs}\n\n${jsonInstructions}`;
+    const layoutInstruction = this._useChinesePrompt()
+      ? "6. layout_translations：若附有 Source layout units，按每个原始段落／列表项返回 [{unit_id, translation}]，所有 unit_id 必须完整且唯一。各项独立翻译，不能合并、换序或省略；只返回正文，列表标记由排版器恢复；保留粗体和斜体。没有提供 units 时返回 []。"
+      : "6. layout_translations: When Source layout units are supplied, return [{unit_id, translation}] covering each original paragraph/list item exactly once. Translate independently without merging, reordering or omission; omit list markers (the renderer owns them). Preserve emphasis. Return [] when no units are supplied.";
+    return `${taskDescription}\n${layoutInstruction}\n\n${paragraphListLabel}:\n${formattedParagraphs}\n\n${jsonInstructions}`;
   }
 
   _calculatePageLeftmostX(contentList) {

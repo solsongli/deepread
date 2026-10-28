@@ -17,10 +17,15 @@
     });
     const at = haystack.indexOf(needle);
     if (at < 0 || haystack.indexOf(needle, at + 1) >= 0) return null;
-    let end = indices[at + needle.length - 1] + 1;
+    let start = indices[at], end = indices[at + needle.length - 1] + 1;
+    // A list bullet has no letters, so normalized matching used to drop the first one.
+    let before = start - 1;
+    while (before >= 0 && /^\s*$/.test(chars[before].u || "") && !chars[before].lineBreakAfter) before--;
+    if (before >= 0 && /^[•‣◦▪●]$/.test(chars[before].u || "") && !chars[before].lineBreakAfter
+        && Math.abs((chars[before].rect?.[1] || 0) - (chars[start].rect?.[1] || 0)) < (chars[start].fontSize || 10)) start = before;
     // Preserve trailing sentence punctuation, but do not cross the text line.
     while (end < chars.length && !chars[end - 1].lineBreakAfter && /^[.,:;!?。！？：；)\]]+$/.test(chars[end].u || "")) end++;
-    return chars.slice(indices[at], end);
+    return chars.slice(start, end);
   }
 
   function metrics(chars) {

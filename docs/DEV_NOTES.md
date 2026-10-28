@@ -1,5 +1,7 @@
 # DeepRead — developer notes and module contracts
 
+`translationLayout.js` captures source paragraphs/list items before soft-wrap normalization. `translationLayout.units` is the authoritative display contract, distinct from semantic point grouping. Keep it and `translationLayoutVersion` in compact/persisted paragraphs. Legacy repair precedes continuation detection; multi-unit and list content cannot be flattened by continuation joining. Explicit rail collapse uses `collapsed` / `dr-user-collapsed`, independent of density-driven compact cards. See `docs/TRANSLATION_LAYOUT.md`.
+
 `services/continuations.js` nominates page/figure interruptions and requests semantic confirmation plus joint translation in batches of up to four candidate chains. `paragraph.continuation` holds `{lead, keys, translation, version}` on the lead and `{lead, version}` on followers; `continuationChecked` prevents repeated cache requests. Original paragraph IDs, points and rects stay intact. `Session.compactHierarchicalData` must retain these fields, typography and point importance_source. CardGroups can bridge visual blocks only for confirmed continuation metadata; explicit manual splits win. Legacy cache upgrades recover PDF source emphasis and cancel on rerun/clear.
 
 Current reading-flow branch: `services/reading.js` owns goal definitions and safe carry-over of personal records on reparse; `userState.readingGoal`, `figureNotes`, `recallAnswers`, `highlightDensity` and `unmappedNotes` persist locally.

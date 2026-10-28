@@ -127,21 +127,17 @@
 .deepread-rail .dr-rcard.dr-para { padding: 0 0 9px; overflow: hidden; border-radius: 10px; }
 .deepread-rail .dr-para > *:not(.dr-phead) { margin-left: 10px; margin-right: 10px; }
 .deepread-rail .dr-phead { padding: 7px 8px 6px 10px; background: #fafaf8; border-bottom: 1px solid rgba(0,0,0,0.05); margin-bottom: 2px; }
-.deepread-rail .dr-para[data-role="background"] .dr-phead { background: #f5f6f8; }
-.deepread-rail .dr-para[data-role="gap"] .dr-phead { background: #fdf6f1; }
-.deepread-rail .dr-para[data-role="prior"] .dr-phead { background: #faf7f2; }
-.deepread-rail .dr-para[data-role="contribution"] .dr-phead, .deepread-rail .dr-para[data-role="method"] .dr-phead { background: #f3f6fd; }
-.deepread-rail .dr-para[data-role="result"] .dr-phead { background: #f1f8f7; }
-.deepread-rail .dr-para[data-role="limitation"] .dr-phead { background: #fcf3f3; }
+.deepread-rail .dr-para[data-role="background"] { --dr-role-accent: #475569; --dr-role-fill: #e2e8f0; }
+.deepread-rail .dr-para[data-role="gap"] { --dr-role-accent: #c2410c; --dr-role-fill: #ffedd5; }
+.deepread-rail .dr-para[data-role="prior"] { --dr-role-accent: #a16207; --dr-role-fill: #fef3c7; }
+.deepread-rail .dr-para[data-role="contribution"] { --dr-role-accent: #7c3aed; --dr-role-fill: #ede9fe; }
+.deepread-rail .dr-para[data-role="method"] { --dr-role-accent: #1d4ed8; --dr-role-fill: #dbeafe; }
+.deepread-rail .dr-para[data-role="result"] { --dr-role-accent: #047857; --dr-role-fill: #d1fae5; }
+.deepread-rail .dr-para[data-role="limitation"] { --dr-role-accent: #be123c; --dr-role-fill: #ffe4e6; }
+.deepread-rail .dr-para[data-role]:not([data-role=""]) { border-inline-start: 4px solid var(--dr-role-accent); }
+.deepread-rail .dr-para[data-role]:not([data-role=""]) .dr-phead { background: var(--dr-role-fill); }
 .deepread-rail .dr-para .dr-rhead { align-items: center; gap: 6px; }
-.deepread-rail .dr-role { flex-shrink: 0; align-self: flex-start; margin-top: 0.12em; padding: 0 5px; border-radius: 4px; font-size: 0.78em; font-weight: 700; line-height: 1.6; }
-.deepread-rail .dr-role-background { background: #eef0f4; color: #3a3f4c; }
-.deepread-rail .dr-role-gap { background: #fce9dd; color: #9a3412; }
-.deepread-rail .dr-role-prior { background: #f3eee6; color: #6b4e1e; }
-.deepread-rail .dr-role-contribution { background: #2b59c3; color: #fff; }
-.deepread-rail .dr-role-method { background: #e3eafa; color: #1e428f; }
-.deepread-rail .dr-role-result { background: #e0f1ee; color: #0b5550; }
-.deepread-rail .dr-role-limitation { background: #f8e6e6; color: #8a1c1c; }
+.deepread-rail .dr-role { flex-shrink: 0; align-self: flex-start; margin-top: 0.12em; padding: 1px 6px; border-radius: 4px; font-size: 0.82em; font-weight: 700; line-height: 1.6; background: var(--dr-role-accent, #475569); color: #fff; }
 .deepread-rail .dr-imp { flex-shrink: 0; align-self: flex-start; margin-top: 0.5em; width: 7px; height: 7px; border-radius: 50%; }
 .deepread-rail .dr-q { flex-shrink: 0; align-self: flex-start; margin-top: 0.12em; padding: 0 5px; border-radius: 4px; font-size: 0.75em;
   font-weight: 700; line-height: 1.6; background: #ede9fe; color: #5b21b6; cursor: pointer; }
@@ -171,7 +167,7 @@
 .deepread-rail .dr-rcard.dr-para.dr-compact .dr-phead { padding: 5px 8px; border-bottom: none; margin-bottom: 0; }
 .deepread-rail .dr-rcard.dr-para.dr-compact:hover .dr-phead { border-bottom: 1px solid rgba(0,0,0,0.05); }
 .deepread-rail .dr-rcard.dr-para.dr-compact:hover { padding-bottom: 8px; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-phead { background: rgba(255,255,255,0.04) !important; border-color: rgba(255,255,255,0.08); }
+:root[data-color-scheme="dark"] .deepread-rail .dr-para .dr-phead { background: color-mix(in srgb, var(--dr-role-accent, #475569) 28%, #1f2937) !important; border-color: rgba(255,255,255,0.12); }
 .deepread-rail .dr-rcard.dr-compact { padding-block: 3px; }
 .deepread-rail .dr-rcard.dr-compact .dr-rsummary { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .deepread-rail .dr-rcard.dr-compact .dr-points, .deepread-rail .dr-rcard.dr-compact .dr-explain,
@@ -179,6 +175,10 @@
 .deepread-rail .dr-rcard.dr-compact:hover .dr-rsummary { white-space: normal; font-weight: 600; }
 .deepread-rail .dr-rcard.dr-compact:hover .dr-points, .deepread-rail .dr-rcard.dr-compact:hover .dr-explain,
 .deepread-rail .dr-rcard.dr-compact:hover .dr-trwrap { display: block; }
+.deepread-rail .dr-user-collapsed .dr-explain, .deepread-rail .dr-user-collapsed .dr-points, .deepread-rail .dr-user-collapsed .dr-trwrap,
+.deepread-rail .dr-user-collapsed .dr-note, .deepread-rail .dr-user-collapsed .dr-guide-notes,
+.deepread-rail .dr-user-collapsed:hover .dr-explain, .deepread-rail .dr-user-collapsed:hover .dr-points, .deepread-rail .dr-user-collapsed:hover .dr-trwrap { display: none !important; }
+.deepread-rail .dr-user-collapsed:hover .dr-rsummary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .deepread-rail .dr-note { margin-top: 5px; padding: 4px 7px; border-radius: 6px; border-inline-start: 3px solid #10b981;
   background: rgba(16,185,129,0.08); color: var(--fill-primary, #1f2328); cursor: text; }
 .deepread-rail .dr-note-label { font-size: 0.875em; font-weight: 700; color: #047857; }
@@ -257,7 +257,24 @@
 
     /** Expanded by the reader (summary click) or opened by clicking the paragraph. */
     isOpen(key) {
-      return this.expanded.has(key) || this.focusKey === key;
+      key = this.session.groupLead(key);
+      if (this.isCollapsed(key)) return false;
+      return [...this.expanded].some((k) => this.session.groupLead(k) === key)
+        || !!(this.focusKey && this.session.groupLead(this.focusKey) === key);
+    }
+
+    isCollapsed(key) {
+      return [...(this.collapsed || [])].some((k) => this.session.groupLead(k) === key);
+    }
+
+    closeParagraph(key) {
+      this.collapsed = this.collapsed || new Set();
+      this.collapsed.add(key);
+      for (const k of this.expanded) if (this.session.groupLead(k) === key) this.expanded.delete(k);
+      if (this.focusKey && this.session.groupLead(this.focusKey) === key) this.focusKey = null;
+      this._revealPending = false;
+      this._invalidate(key);
+      this.schedule(true);
     }
 
     /**
@@ -268,13 +285,10 @@
       const raw = paragraph ? `p_${paragraph.pageIndex}_${paragraph.paragraphIndex}` : null;
       const key = raw ? this.session.groupLead(raw) : null;
       if (toggle && key && this.isOpen(key)) {
-        this.expanded.delete(key);
-        if (this.focusKey === key) this.focusKey = null;
-        this._revealPending = false;
-        this._invalidate(key);
-        this.schedule(true);
+        this.closeParagraph(key);
         return;
       }
+      if (key) for (const k of this.collapsed || []) if (this.session.groupLead(k) === key) this.collapsed.delete(k);
       this.focusParagraphKey = raw;
       if (key === this.focusKey) {
         if (key) this._revealPending = true;
@@ -301,6 +315,8 @@
     /** Fold every expanded card. */
     collapseAll() {
       const keys = [...this.expanded, this.focusKey].filter(Boolean);
+      this.collapsed = this.collapsed || new Set();
+      for (const key of keys) this.collapsed.add(this.session.groupLead(key));
       this.expanded.clear();
       this.focusKey = null;
       for (const key of keys) this._invalidate(key);
@@ -821,6 +837,7 @@
       const questions = (this.session.questionsForKey?.(item.key) || []).map((q) => q.id).join(",");
       const guided = this.session.guide && DeepRead.Modules.enabled(this.session, "guided") ? this.session.guide.meta?.finishedAt || 1 : "";
       return `p|${keys.join(",")}|${this.session.groupTitle(item.key)}|${this.session.highlightColors().join("")}|${skim}|${questions}|${guided}`
+        + `|${this.isCollapsed(item.key)}`
         + `|${this.overlay.translationsFor(paras).join("\u001f")}`
         + `|${paras.map((p) => this.session.paragraphSummary(p)).join("|")}|${levels}|${this.isOpen(item.key)}|${this.focusKey === item.key}|${this._translationOpen(item.key)}`
         + `|${this.session.explanation(item.key)}|${this.session.isExplaining(item.key)}|${this.session.paragraphRole?.(item.key)}`
@@ -888,7 +905,8 @@
       // Skim layers fold minor cards (every card in "margin only") to their one-line summary.
       const depth = session.skimDepth;
       const skimFold = depth === "margin" || (depth === "key" && session.skimTiers().tier.get(key) === "minor");
-      node.classList.toggle("dr-compact", (skimFold || !!this.compactPages?.has(`${side}:${paragraph.pageIndex}`)) && !this.isOpen(key));
+      node.classList.toggle("dr-user-collapsed", this.isCollapsed(key));
+      node.classList.toggle("dr-compact", (this.isCollapsed(key) || skimFold || !!this.compactPages?.has(`${side}:${paragraph.pageIndex}`)) && !this.isOpen(key));
       node.classList.add("dr-para");
       const role = session.paragraphRole?.(key) || "";
       node.dataset.role = role;
@@ -908,10 +926,9 @@
       summary.addEventListener("click", () => {
         if (summary.isContentEditable) return;
         if (this.isOpen(key)) {
-          this.expanded.delete(key);
-          if (this.focusKey === key) this.focusKey = null;
+          this.closeParagraph(key);
         }
-        else this.expanded.add(key);
+        else this.openParagraph(paragraph);
         this.schedule();
         this.cards.get(key).sig = null;
       });
@@ -1075,9 +1092,9 @@
         wrap.append(toggle);
         if (open) {
           const body = el(doc, "div", "dr-trbody");
-          for (const text of translations) {
+          for (const { paragraph: owner, text } of this.overlay.translationEntriesFor(paras)) {
             const part = el(doc, "div", "dr-trpart");
-            part.append(DeepRead.Overlay.inlineMarkdown(doc, text));
+            part.append(this.overlay._translationContent(owner, text));
             body.append(part);
           }
           wrap.append(body);

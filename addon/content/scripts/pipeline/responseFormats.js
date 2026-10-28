@@ -116,9 +116,13 @@ DeepRead.ResponseFormats = (function () {
       point_importance_levels: {
         type: 'array',
         items: { type: 'integer', enum: [1, 2, 3] }
+      },
+      layout_translations: {
+        type: 'array',
+        items: { type: 'object', properties: { unit_id: { type: 'string' }, translation: { type: 'string', minLength: 1 } }, required: ['unit_id', 'translation'], additionalProperties: false }
       }
     };
-    const required = ['id', 'paragraph_summary', 'point_split', 'point_summaries', 'point_importance_levels'];
+    const required = ['id', 'paragraph_summary', 'point_split', 'point_summaries', 'point_importance_levels', 'layout_translations'];
     if (includeTranslations) {
       props.point_translations = {
         type: 'array',

@@ -16,6 +16,7 @@
     "services/llm.js",
     "services/updater.js",
     "services/typography.js",
+    "services/translationLayout.js",
     "services/continuations.js",
     "services/textLayerParser.js",
     "services/grobidParser.js",

@@ -263,6 +263,8 @@ DeepRead.SummaryManager = class SummaryManager {
           paragraphType: para.paragraph_type,
           paragraphText: para.paragraph_text,
           typography: para.typography || null,
+          translationLayout: para.translationLayout || null,
+          translationLayoutVersion: !para.translationLayout || DeepRead.TranslationLayout?.ready(para.translationLayout) ? 1 : 0,
           continuation: para.continuation || null,
           continuationChecked: para.continuationChecked === true,
           paragraphSummary: para.paragraph_summary || '',

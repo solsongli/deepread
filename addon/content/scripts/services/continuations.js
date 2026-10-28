@@ -40,7 +40,8 @@
     let previous = null;
     for (const p of paragraphs || []) {
       if (isVisual(p)) continue;
-      if (!TEXT.has(typeOf(p)) || p.continuationChecked) { previous = null; continue; }
+      if (!TEXT.has(typeOf(p)) || p.continuationChecked || p.translationLayout?.units?.length > 1
+          || p.translationLayout?.units?.[0]?.kind === "list-item") { previous = null; continue; }
       const gap = previous && boundary(previous, p, visuals);
       if (gap) {
         const last = units.at(-1);

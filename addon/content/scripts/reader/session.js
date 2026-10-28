@@ -270,6 +270,7 @@
     }
 
     destroy() {
+      this._layoutAbort?.abort();
       this._continuationAbort?.abort();
       this._guideAbort?.abort();
       this.guidePanel?.detach();
@@ -337,6 +338,7 @@
     /* ---------- main flow ---------- */
 
     async run() {
+      this._layoutAbort?.abort();
       this._continuationAbort?.abort();
       if (this.status === "running") {
         this._notify(DeepRead.t("flow.busy"), "warning");
@@ -393,6 +395,7 @@
         this.questions = null;
         this._questionsRequested = false;
         this._continuationsRequested = false;
+        this._layoutRequested = false;
         this._refs = null;
         this._skim = null;
         this.overlay.setData(data.hierarchicalData);
@@ -502,6 +505,7 @@
     }
 
     async clearResults() {
+      this._layoutAbort?.abort();
       this._continuationAbort?.abort();
       this._guideAbort?.abort();
       this.guide = null;
@@ -605,7 +609,15 @@
      * them. Each runs once per session unless forced.
      */
     _autoGenerate({ afterRun = false } = {}) {
-      if (!this.hasResults || !DeepRead.LLM.isConfigured()) return;
+      if (!this.hasResults || this.status === "running" || !DeepRead.LLM.isConfigured()) return;
+      const needsLayout = this.data.hierarchicalData.some((p) => p.paragraphs?.some((x) => x.translationLayoutVersion !== 1));
+      if (needsLayout && !this._layoutRequested) {
+        this._layoutRequested = true;
+        this.restoreTranslationLayout().then(() => this._autoGenerate({ afterRun }))
+          .catch((e) => DeepRead.log("restoring translation layout failed", String(e)));
+        return;
+      }
+      if (this._restoringLayout) return;
       if (!this._continuationsRequested && this.data.hierarchicalData.some((p) => p.paragraphs?.some((x) => !x.continuationChecked))) {
         this._continuationsRequested = true;
         this.mergeContinuationTranslations().catch((e) => DeepRead.log("joining interrupted paragraphs failed", String(e)));
@@ -996,6 +1008,51 @@
 
     /* ---------- AI explanations (card bodies) ---------- */
 
+    async restoreTranslationLayout() {
+      if (!this.hasResults || this._restoringLayout) return 0;
+      const data = this.data, controller = new AbortController();
+      this._layoutAbort = controller;
+      this._restoringLayout = true;
+      try {
+        const adapter = this.pdfAdapter(), pending = [], keys = [];
+        for (const page of data.hierarchicalData) {
+          if (controller.signal.aborted) return 0;
+          if (page.paragraphs.every((p) => p.translationLayoutVersion === 1)) continue;
+          let chars = [];
+          try { chars = (await adapter.pdfDocument.getPageData({ pageIndex: page.pageIndex })).chars.map((c, offset) => ({ ...c, offset })); }
+          catch (e) { DeepRead.log("layout source page unavailable", String(e)); }
+          for (const p of page.paragraphs) {
+            if (p.translationLayoutVersion === 1) continue;
+            const matched = DeepRead.Typography.match(chars, p.paragraphText);
+            const source = matched ? DeepRead.Pipeline.prototype._extractFormattedText(matched) : { text: p.paragraphText || "", charMapping: [] };
+            const layout = DeepRead.TranslationLayout.analyze(source.text, source.charMapping, chars, { type: p.paragraphType });
+            pending.push({ ...p, translationLayout: layout });
+            keys.push(`p_${page.pageIndex}_${p.paragraphIndex}`);
+          }
+        }
+        const completed = await DeepRead.TranslationLayout.complete(pending, {
+          request: (options) => DeepRead.LLM.complete(options), targetLang: DeepRead.prefs.language(), signal: controller.signal,
+        });
+        if (controller.signal.aborted || this.data !== data) return 0;
+        const changed = new Map(completed.map((p, i) => [keys[i], p]));
+        const hierarchicalData = data.hierarchicalData.map((page) => ({ ...page, paragraphs: page.paragraphs.map((p) => {
+          const updated = changed.get(`p_${page.pageIndex}_${p.paragraphIndex}`);
+          if (!updated) return p;
+          const layout = updated.translationLayout;
+          return { ...p, translationLayout: layout, translationLayoutVersion: !layout || DeepRead.TranslationLayout.ready(layout) ? 1 : 0,
+            ...(layout?.units?.length > 1 ? { continuation: null, continuationChecked: false } : {}) };
+        }) }));
+        await DeepRead.Store.savePaper(this.key, this.item.id, { hierarchical_data: hierarchicalData });
+        if (controller.signal.aborted || this.data !== data) return 0;
+        this.data = { ...data, hierarchicalData };
+        this._cardGroups = null;
+        this.overlay.setData(hierarchicalData);
+        this._emit("change");
+        return completed.filter((p) => DeepRead.TranslationLayout.ready(p.translationLayout)).length;
+      }
+      finally { this._restoringLayout = false; }
+    }
+
     async mergeContinuationTranslations() {
       if (!this.hasResults || !DeepRead.LLM.isConfigured() || this._joiningContinuations) return 0;
       const data = this.data, controller = new AbortController();
@@ -1054,6 +1111,7 @@
       if (!link?.lead) return null;
       const entry = this._paragraphByKey(link.lead)?.paragraph?.continuation;
       if (!entry?.translation || !Array.isArray(entry.keys)) return null;
+      if (entry.keys.some((key) => this._paragraphByKey(key)?.paragraph?.translationLayout?.units?.length > 1)) return null;
       const key = `p_${paragraph.pageIndex}_${paragraph.paragraphIndex}`;
       // Explicit manual splits take precedence over automatic translation grouping.
       const members = new Set(this.groupMembers(key));
@@ -1587,6 +1645,8 @@
           paragraphType: p.paragraphType,
           paragraphText: p.paragraphText,
           typography: p.typography,
+          translationLayout: p.translationLayout,
+          translationLayoutVersion: p.translationLayoutVersion,
           continuation: p.continuation,
           continuationChecked: p.continuationChecked === true,
           paragraphSummary: p.paragraphSummary,

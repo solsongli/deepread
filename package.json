@@ -8,7 +8,7 @@
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
     "build": "node scripts/build.mjs",
-    "test": "node test/llm.test.mjs && node test/pipeline-smoke.mjs && node test/textlayer.test.mjs && node test/grobid.test.mjs && node test/explainer.test.mjs && node test/structure.test.mjs && node test/figures.test.mjs && node test/skim.test.mjs && node test/references.test.mjs && node test/questions.test.mjs && node test/agentRunner.test.mjs && node test/guideView.test.mjs && node test/guide.test.mjs && node test/typography.test.mjs && node test/readingFlow.test.mjs && node test/readingMethods.test.mjs && node test/continuations.test.mjs",
+    "test": "node test/llm.test.mjs && node test/pipeline-smoke.mjs && node test/textlayer.test.mjs && node test/grobid.test.mjs && node test/explainer.test.mjs && node test/structure.test.mjs && node test/figures.test.mjs && node test/skim.test.mjs && node test/references.test.mjs && node test/questions.test.mjs && node test/agentRunner.test.mjs && node test/guideView.test.mjs && node test/guide.test.mjs && node test/typography.test.mjs && node test/readingFlow.test.mjs && node test/readingMethods.test.mjs && node test/continuations.test.mjs && node test/translationLayout.test.mjs",
     "release": "node scripts/release.mjs"
   },
   "devDependencies": {
