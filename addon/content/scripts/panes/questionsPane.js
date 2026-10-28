@@ -30,7 +30,8 @@
       body.replaceChildren(DeepRead.Panes.noReader(h));
       return;
     }
-    if (event === "questions" && body.contains(doc.activeElement) && doc.activeElement?.classList.contains("dr-q-recall")) return;
+    if (event !== "change" && event !== "modules" && body.contains(doc.activeElement)
+        && doc.activeElement?.matches("textarea, input[type='text']")) return;
     const root = h("div", { class: "dr-pane dr-questions-pane" });
     if (!DeepRead.Modules.enabled(session, "questions")) {
       root.append(h("div", { class: "dr-muted" }, DeepRead.bilingual("问题导向已在「功能」菜单中关闭。", "Question-led reading is off in the Features menu.")));
@@ -42,6 +43,28 @@
     const recall = session.userState.recallMode === true;
     const shown = revealed.get(session) || new Set();
     revealed.set(session, shown);
+
+    const goal = session.userState.readingGoal || {};
+    const goalBox = h("div", { class: "dr-reading-goal" });
+    const select = h("select", { class: "dr-goal-kind", "aria-label": DeepRead.bilingual("阅读目标", "Reading goal"),
+      onchange: (e) => session.setReadingGoal(e.target.value) });
+    select.append(h("option", { value: "" }, DeepRead.bilingual("选择阅读目标（可选）", "Choose a reading goal (optional)")));
+    for (const g of DeepRead.Reading.GOALS) select.append(h("option", { value: g.key }, DeepRead.bilingual(g.zh, g.en)));
+    select.value = goal.kind || "";
+    const goalText = h("input", { type: "text", class: "dr-goal-text", maxlength: 1000,
+      "aria-label": DeepRead.bilingual("这次想弄清的问题", "What I want to find out"),
+      placeholder: DeepRead.bilingual("这次读完，我想弄清……", "By the end, I want to understand…"),
+      oninput: (e) => session.setReadingGoal(session.userState.readingGoal?.kind, e.target.value, { notify: false }),
+    });
+    goalText.value = goal.text || "";
+    goalBox.append(select, goalText);
+    const selectedGoal = DeepRead.Reading.goal(goal.kind);
+    if (selectedGoal) goalBox.append(h("div", { class: "dr-muted" }, DeepRead.bilingual(selectedGoal.hintZh, selectedGoal.hintEn)));
+    const targets = session.readingTargets();
+    if (targets.length) goalBox.append(h("div", { class: "dr-reading-links" }, targets.map((target) => h("button", {
+      class: "dr-link-button", onclick: () => session.openReadingTarget(target),
+    }, target.kind === "figure" ? DeepRead.bilingual("从图表开始", "Start with figures") : target.section.label))));
+    root.append(goalBox);
 
     const progress = session.questionProgress();
     const head = h("div", { class: "dr-q-head" },
@@ -150,6 +173,17 @@
       });
       root.append(h("div", { class: "dr-q-add" }, input, h("button", { class: "dr-primary-button", onclick: submit }, DeepRead.bilingual("提问", "Ask"))));
     }
+    root.append(h("div", { class: "dr-reading-links" },
+      h("button", { class: "dr-link-button dr-copy-record", onclick: () => DeepRead.util.copyToClipboard(session.readingRecord()) }, DeepRead.bilingual("复制阅读记录", "Copy reading record")),
+      h("button", { class: "dr-link-button dr-save-record", onclick: async (e) => {
+        const button = e.currentTarget;
+        button.disabled = true;
+        try { await session.saveReadingNote(); button.textContent = DeepRead.bilingual("已存为 Zotero 笔记", "Saved as a Zotero note"); }
+        catch (error) { button.disabled = false; DeepRead.Panes.reportError(session, error); }
+      } }, DeepRead.bilingual("存为 Zotero 笔记", "Save as a Zotero note"))));
+    if (session.userState.unmappedNotes?.length) root.append(h("details", { class: "dr-unmapped-notes" },
+      h("summary", {}, DeepRead.bilingual("重新解析后待定位的笔记", "Notes to relocate after reparsing")),
+      session.userState.unmappedNotes.map((note) => h("div", { class: "dr-note" }, h("blockquote", {}, note.quote || note.originalKey), h("p", {}, note.text)))));
     body.replaceChildren(root);
   };
 

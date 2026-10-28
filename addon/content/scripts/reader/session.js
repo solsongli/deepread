@@ -160,7 +160,7 @@
       this.on((event) => {
         if (event === "explanations" && this.overlay.options.highlights) this.overlay.renderAllPages();
         if (event === "change" || event === "explanations") this._skim = null;
-        if (event === "change" || event === "explanations" || event === "figures" || event === "questions") this.rail?.refresh();
+        if (event === "change" || event === "explanations" || event === "figures" || event === "figure-notes" || event === "questions") this.rail?.refresh();
         if (event === "questions" || event === "skim") this.structureBar?.refresh();
         if (event === "skim" || (event === "explanations" && this.skimDepth !== "full")) {
           this.overlay.renderAllPages();
@@ -193,7 +193,7 @@
     }
 
     _emit(event = "change", payload = null) {
-      if (event === "change" || event === "explanations") { this._cardGroups = null; this._suggestedHighlights = null; }
+      if (event === "change" || event === "explanations") { this._cardGroups = null; this._suggestedHighlights = null; this._automaticHighlights = null; }
       for (const listener of [...this._listeners]) {
         try {
           listener(event, payload, this);
@@ -226,6 +226,7 @@
       this.view = view;
 
       const stored = await DeepRead.Store.getPaper(this.key);
+      this.userState = { pointImportance: {}, ...(stored?.user_state || {}) };
       if (stored?.hierarchical_data) {
         this.data = {
           hierarchicalData: stored.hierarchical_data,
@@ -237,7 +238,6 @@
           resultDir: stored.result_dir,
           language: stored.language,
         };
-        this.userState = { pointImportance: {}, ...(stored.user_state || {}) };
         this.explanations = stored.explanations || {};
         this.figureGuides = stored.figure_guides || {};
         this.questions = stored.questions || null;
@@ -366,6 +366,8 @@
           resultDir: result.resultDir || null,
           language: DeepRead.prefs.language(),
         };
+        const userState = DeepRead.Reading.carryState(this.userState, this.data?.hierarchicalData, data.hierarchicalData);
+        clearTimeout(this._saveUserStateTimer);
         await DeepRead.Store.savePaper(this.key, this.item.id, {
           result_dir: data.resultDir,
           language: data.language,
@@ -375,10 +377,10 @@
           block_mapping: data.blockMapping,
           sections: null,
           markdown: data.markdown,
-          user_state: { pointImportance: {} },
+          user_state: userState,
         });
         this.data = data;
-        this.userState = { pointImportance: {} };
+        this.userState = userState;
         this._explainAbort?.abort();
         this._figureAbort?.abort();
         this.explanations = {};
@@ -1190,6 +1192,96 @@
     }
 
     /* ---------- user state ---------- */
+
+    setReadingGoal(kind, text = this.userState.readingGoal?.text || "", { notify = true } = {}) {
+      const changedKind = this.userState.readingGoal?.kind !== (DeepRead.Reading.goal(kind)?.key || "");
+      this.userState.readingGoal = { kind: DeepRead.Reading.goal(kind)?.key || "", text: String(text).slice(0, 1000) };
+      this._saveUserStateSoon();
+      if (changedKind) { this._automaticHighlights = null; this.overlay.renderAllPages(); }
+      if (notify) this._emit("reading");
+    }
+
+    readingTargets() {
+      return DeepRead.Reading.targets(this.userState.readingGoal?.kind,
+        DeepRead.Structure.sections(this.data?.contentList), this.figures());
+    }
+
+    openReadingTarget(target) {
+      if (target.kind === "section") {
+        if (this.structureBar?.app) this.structureBar._goTo(target.section);
+        else this.reader.navigate({ pageIndex: Math.floor(target.section.start) });
+      }
+      else if (target.kind === "figure") {
+        const f = target.figure, rect = this.overlay.permilleRect(f.pageIndex, f.bbox);
+        this.reader.navigate(rect ? { position: { pageIndex: f.pageIndex, rects: [rect] } } : { pageIndex: f.pageIndex });
+      }
+    }
+
+    figureNote(id) { return this.userState.figureNotes?.[id] || null; }
+
+    setFigureNote(figure, fields) {
+      const note = { label: DeepRead.Rail.figureLabel(figure), caption: figure.caption || "", pageIndex: figure.pageIndex };
+      for (const field of DeepRead.Reading.FIELDS) note[field.key] = String(fields[field.key] || "").trim().slice(0, 6000);
+      const notes = { ...(this.userState.figureNotes || {}) };
+      if (DeepRead.Reading.FIELDS.some((f) => note[f.key])) notes[figure.id] = note;
+      else delete notes[figure.id];
+      this.userState.figureNotes = notes;
+      this._saveUserStateSoon();
+      this._emit("figure-notes");
+    }
+
+    readingRecord() {
+      const tr = DeepRead.bilingual;
+      const title = this.parentItem?.getField?.("title") || tr("阅读记录", "Reading record");
+      const lines = [`# ${title}`];
+      const g = this.userState.readingGoal || {}, goal = DeepRead.Reading.goal(g.kind);
+      if (goal || g.text) lines.push(`\n## ${tr("阅读目标", "Reading goal")}`, goal ? tr(goal.zh, goal.en) : "", g.text || "");
+      for (const note of Object.values(this.userState.figureNotes || {})) {
+        lines.push(`\n## ${note.label} · p.${note.pageIndex + 1}`, note.caption);
+        for (const f of DeepRead.Reading.FIELDS) if (note[f.key]) lines.push(`\n${tr(f.zh, f.en)}`, note[f.key]);
+      }
+      for (const answer of Object.values(this.userState.recallAnswers || {})) if (answer.text) lines.push(`\n## ${answer.question}`, answer.text);
+      for (const [key, note] of Object.entries(this.userState.notes || {})) if (note.text) lines.push(`\n## ${this.groupLabel(key)}`, note.text);
+      for (const note of this.userState.unmappedNotes || []) lines.push(`\n## ${tr("待重新定位的笔记", "Note awaiting source alignment")}`, note.quote || note.originalKey, note.text);
+      return lines.filter((s) => s !== undefined).join("\n\n");
+    }
+
+    async saveReadingNote() {
+      const note = new Zotero.Item("note"), parent = this.parentItem;
+      note.libraryID = this.item.libraryID;
+      if (parent && parent.id !== this.item.id) note.parentID = parent.id;
+      // User-authored text stays literal when saved, including HTML-like research notation.
+      const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      note.setNote(`<div>${this.readingRecord().split("\n\n").map((s) => `<p>${escape(s).replace(/\n/g, "<br>")}</p>`).join("")}</div>`);
+      await note.saveTx();
+      return note;
+    }
+
+    get highlightDensity() {
+      const d = this.userState.highlightDensity;
+      return ["manual", "sparse", "standard", "detailed"].includes(d) ? d : "standard";
+    }
+
+    setHighlightDensity(value) {
+      if (!["manual", "sparse", "standard", "detailed"].includes(value)) return;
+      this.userState.highlightDensity = value;
+      this._automaticHighlights = null;
+      this._saveUserStateSoon();
+      this.overlay.renderAllPages();
+      this._emit("reading");
+    }
+
+    highlightLevel(point) {
+      const manual = this.userState.pointImportance?.[point.id];
+      if (manual !== undefined) return Number(manual);
+      const data = this.data?.hierarchicalData;
+      if (!this._automaticHighlights || this._highlightSelectionFor !== data) {
+        this._highlightSelectionFor = data;
+        this._automaticHighlights = DeepRead.Highlights.select(data, { density: this.highlightDensity,
+          roleOf: (key) => this.paragraphRole(key), goal: this.userState.readingGoal?.kind });
+      }
+      return this._automaticHighlights.get(point.id) || 1;
+    }
 
     _saveUserStateSoon() {
       clearTimeout(this._saveUserStateTimer);

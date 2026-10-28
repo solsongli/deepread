@@ -1,5 +1,7 @@
 # DeepRead — developer notes and module contracts
 
+Current reading-flow branch: `services/reading.js` owns goal definitions and safe carry-over of personal records on reparse; `userState.readingGoal`, `figureNotes`, `recallAnswers`, `highlightDensity` and `unmappedNotes` persist locally.
+
 Current reading-flow branch: glossary, flashcards and code repository panels/services have been removed.
 Their historical contracts below are retained as version history, not current runtime entry points.
 Legacy SQLite columns/tables are preserved. New runtime helpers are `services/cardGroups.js` (AI/manual/

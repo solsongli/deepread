@@ -85,6 +85,84 @@ E2E.run = async function () {
   host.querySelector(".dr-q-reveal").click();
   D.Panes.renderers.questions({ body: host, doc, session: s, event: "change", h: (...args) => D.util.h(doc, ...args) });
   check("recall can reveal comparison", !!host.querySelector(".dr-q-answer"));
+  s.setReadingGoal("method", "我想弄清关键设计为什么有效");
+  D.Panes.renderers.questions({ body: host, doc, session: s, event: "change", h: (...args) => D.util.h(doc, ...args) });
+  check("reading goal controls restore saved values", host.querySelector(".dr-goal-kind").value === "method" && host.querySelector(".dr-goal-text").value.includes("关键设计"));
+
+  // A real figure card: edit evidence separately from the AI's reading steps.
+  s.data.contentList = [{ id: 1, type: "image", page_idx: 0, bbox: [82, 267, 458, 558], image_caption: ["Figure 1: Measured performance."] }];
+  const figure = s.figures()[0];
+  s.figureGuides[figure.id] = { steps: [{ text: "AI 给出的读图步骤" }] };
+  rail.refresh();
+  await sleep(350);
+  let figureCard = rail.cards.get(`g_${figure.id}`).el;
+  check("AI figure steps start collapsed", !!figureCard.querySelector(".dr-figure-guide") && !figureCard.querySelector(".dr-figure-guide").open);
+  figureCard.querySelector(".dr-evidence-edit").click();
+  await sleep(150);
+  figureCard = rail.cards.get(`g_${figure.id}`).el;
+  const values = { setup: "比较 A 和 B 的准确率", observation: "A 的均值更高", interpretation: "<strong>样本有限</strong>，不能证明泛化" };
+  for (const [key, value] of Object.entries(values)) {
+    const input = figureCard.querySelector(`[data-field="${key}"]`);
+    input.value = value;
+    input.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true }));
+  }
+  figureCard.querySelector(".dr-evidence-save").click();
+  await sleep(200);
+  check("evidence form saves all fields", Object.entries(values).every(([key, value]) => s.figureNote(figure.id)[key] === value));
+  check("evidence note is separate from AI steps", rail.cards.get(`g_${figure.id}`).el.textContent.includes("A 的均值更高") && s.figureGuides[figure.id].steps[0].text.includes("AI"));
+  check("reading record includes personal notes and goal", s.readingRecord().includes(values.observation) && s.readingRecord().includes("关键设计"));
+  const savedNote = await s.saveReadingNote();
+  check("Zotero note preserves literal user text", savedNote.getNote().includes("&lt;strong&gt;") && !savedNote.getNote().includes("<strong>样本有限</strong>"));
+
+  // The manual-only option changes the actual PDF overlay but retains manual ink.
+  s.userState.pointImportance = {};
+  s.setHighlightDensity("manual");
+  check("manual-only mode hides automatic highlights", overlay.pdfDoc.querySelectorAll(".dr-persistent .dr-rect").length === 0);
+  s.setPointImportance(first.points[0].id, 3);
+  check("manual-only mode preserves user highlights", overlay.pdfDoc.querySelectorAll(".dr-persistent .dr-rect").length > 0);
+  s.setHighlightDensity("detailed");
+  check("density preference is per paper", s.userState.highlightDensity === "detailed");
+  doc.querySelector(".deepread-toolbar .dr-menu-button").click();
+  const densityControl = doc.querySelector(".dr-highlight-density");
+  densityControl.value = "sparse";
+  densityControl.dispatchEvent(new doc.defaultView.Event("change", { bubbles: true }));
+  check("density menu updates the live session", s.highlightDensity === "sparse");
+  const indexOfHighlights = D.Modules.LIST.findIndex((m) => m.key === "highlights");
+  doc.querySelectorAll(".deepread-menu .dr-feature")[indexOfHighlights].click();
+  check("density control disables when highlights are off", densityControl.disabled);
+  doc.querySelectorAll(".deepread-menu .dr-feature")[indexOfHighlights].click();
+  check("density control enables when highlights are on", !densityControl.disabled);
+  doc.body.dispatchEvent(new doc.defaultView.Event("pointerdown", { bubbles: true }));
+
+  await sleep(700);
+  const stored = await D.Store.getPaper(s.key);
+  check("goals and evidence persist to SQLite", stored.user_state.readingGoal.kind === "method" && stored.user_state.figureNotes[figure.id].observation === values.observation);
+  host.remove();
+  D.Panes.reveal(reader, "questions");
+  s._emit("questions");
+  overlay._setHover(null);
+  await reader.navigate({ pageIndex: 0 });
+  const win = Zotero.getMainWindow();
+  win.resizeTo(1550, 1000);
+  await sleep(600);
+  const bitmap = await win.browsingContext.currentWindowGlobal.drawSnapshot(null, 1, "white");
+  const canvas = win.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+  canvas.width = bitmap.width; canvas.height = bitmap.height;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+  await IOUtils.write(PathUtils.join(E2E.env("DEEPREAD_E2E_SHOTS"), "reading-methods.png"), Uint8Array.from(atob(canvas.toDataURL("image/png").split(",")[1]), (c) => c.charCodeAt(0)));
+  // Run the real session completion path with a local parser result and no API calls.
+  const originalPipeline = s._newPipeline, originalConfig = s._checkConfig, originalAuto = s._autoGenerate;
+  s._checkConfig = () => {};
+  s._autoGenerate = () => {};
+  s.userState.modules = { ...(s.userState.modules || {}), figureCards: false };
+  s._newPipeline = () => ({ run: async () => ({ hierarchicalData: [{ pageIndex: 0, paragraphs: [first, second] }], contentList: s.data.contentList }) });
+  await s.run();
+  s._newPipeline = originalPipeline; s._checkConfig = originalConfig; s._autoGenerate = originalAuto;
+  const reparsed = await D.Store.getPaper(s.key);
+  check("reparse retains goals, evidence, self-answers and aligned notes", reparsed.user_state.readingGoal.kind === "method"
+    && reparsed.user_state.figureNotes[figure.id].observation === values.observation
+    && reparsed.user_state.recallAnswers.q1.text === "我自己的解释"
+    && reparsed.user_state.notes.p_0_1.text === "保留我的笔记");
   host.remove();
   await sleep(800); // allow only the isolated test profile's debounced saves to flush
   return { checks: E2E.result.steps.length };

@@ -36,6 +36,7 @@
 .deepread-menu .dr-menu-row button { width: auto; min-width: 26px; padding: 1px 6px; justify-content: center;
   border: 1px solid rgba(0,0,0,0.15); }
 .deepread-menu .dr-menu-row .dr-value { min-width: 44px; text-align: center; opacity: 0.75; }
+.deepread-menu .dr-menu-row select { min-width: 90px; padding: 3px; font: inherit; color: inherit; background: var(--material-toolbar, #fff); border: 1px solid var(--color-panedivider, #bbb); border-radius: 4px; }
 .deepread-menu.dr-features { width: 300px; padding: 6px; }
 .deepread-menu .dr-menu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 6px; }
 .deepread-menu .dr-menu-head strong { font-size: 13px; }
@@ -209,6 +210,7 @@
         onclick: (e) => {
           e.stopPropagation();
           DeepRead.Modules.set(session, module.key, !DeepRead.Modules.enabled(session, module.key), featureScope);
+          density.disabled = !DeepRead.Modules.enabled(session, "highlights");
           if (featureScope === "default") DeepRead.Session.forEachOverlay((overlay) => overlay.session.applyModules());
           rows.replaceChildren(...DeepRead.Modules.LIST.map(featureRow));
         },
@@ -273,6 +275,14 @@
         h(doc, "button", { onclick: step(1), title: "+", disabled: colors.length >= 6 }, "+"));
     };
     const highlight = h(doc, "div", {}, highlightRow());
+    const density = h(doc, "select", { class: "dr-highlight-density", "aria-label": DeepRead.bilingual("本文自动高亮密度", "Automatic highlight density for this paper"),
+      onchange: (e) => { e.stopPropagation(); session.setHighlightDensity(e.target.value); } });
+    for (const [value, zh, en] of [["manual", "仅手动", "Manual only"], ["sparse", "少量", "Sparse"], ["standard", "标准", "Standard"], ["detailed", "更多", "More"]]) {
+      density.append(h(doc, "option", { value }, DeepRead.bilingual(zh, en)));
+    }
+    density.value = session.highlightDensity;
+    density.disabled = !DeepRead.Modules.enabled(session, "highlights");
+    density.addEventListener("click", (e) => e.stopPropagation());
     // Fold the card rails away, e.g. while the AI chat pane takes the right side.
     const foldRow = () => {
       const button = (side, label) => {
@@ -301,6 +311,8 @@
       layout,
       keepOpen,
       highlight,
+      h(doc, "label", { class: "dr-menu-row", title: DeepRead.bilingual("只改变本文的自动建议，保留手动标记", "Affects this paper's automatic suggestions; keeps manual marks") },
+        h(doc, "span", { class: "dr-label" }, DeepRead.bilingual("自动高亮（本文）", "Auto highlights (this paper)")), density),
       fold,
       h(doc, "hr"),
       item(plain(session.hasResults ? DeepRead.t("toolbar.rerun") : DeepRead.t("toolbar.run")), () => onRun(session, doc)),

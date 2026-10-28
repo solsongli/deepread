@@ -99,6 +99,11 @@
 .deepread-rail .dr-fsteps li.dr-on .dr-fnum { background: #2b59c3; }
 .deepread-rail .dr-ftext { font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif; line-height: 1.6; }
 .deepread-rail .dr-fcaption { font-size: 0.9em; line-height: 1.5; color: var(--fill-secondary, #4a4a46); }
+.deepread-rail .dr-evidence { margin: 8px 10px 0; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.1); cursor: default; }
+.deepread-rail .dr-evidence label { display: grid; gap: 3px; margin: 6px 0; font-size: 0.9em; }
+.deepread-rail .dr-evidence textarea { box-sizing: border-box; width: 100%; padding: 4px 6px; resize: vertical; font: inherit; line-height: 1.45; color: inherit; background: var(--material-background, #fff); border: 1px solid var(--color-panedivider, #bbb); border-radius: 4px; }
+.deepread-rail .dr-evidence p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 3px 0 8px; }
+.deepread-rail .dr-evidence button { font: inherit; padding: 2px 6px; cursor: pointer; }
 /* Figures amber, tables teal: told apart from paragraph cards at a glance. */
 .deepread-rail .dr-rcard.dr-figure { background: #fffdf8; border: 1px solid #efd9ac; border-inline-start: 3px solid #d97706; }
 .deepread-rail .dr-figure .dr-fhead { background: #fcf1dc; border-bottom-color: #f1e0bb; }
@@ -805,6 +810,8 @@
       if (item.kind === "figure") {
         const focus = this.figureFocus?.id === item.data.id ? this.figureFocus.panel || "*" : "";
         return `g|${JSON.stringify(this.session.figureGuide(item.data.id))}|${this.session.explainingFigures}|${focus}`
+          + `|${JSON.stringify(this.session.figureNote(item.data.id))}|${this.figureEditing === item.data.id}`
+          + `|${this.figureGuideOpen?.has(item.data.id)}`
           + `|${this.compactPages?.has(`${item.side || "right"}:${item.pageIndex}`) ? "c" : ""}`;
       }
       const paras = item.members || [item.data];
@@ -839,7 +846,9 @@
         parent.append(card.el);
         card.height = 0;
       }
-      if (card.sig !== sig) {
+      const editingFigure = item.kind === "figure" && this.figureEditing === item.data.id
+        && card.el.contains(this.readerDoc.activeElement) && this.readerDoc.activeElement?.localName === "textarea";
+      if (card.sig !== sig && !editingFigure) {
         card.el.replaceChildren();
         if (item.kind === "figure") this._fillFigure(card.el, item.data, item);
         else this._fillParagraph(card.el, item.key, item.data, item.members);
@@ -1156,7 +1165,7 @@
       const focus = this.figureFocus?.id === figure.id ? this.figureFocus : null;
       node.classList.toggle("dr-linked", !!focus);
       const side = item?.side || this._sideOfKey?.get(`g_${figure.id}`) || "right";
-      const compact = !!this.compactPages?.has(`${side}:${figure.pageIndex}`) && !focus;
+      const compact = !!this.compactPages?.has(`${side}:${figure.pageIndex}`) && !focus && this.figureEditing !== figure.id;
       node.classList.toggle("dr-compact", compact);
       const guide = session.figureGuide(figure.id);
       const head = el(doc, "div", "dr-fhead");
@@ -1189,7 +1198,16 @@
           li.append(text);
           list.append(li);
         });
-        body.append(list);
+        const details = el(doc, "details", "dr-figure-guide");
+        details.open = this.figureGuideOpen?.has(figure.id) || false;
+        details.append(el(doc, "summary", "", DeepRead.bilingual("查看 AI 读图步骤", "Show AI reading steps")), list);
+        details.addEventListener("toggle", () => {
+          this.figureGuideOpen = this.figureGuideOpen || new Set();
+          if (details.open) this.figureGuideOpen.add(figure.id);
+          else this.figureGuideOpen.delete(figure.id);
+          this.schedule(true);
+        });
+        body.append(details);
       }
       else if (session.explainingFigures) {
         body.append(el(doc, "div", "dr-muted", DeepRead.bilingual("读图步骤生成中…", "Writing the reading guide…")));
@@ -1198,8 +1216,50 @@
         body.append(el(doc, "div", "dr-fcaption", figure.caption.length > 160 ? `${figure.caption.slice(0, 160)}…` : figure.caption));
       }
       node.append(body);
+      const evidence = el(doc, "div", "dr-evidence");
+      const note = session.figureNote(figure.id);
+      evidence.append(el(doc, "strong", "", DeepRead.bilingual("我的证据笔记", "My evidence notes")));
+      if (this.figureEditing === figure.id) {
+        const fields = {};
+        for (const field of DeepRead.Reading.FIELDS) {
+          const label = el(doc, "label", "", DeepRead.bilingual(field.zh, field.en));
+          const input = el(doc, "textarea");
+          input.rows = 2;
+          input.maxLength = 6000;
+          input.dataset.field = field.key;
+          this._draft(input, `evidence:${figure.id}:${field.key}`, note?.[field.key]);
+          input.addEventListener("input", () => this.schedule(true));
+          input.addEventListener("keydown", (e) => e.stopPropagation());
+          fields[field.key] = input;
+          label.append(input);
+          evidence.append(label);
+        }
+        this._button(evidence, DeepRead.bilingual("保存", "Save"), "", () => {
+          this.figureEditing = null;
+          this._clearDrafts(`evidence:${figure.id}:`);
+          session.setFigureNote(figure, Object.fromEntries(Object.entries(fields).map(([k, input]) => [k, input.value])));
+          this._invalidate(`g_${figure.id}`);
+        }).classList.add("dr-evidence-save");
+        this._button(evidence, DeepRead.bilingual("取消", "Cancel"), "", () => {
+          this.figureEditing = null;
+          this._clearDrafts(`evidence:${figure.id}:`);
+          this._invalidate(`g_${figure.id}`);
+        });
+      }
+      else {
+        if (note) for (const field of DeepRead.Reading.FIELDS) if (note[field.key]) {
+          evidence.append(el(doc, "div", "dr-muted", DeepRead.bilingual(field.zh, field.en)), el(doc, "p", "", note[field.key]));
+        }
+        this._button(evidence, DeepRead.bilingual(note ? "编辑笔记" : "先写我的判断", note ? "Edit notes" : "Write my interpretation"), "", () => {
+          this.figureEditing = figure.id;
+          this._invalidate(`g_${figure.id}`);
+        }).classList.add("dr-evidence-edit");
+      }
+      evidence.addEventListener("click", (e) => e.stopPropagation());
+      node.append(evidence);
       node.title = DeepRead.bilingual("单击跳到图表", "Click to go to the figure");
-      node.onclick = () => {
+      node.onclick = (event) => {
+        if (event.target?.closest("button, textarea, input, select, a, summary, details")) return;
         const rect = this.overlay.permilleRect(figure.pageIndex, figure.bbox);
         session.reader.navigate(rect ? { position: { pageIndex: figure.pageIndex, rects: [rect] } } : { pageIndex: figure.pageIndex });
       };

@@ -27,6 +27,7 @@
     "services/skim.js",
     "services/highlights.js",
     "services/cardGroups.js",
+    "services/reading.js",
     "services/guide.js",
     "services/agentRunner.js",
     "pipeline/languages.js",

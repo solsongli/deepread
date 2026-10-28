@@ -397,7 +397,7 @@
       if (this.options.highlights) {
         for (const paragraph of paragraphs) {
           for (const point of paragraph.points || []) {
-            const color = rgba(this.session.levelColor(this.session.pointLevel(point)), HIGHLIGHT_ALPHA);
+            const color = rgba(this.session.levelColor(this.session.highlightLevel(point)), HIGHLIGHT_ALPHA);
             if (!color) continue;
             for (const rect of point.rects || []) {
               this._addRect(ctx.persistent, ctx.geom, rect, "dr-rect", color);
