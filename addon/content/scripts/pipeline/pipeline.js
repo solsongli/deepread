@@ -4136,7 +4136,16 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
     // console.log('[Reader] LLM处理完成，最终结果段落:', llmResults);
 
     // 后处理：使用映射关系处理equation的智能合并，确保equation作为独立point
-    const finalResults = this._postProcessLLMResult(llmResults, equationMapping);
+    let finalResults = this._postProcessLLMResult(llmResults, equationMapping);
+    if (DeepRead.Continuations) {
+      const prepared = finalResults.map((p) => ({ ...p, sourceStyledText: (p.sentences || []).map((s) =>
+        DeepRead.Typography?.styledSentence(s, this._summaryManager.charsDataList || []) ?? s.text).join(" ") }));
+      const joined = await DeepRead.Continuations.reconcile(prepared, {
+        complete: (options) => this._llm(options), targetLang: this._llmPromptLanguage, signal: this._signal,
+        visuals: this._summaryManager.getPdfContentList(),
+      });
+      finalResults = joined.paragraphs;
+    }
 
     // console.log('[Reader] 后处理完成，bbox检查:', finalResults);
 

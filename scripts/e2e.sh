@@ -8,7 +8,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$(realpath "${1:-$REPO/test/e2e/basic.js}")"
 ZOTERO="${ZOTERO_BIN:-$HOME/.local/opt/zotero-10.0.6/zotero}"
-BASE="$REPO/.test-profile"
+BASE="${E2E_BASE:-$REPO/.test-profile}"
 PROFILE="$BASE/profile"
 DATA="$BASE/data"
 OUT="$BASE/result.json"
@@ -83,7 +83,7 @@ timeout "$TIMEOUT" "$ZOTERO" -profile "$PROFILE" -no-remote -ZoteroDebugText > "
 
 if [ -f "$OUT" ]; then
   cat "$OUT"
-  python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("ok") is True else 1)' "$OUT"
+  python3 -E -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("ok") is True else 1)' "$OUT"
 else
   echo "No result written. Last log lines:"; tail -40 "$LOG"; exit 1
 fi

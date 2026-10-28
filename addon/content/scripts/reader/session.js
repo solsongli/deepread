@@ -270,6 +270,7 @@
     }
 
     destroy() {
+      this._continuationAbort?.abort();
       this._guideAbort?.abort();
       this.guidePanel?.detach();
       this._questionsAbort?.abort();
@@ -336,6 +337,7 @@
     /* ---------- main flow ---------- */
 
     async run() {
+      this._continuationAbort?.abort();
       if (this.status === "running") {
         this._notify(DeepRead.t("flow.busy"), "warning");
         return false;
@@ -390,6 +392,7 @@
         this._questionsAbort?.abort();
         this.questions = null;
         this._questionsRequested = false;
+        this._continuationsRequested = false;
         this._refs = null;
         this._skim = null;
         this.overlay.setData(data.hierarchicalData);
@@ -499,6 +502,7 @@
     }
 
     async clearResults() {
+      this._continuationAbort?.abort();
       this._guideAbort?.abort();
       this.guide = null;
       this.guideRun = null;
@@ -602,6 +606,10 @@
      */
     _autoGenerate({ afterRun = false } = {}) {
       if (!this.hasResults || !DeepRead.LLM.isConfigured()) return;
+      if (!this._continuationsRequested && this.data.hierarchicalData.some((p) => p.paragraphs?.some((x) => !x.continuationChecked))) {
+        this._continuationsRequested = true;
+        this.mergeContinuationTranslations().catch((e) => DeepRead.log("joining interrupted paragraphs failed", String(e)));
+      }
 
       if (DeepRead.Modules.enabled(this, "questions") && !this.questions?.items?.length && !this._questionsRequested) {
         this._questionsRequested = true;
@@ -988,6 +996,70 @@
 
     /* ---------- AI explanations (card bodies) ---------- */
 
+    async mergeContinuationTranslations() {
+      if (!this.hasResults || !DeepRead.LLM.isConfigured() || this._joiningContinuations) return 0;
+      const data = this.data, controller = new AbortController();
+      this._continuationAbort = controller;
+      this._joiningContinuations = true;
+      try {
+        const paragraphs = data.hierarchicalData.flatMap((page) => (page.paragraphs || []).map((p) => ({
+          ...p, page_idx: page.pageIndex, paragraph_idx: p.paragraphIndex, paragraph_type: p.paragraphType, paragraph_text: p.paragraphText,
+        })));
+        // Old caches omit character mappings. Recover source emphasis locally for
+        // candidate pages before asking for a joint translation.
+        const units = DeepRead.Continuations.candidates(paragraphs, { visuals: data.contentList });
+        if (units.length && this.view && DeepRead.Typography) {
+          const adapter = this.pdfAdapter(), pages = new Map();
+          for (const p of units.flatMap((u) => u.parts)) {
+            if (controller.signal.aborted) return 0;
+            try {
+              if (!pages.has(p.page_idx)) {
+                const page = await adapter.pdfDocument.getPageData({ pageIndex: p.page_idx });
+                pages.set(p.page_idx, (page.chars || []).map((c, offset) => ({ ...c, offset })));
+              }
+              const chars = pages.get(p.page_idx), matched = DeepRead.Typography.match(chars, p.paragraph_text);
+              if (matched) {
+                const formatted = DeepRead.Pipeline.prototype._extractFormattedText(matched);
+                p.sourceStyledText = DeepRead.Typography.styledSentence(formatted, chars);
+                p.typography = DeepRead.Typography.metrics(matched) || p.typography;
+              }
+            }
+            catch (e) { DeepRead.log("source styles unavailable for continuation", String(e)); }
+          }
+        }
+        const result = await DeepRead.Continuations.reconcile(paragraphs, {
+          complete: (options) => DeepRead.LLM.complete(options), targetLang: DeepRead.prefs.language(), signal: controller.signal,
+          visuals: data.contentList,
+        });
+        if (controller.signal.aborted || this.data !== data) return 0;
+        const byKey = new Map(result.paragraphs.map((p) => [`p_${p.page_idx}_${p.paragraph_idx}`, p]));
+        const hierarchicalData = data.hierarchicalData.map((page) => ({ ...page, paragraphs: page.paragraphs.map((p) => {
+          const updated = byKey.get(`p_${page.pageIndex}_${p.paragraphIndex}`);
+          return { ...p, typography: updated.typography || p.typography, continuation: updated.continuation || null, continuationChecked: updated.continuationChecked };
+        }) }));
+        // Commit only if the user is still looking at these results (clear/rerun cancels).
+        await DeepRead.Store.savePaper(this.key, this.item.id, { hierarchical_data: hierarchicalData });
+        if (controller.signal.aborted || this.data !== data) return 0;
+        this.data = { ...data, hierarchicalData };
+        this._cardGroups = null;
+        this.overlay.setData(hierarchicalData);
+        this._emit("change");
+        return result.count;
+      }
+      finally { this._joiningContinuations = false; }
+    }
+
+    continuationFor(paragraph) {
+      const link = paragraph?.continuation;
+      if (!link?.lead) return null;
+      const entry = this._paragraphByKey(link.lead)?.paragraph?.continuation;
+      if (!entry?.translation || !Array.isArray(entry.keys)) return null;
+      const key = `p_${paragraph.pageIndex}_${paragraph.paragraphIndex}`;
+      // Explicit manual splits take precedence over automatic translation grouping.
+      const members = new Set(this.groupMembers(key));
+      return entry.keys.includes(key) && entry.keys.every((k) => members.has(k)) ? entry : null;
+    }
+
     explanation(key) {
       const seen = new Set();
       return this.groupMembers(key).map((member) => {
@@ -1014,6 +1086,7 @@
       const first = members[0], last = members.at(-1);
       const start = `p. ${Number(first[1]) + 1} ¶${Number(first[2]) + 1}`;
       if (first[1] !== last[1]) return `${start}–p. ${Number(last[1]) + 1} ¶${Number(last[2]) + 1}`;
+      if (Number(last[2]) - Number(first[2]) + 1 !== members.length) return `p. ${Number(first[1]) + 1} ¶${members.map((m) => Number(m[2]) + 1).join(", ")}`;
       return first[2] === last[2] ? start : `${start}–${Number(last[2]) + 1}`;
     }
 
@@ -1513,6 +1586,9 @@
           paragraphIndex: p.paragraphIndex,
           paragraphType: p.paragraphType,
           paragraphText: p.paragraphText,
+          typography: p.typography,
+          continuation: p.continuation,
+          continuationChecked: p.continuationChecked === true,
           paragraphSummary: p.paragraphSummary,
           minerUid: p.minerUid,
           importance_level: p.importance_level,
@@ -1527,6 +1603,7 @@
             translation: pt.translation,
             rects: pt.rects,
             importance_level: pt.importance_level,
+            importance_source: pt.importance_source,
           })),
         })),
       }));

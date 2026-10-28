@@ -11,7 +11,7 @@
     if (!textType(a) || !textType(b)) return false;
     const left = (a.paragraphText || "").trim(), right = (b.paragraphText || "").trim();
     if (left.length < 15 || !/^\p{Ll}/u.test(right) || /[.!?。！？:：;；][\s"'”’)]*$/.test(left)) return false;
-    if (b.pageIndex === a.pageIndex + 1) return true; // consecutive text across a page break
+    // Cross-page continuity needs the joint-translation confirmation below.
     if (b.pageIndex !== a.pageIndex) return false;
     const A = bounds(a), B = bounds(b);
     if (!A || !B) return false;
@@ -25,9 +25,11 @@
     const order = new Map(rows.map((p, i) => [key(p), i]));
     const parent = new Map(rows.map((p) => [key(p), key(p)]));
     const root = (k) => { while (parent.has(k) && parent.get(k) !== k) k = parent.get(k); return k; };
-    const join = (a, b) => {
+    const join = (a, b, acrossVisual = false) => {
       const i = order.get(a), j = order.get(b);
-      if (i === undefined || j !== i + 1 || !textType(rows[i]) || !textType(rows[j])) return;
+      if (i === undefined || j === undefined || j <= i || !textType(rows[i]) || !textType(rows[j])) return;
+      if (j !== i + 1 && !(acrossVisual && rows.slice(i + 1, j).every((p) => DeepRead.Continuations?.isVisual(p)
+        || ["image", "table", "chart", "figure"].includes(p.paragraphType)))) return;
       const x = overrides[a], y = overrides[b];
       if ((x || y) && !(Array.isArray(x) && Array.isArray(y) && x.includes(b) && y.includes(a))) return;
       parent.set(root(b), root(a));
@@ -35,6 +37,10 @@
     for (const entry of Object.values(explanations)) {
       const members = entry?.members || [];
       for (let i = 1; i < members.length; i++) join(members[i - 1], members[i]);
+    }
+    for (const row of rows) {
+      const members = row.continuation?.keys || [];
+      for (let i = 1; i < members.length; i++) join(members[i - 1], members[i], true);
     }
     if (auto) for (let i = 1; i < rows.length; i++) if (continues(rows[i - 1], rows[i])) join(key(rows[i - 1]), key(rows[i]));
     for (const members of Object.values(overrides)) {

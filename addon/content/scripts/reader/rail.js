@@ -821,6 +821,7 @@
       const questions = (this.session.questionsForKey?.(item.key) || []).map((q) => q.id).join(",");
       const guided = this.session.guide && DeepRead.Modules.enabled(this.session, "guided") ? this.session.guide.meta?.finishedAt || 1 : "";
       return `p|${keys.join(",")}|${this.session.groupTitle(item.key)}|${this.session.highlightColors().join("")}|${skim}|${questions}|${guided}`
+        + `|${this.overlay.translationsFor(paras).join("\u001f")}`
         + `|${paras.map((p) => this.session.paragraphSummary(p)).join("|")}|${levels}|${this.isOpen(item.key)}|${this.focusKey === item.key}|${this._translationOpen(item.key)}`
         + `|${this.session.explanation(item.key)}|${this.session.isExplaining(item.key)}|${this.session.paragraphRole?.(item.key)}`
         + `|${this.compactPages?.has(`${item.side || "right"}:${item.pageIndex}`) ? "c" : ""}`
@@ -964,7 +965,7 @@
       if (badges.childNodes.length) head.append(badges);
 
       const actions = el(doc, "div", "dr-ractions");
-      const translations = paras.map((p) => this.overlay._paragraphTranslation(p)).filter(Boolean);
+      const translations = this.overlay.translationsFor(paras);
       this._button(actions, "⧉", DeepRead.t("card.copySummary"), () => {
         const lines = paras.flatMap((p) => [session.paragraphSummary(p), ...(p.points || []).map((pt) => `- ${pt.summary}`)]);
         DeepRead.util.copyToClipboard(lines.filter(Boolean).join("\n"));

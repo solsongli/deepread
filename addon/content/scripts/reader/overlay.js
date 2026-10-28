@@ -496,8 +496,32 @@
     }
 
     _paragraphTranslation(paragraph) {
+      const joined = this.session.continuationFor?.(paragraph);
+      if (joined) return joined.translation;
       const parts = (paragraph.points || []).map((p) => (p.translation || "").trim()).filter(Boolean);
       return parts.join(" ");
+    }
+
+    translationsFor(paragraphs) {
+      const seen = new Set(), parts = [];
+      for (const paragraph of paragraphs || []) {
+        const joined = this.session.continuationFor?.(paragraph);
+        if (joined && seen.has(joined.lead)) continue;
+        if (joined) seen.add(joined.lead);
+        const text = this._paragraphTranslation(paragraph);
+        if (text) parts.push(text);
+      }
+      return parts;
+    }
+
+    _continuationParagraphs(paragraph) {
+      const joined = this.session.continuationFor?.(paragraph);
+      if (!joined) return [paragraph];
+      return joined.keys.map((key) => {
+        const found = this.session._paragraphByKey(key);
+        if (!found) return null;
+        return { ...found.paragraph, pageIndex: found.page.pageIndex, bbox: unionRect(found.paragraph.rects || []) };
+      }).filter((p) => p?.bbox);
     }
 
     /**
@@ -609,10 +633,20 @@
       ctx.transient.append(box);
 
       const visual = ["image", "table", "chart", "figure"].includes(paragraph.paragraphType);
-      const rawHeight = (pct.height / 100) * pageH;
+      const sources = this._continuationParagraphs(paragraph);
+      const pageRect = geom.div.getBoundingClientRect();
+      const viewport = this.pdfDoc.getElementById("viewerContainer")?.getBoundingClientRect();
+      const visibleTop = viewport ? Math.max(0, viewport.top - pageRect.top) : 0;
+      const visibleBottom = viewport ? Math.min(pageH, viewport.bottom - pageRect.top) : pageH;
+      // Match the total text height, excluding the picture and the page-break gap.
+      const rawHeight = sources.length > 1 ? sources.reduce((sum, p) => {
+        const local = this._geometry(p.pageIndex);
+        return sum + (local ? this._toPercent(local, p.bbox).height / 100 * (local.div.clientHeight || local.h)
+          : Math.abs(p.bbox[3] - p.bbox[1]) * Math.hypot(geom.t[0], geom.t[1]) * geom.div.clientWidth / geom.w);
+      }, 0) : (pct.height / 100) * pageH;
       // One-line boxes need space for the border; multiline prose follows its source
       // height. Unmapped legacy figure boxes must never dictate a caption's height.
-      const target = Math.max(metrics.lineHeight + 6, rawHeight);
+      const target = Math.max(metrics.lineHeight + 6, sources.length > 1 ? Math.min(rawHeight, Math.max(0, visibleBottom - visibleTop) * 0.5) : rawHeight);
       const ratio = metrics.lineHeight / metrics.fontSize || 1.2;
       const setScale = (k, pitch = ratio) => {
         box.style.fontSize = `${metrics.fontSize * k}px`;
@@ -643,9 +677,13 @@
       }
       else box.dataset.scale = "1.00";
       box.dataset.overflow = String(box.scrollHeight > box.clientHeight + 1);
+      if (sources.length > 1) {
+        box.dataset.continuationCount = String(sources.length);
+        box.title = DeepRead.bilingual(`已合并 ${sources.length} 处续段的完整译文`, `Complete translation of ${sources.length} interrupted fragments`);
+      }
       if (box.dataset.overflow === "true") {
         box.tabIndex = 0;
-        box.title = DeepRead.bilingual("译文较长，可在框内滚动查看全文", "Scroll inside to read the full translation");
+        box.title = [box.title, DeepRead.bilingual("译文较长，可在框内滚动查看全文", "Scroll inside to read the full translation")].filter(Boolean).join(" · ");
       }
       box.addEventListener("wheel", (event) => { event.stopPropagation(); }, { passive: true });
       box.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -662,8 +700,8 @@
       else {
         box.style.left = `${pct.left}%`;
         const height = box.offsetHeight;
-        const spaceBelow = pageH * (1 - (pct.top + pct.height + gapPct) / 100);
-        const spaceAbove = pageH * ((pct.top - gapPct) / 100);
+        const spaceBelow = (sources.length > 1 ? visibleBottom : pageH) - pageH * (pct.top + pct.height + gapPct) / 100;
+        const spaceAbove = pageH * ((pct.top - gapPct) / 100) - (sources.length > 1 ? visibleTop : 0);
         if (height > spaceBelow && spaceAbove > spaceBelow) {
           side = "above";
           box.style.top = "";
@@ -675,12 +713,21 @@
         }
       }
       box.dataset.side = side;
+      if (sources.length > 1) {
+        const top = box.offsetTop;
+        box.style.bottom = "";
+        box.style.top = `${Math.max(visibleTop, Math.min(top, visibleBottom - box.offsetHeight))}px`;
+      }
       box.dataset.fontSize = parseFloat(box.style.fontSize).toFixed(2);
       box.style.visibility = "";
       // Outline the paragraph the panel belongs to.
       const pad = 2;
-      const [x1, y1, x2, y2] = paragraph.bbox;
-      this._addRect(ctx.transient, geom, [x1 - pad, y1 - pad, x2 + pad, y2 + pad], "dr-outline");
+      for (const source of sources) {
+        const layer = source.pageIndex === paragraph.pageIndex ? ctx : this._layer(source.pageIndex);
+        if (!layer) continue;
+        const [x1, y1, x2, y2] = source.bbox;
+        this._addRect(layer.transient, layer.geom, [x1 - pad, y1 - pad, x2 + pad, y2 + pad], "dr-outline");
+      }
       return true;
     }
 

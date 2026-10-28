@@ -19,7 +19,7 @@ const pages = [{ pageIndex: 0, paragraphs: [p0, p1, p2] }];
 let groups = D.CardGroups.build(pages);
 assert.deepEqual(plain(groups.groups.get("p_0_0")), ["p_0_0", "p_0_1"]);
 assert.equal(groups.leads.get("p_0_2"), "p_0_2", "a complete sentence starts a new card");
-assert.equal(D.CardGroups.continues({ ...p0, pageIndex: 0 }, { ...p1, pageIndex: 1 }), true);
+assert.equal(D.CardGroups.continues({ ...p0, pageIndex: 0 }, { ...p1, pageIndex: 1 }), false, "cross-page grouping requires translation confirmation");
 assert.equal(D.CardGroups.continues({ ...p0, pageIndex: 0 }, { ...p1, pageIndex: 0, rects: [[330, 674, 560, 684]] }), false, "do not merge unrelated columns");
 const withHeading = [{ pageIndex: 0, paragraphs: [p0, paragraph(9, "Methods", 690, "title"), p1] }];
 groups = D.CardGroups.build(withHeading, { p_0_0: { members: ["p_0_0", "p_0_1"] } });

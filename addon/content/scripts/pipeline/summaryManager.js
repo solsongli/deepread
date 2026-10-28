@@ -263,6 +263,8 @@ DeepRead.SummaryManager = class SummaryManager {
           paragraphType: para.paragraph_type,
           paragraphText: para.paragraph_text,
           typography: para.typography || null,
+          continuation: para.continuation || null,
+          continuationChecked: para.continuationChecked === true,
           paragraphSummary: para.paragraph_summary || '',
           minerUid: para.minerUid,
           importance_level: para.importance_level,
