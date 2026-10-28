@@ -55,6 +55,8 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
 #deepread-bar .dr-skimtime { flex-shrink: 0; color: var(--fill-secondary, #4a4a46); white-space: nowrap; }
 #deepread-bar .dr-nextkey { flex-shrink: 0; border: 1px solid rgba(217,119,6,0.5); border-radius: 5px; padding: 1px 7px; background: #fff7ea;
   color: #92400e; font: inherit; cursor: pointer; white-space: nowrap; }
+#deepread-bar .dr-figures { max-width: 100px; min-width: 60px; font: inherit; color: inherit; }
+@media (max-width: 1000px) { #deepread-bar .dr-skimtime { display: none; } }
 #deepread-bar .dr-nextkey:hover { background: #fdecc8; }
 #deepread-bar .dr-qmark { position: absolute; top: -5px; height: 12px; min-width: 16px; margin-inline-start: -8px; padding: 0 3px; box-sizing: border-box;
   border-radius: 6px; border: 1px solid #7c3aed; background: #fff; color: #5b21b6; font-size: 8.5px; font-weight: 700; line-height: 10px;
@@ -232,6 +234,28 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
         next.addEventListener("click", () => this.goKey(1));
         root.append(depth, this.timeLabel, next);
         this.depth = depth;
+        const figures = this.session.figures();
+        if (figures.length) {
+          const select = el(doc, "select", "dr-figures");
+          select.setAttribute("aria-label", DeepRead.bilingual("按图表阅读", "Read by figure"));
+          select.title = DeepRead.bilingual("先看图注与证据，再返回正文核对解释", "Read captions and evidence, then check the claims in the text");
+          const hint = el(doc, "option", "", DeepRead.bilingual("读图…", "Figures…"));
+          hint.value = "";
+          select.append(hint);
+          figures.forEach((figure, i) => {
+            const option = el(doc, "option", "", `${figure.label || figure.number || i + 1} · p.${figure.pageIndex + 1} · ${figure.title || figure.caption || ""}`.slice(0, 100));
+            option.value = String(i);
+            select.append(option);
+          });
+          select.addEventListener("change", () => {
+            if (select.value === "") return;
+            const figure = figures[Number(select.value)];
+            const rect = this.session.overlay?.permilleRect(figure.pageIndex, figure.bbox);
+            this.session.reader.navigate(rect ? { position: { pageIndex: figure.pageIndex, rects: [rect] } } : { pageIndex: figure.pageIndex });
+            select.value = "";
+          });
+          root.append(select);
+        }
       }
       this.readLabel = el(doc, "span", "dr-read");
       root.append(this.readLabel);

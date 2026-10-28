@@ -501,7 +501,7 @@
     if (releases) {
       releases.addEventListener("click", function (event) {
         event.preventDefault();
-        Zotero.launchURL((deepread && deepread.Updater && deepread.Updater.RELEASES_URL) || "https://github.com/Lsy-aia/deepread/releases");
+        Zotero.launchURL((deepread && deepread.Updater && deepread.Updater.RELEASES_URL) || "https://github.com/solsongli/deepread/releases");
       });
     }
     if (!button || !status) return;

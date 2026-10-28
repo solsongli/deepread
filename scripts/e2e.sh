@@ -62,6 +62,7 @@ EOF
 [ -f "$PROFILE/prefs.js" ] && sed -i '/extensions.lastAppBuildId/d;/extensions.lastAppVersion/d' "$PROFILE/prefs.js"
 
 # Fake services (started once, reused).
+if [ "${E2E_SKIP_SERVICES:-0}" != "1" ]; then
 if ! curl -s -o /dev/null "http://127.0.0.1:18765/docs"; then
   [ -f "$REPO/test/fixtures/demo/mineru-result.zip" ] || python3 "$REPO/test/build-fixture.py"
   nohup node "$REPO/test/fake-mineru.mjs" --port 18765 > "$BASE/fake-mineru.log" 2>&1 &
@@ -70,6 +71,7 @@ if ! curl -s -o /dev/null "http://127.0.0.1:18766/v1/models"; then
   nohup node "$REPO/test/fake-openai.mjs" --port 18766 ${FAKE_OPENAI_ARGS:-} > "$BASE/fake-openai.log" 2>&1 &
 fi
 sleep 0.5
+fi
 
 rm -f "$OUT"
 export DEEPREAD_E2E_SCRIPT="$SCRIPT" DEEPREAD_E2E_OUT="$OUT" DEEPREAD_E2E_QUIT="${E2E_QUIT:-1}"
@@ -81,6 +83,7 @@ timeout "$TIMEOUT" "$ZOTERO" -profile "$PROFILE" -no-remote -ZoteroDebugText > "
 
 if [ -f "$OUT" ]; then
   cat "$OUT"
+  python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("ok") is True else 1)' "$OUT"
 else
   echo "No result written. Last log lines:"; tail -40 "$LOG"; exit 1
 fi

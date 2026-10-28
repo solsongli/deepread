@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const REPO = "Lsy-aia/deepread";
+const REPO = "solsongli/deepread";
 const ADDON_ID = "deepread@lsy-aia.github.io";
 const KEEP = 10; // versions kept in update.json
 
@@ -49,6 +49,10 @@ writeJSON("addon/manifest.json", manifest);
 const pkg = readJSON("package.json");
 pkg.version = version;
 writeJSON("package.json", pkg);
+const lock = readJSON("package-lock.json");
+lock.version = version;
+if (lock.packages?.[""]) lock.packages[""].version = version;
+writeJSON("package-lock.json", lock);
 const readmePath = path.join(root, "README.md");
 fs.writeFileSync(readmePath, fs.readFileSync(readmePath, "utf8").replace(/当前版本 \*\*v\d+\.\d+\.\d+\*\*/, `当前版本 **${tag}**`));
 

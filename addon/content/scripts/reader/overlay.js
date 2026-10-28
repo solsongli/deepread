@@ -17,8 +17,8 @@
 (function () {
   const HTML_NS = "http://www.w3.org/1999/xhtml";
   const HIGHLIGHT_ALPHA = 0.28; // highlighter colours (session.levelColor) drawn over the PDF text
-  const FIT_MIN = 0.55; // translation panel font scale range when fitting it to the paragraph's box
-  const FIT_MAX = 1.6;
+  const FIT_MIN = 0.85; // translation panel font scale range when fitting it to the paragraph's box
+  const FIT_MAX = 1.0;
   const HOVER_POINT_COLOR = "rgba(251, 191, 36, 0.32)";
   const SHOW_DELAY = 140;
   const HIDE_DELAY = 280;
@@ -159,7 +159,7 @@
       this.trPara = null; // hovered paragraph currently shown as its translation
       this._suppressPara = null; // pressed/selected paragraph: show the original until the pointer leaves it
       this._trContent = new WeakMap(); // paragraph → rendered translation (DocumentFragment)
-      this._trFit = new WeakMap(); // paragraph → { [page width]: font scale that fills the paragraph box }
+      this._trFit = new WeakMap(); // paragraph → { [page width]: font scale bounded by the original text size }
       this.altDown = false;
       this._timers = {};
       this._cleanup = [];
@@ -497,7 +497,7 @@
 
     _paragraphTranslation(paragraph) {
       const parts = (paragraph.points || []).map((p) => (p.translation || "").trim()).filter(Boolean);
-      return parts.join("");
+      return parts.join(" ");
     }
 
     /**
@@ -528,7 +528,15 @@
         const v = values.filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
         return v.length ? v[Math.floor(v.length / 2)] : fallback;
       };
-      const height = median(lines.map((l) => l.y2 - l.y1), 10 * k);
+      const visual = ["image", "table", "chart", "figure"].includes(paragraph.paragraphType);
+      // A fallback image rectangle is NOT a line of text. PDF user units scale with
+      // the viewport transform as well as the rendered page-div width.
+      const pdfScale = Math.hypot(geom.t[0], geom.t[1]) * k;
+      const sourceSize = paragraph.typography?.fontSize;
+      const fallback = (visual ? 9 : 10) * pdfScale;
+      const plausible = lines.filter((l) => l.y2 - l.y1 <= 24 * pdfScale);
+      const height = sourceSize > 0 ? sourceSize * pdfScale
+        : median(plausible.map((l) => l.y2 - l.y1), fallback);
       lines.sort((a, b) => a.y1 - b.y1);
       const pitches = [];
       for (let i = 1; i < lines.length; i++) {
@@ -537,8 +545,8 @@
       }
       // A Latin line box (ascent + descent) is ~0.9 em; CJK glyphs fill their em, so an em of
       // about the line-box height matches the original's visual size.
-      const fontSize = height;
-      const lineHeight = median(pitches, height * 1.2);
+      const fontSize = visual ? Math.min(height, 12 * pdfScale) : height;
+      const lineHeight = Math.max(fontSize * 1.15, Math.min(fontSize * 1.6, median(pitches, fontSize * 1.2)));
       const left = Math.min(...lines.map((l) => l.x1));
       const indent = lines.length > 1 && lines[0].x1 - left > fontSize * 0.8 ? lines[0].x1 - left : 0;
       return { fontSize, lineHeight, indent, lines: lines.length };
@@ -548,6 +556,28 @@
       let frag = this._trContent.get(paragraph);
       if (!frag) {
         frag = inlineMarkdown(this.pdfDoc, text);
+        // CommonMark rejects closing emphasis after CJK punctuation immediately
+        // followed by CJK text (e.g. **图 1：**结果). Repair literal markers in
+        // sanitized text nodes only; never reinterpret HTML or formula/code nodes.
+        const walker = this.pdfDoc.createTreeWalker(frag, 4);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        for (const node of nodes) {
+          if (node.parentElement?.closest("code, pre, .katex, math, strong, em")) continue;
+          const value = node.nodeValue;
+          const re = /(?<![\\*])(\*{1,3})([^*\n]+?)\1(?!\*)/g;
+          const parts = this.pdfDoc.createDocumentFragment();
+          let end = 0, match;
+          while ((match = re.exec(value))) {
+            parts.append(value.slice(end, match.index));
+            const mark = el(this.pdfDoc, match[1].length === 1 ? "em" : "strong");
+            if (match[1].length === 3) mark.append(el(this.pdfDoc, "em", "", match[2]));
+            else mark.textContent = match[2];
+            parts.append(mark);
+            end = re.lastIndex;
+          }
+          if (end) { parts.append(value.slice(end)); node.replaceWith(parts); }
+        }
         this._trContent.set(paragraph, frag);
       }
       return frag.cloneNode(true);
@@ -556,8 +586,8 @@
     /**
      * Shows the translation in a panel the size of the paragraph, so the original stays readable:
      * on a two-column page beside it in the other column (left column → right, right column → left),
-     * otherwise right below it (above when the page has no room below). The font is scaled so the
-     * translation fills the paragraph's box; line pitch and indent keep the original's proportions.
+     * otherwise right below it (above when the page has no room below). The font never exceeds the original's size; overflow may grow vertically rather than
+     * making the text unreadably small. Captions use their natural text height.
      */
     _drawTranslation(ctx, paragraph) {
       const text = this._paragraphTranslation(paragraph);
@@ -578,7 +608,9 @@
       ctx.transient.append(box);
 
       // Fit: the largest font (within FIT_MIN–FIT_MAX of the original) whose text fits the paragraph's height.
-      const target = Math.max(metrics.lineHeight, (pct.height / 100) * pageH);
+      const visual = ["image", "table", "chart", "figure"].includes(paragraph.paragraphType);
+      // Captions use their natural text height, never the area of the figure.
+      const target = visual ? metrics.lineHeight : Math.max(metrics.lineHeight, (pct.height / 100) * pageH);
       const ratio = metrics.lineHeight / metrics.fontSize || 1.2;
       const setScale = (k) => {
         box.style.fontSize = `${metrics.fontSize * k}px`;
@@ -590,6 +622,7 @@
       };
       const cacheKey = `${geom.div.clientWidth}`;
       let scale = this._trFit.get(paragraph)?.[cacheKey];
+      if (visual) scale = 1;
       if (!scale) {
         let lo = FIT_MIN;
         let hi = FIT_MAX;
@@ -604,10 +637,10 @@
         this._trFit.set(paragraph, { ...(this._trFit.get(paragraph) || {}), [cacheKey]: scale });
       }
       setScale(scale);
-      box.style.minHeight = `${target}px`;
+      if (!visual) box.style.minHeight = `${target}px`;
 
       let side;
-      if (pct.width <= 60 && this.isTwoColumn(paragraph.pageIndex)) {
+      if (!visual && pct.width <= 60 && this.isTwoColumn(paragraph.pageIndex)) {
         // Mirror into the other column at the same height.
         side = pct.left + pct.width / 2 < 50 ? "right" : "left";
         box.style.left = `${100 - pct.left - pct.width}%`;

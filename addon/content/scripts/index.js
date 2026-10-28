@@ -15,6 +15,7 @@
     "services/store.js",
     "services/llm.js",
     "services/updater.js",
+    "services/typography.js",
     "services/textLayerParser.js",
     "services/grobidParser.js",
     "services/parser.js",

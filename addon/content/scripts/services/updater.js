@@ -7,7 +7,7 @@
 /* global DeepRead, ChromeUtils, Zotero */
 
 DeepRead.Updater = {
-  RELEASES_URL: "https://github.com/Lsy-aia/deepread/releases",
+  RELEASES_URL: "https://github.com/solsongli/deepread/releases",
 
   async _addon() {
     const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");

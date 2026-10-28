@@ -2304,7 +2304,9 @@ Paper sections JSON data:`;
           type: 'list',
           bbox: item.bbox // 保留 bbox 信息
         });
-      } else if (item.type === 'image') {
+      } else if (['image', 'chart', 'figure'].includes(item.type)) {
+        item = { ...item, image_caption: item.image_caption || item.chart_caption || item.caption || [] };
+        if (typeof item.image_caption === 'string') item.image_caption = [item.image_caption];
         // 选择文本长度最长的 image_caption
         let longestCaption = '';
         if (item.image_caption && Array.isArray(item.image_caption)) {
@@ -2794,7 +2796,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
    * @param {Object} mineruBlock - MinerU块数据
    * @returns {Object} { text: String, chars: Array, charCount: number, charMapping: Array }
    */
-  _extractTextByBbox(charsDataList, mineruBlock) {
+  _extractTextByBbox(charsDataList, mineruBlock, visualBlocks = []) {
     const {
       bbox,
       page_idx
@@ -2855,6 +2857,17 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
     // 3. 按offset排序保持阅读顺序
     charsInBbox.sort((a, b) => a.offset - b.offset);
 
+    // Keep neighboring figure labels / columns out of an oversized parser box.
+    let aligned = DeepRead.Typography?.match(charsInBbox, mineruBlock.text);
+    if (!aligned && visualBlocks.length && mineruBlock.type === "text") {
+      const regions = visualBlocks.map((b) => this._convertMinerUBboxToPdfCoords(b.bbox, page_idx)).filter(Boolean);
+      const outside = charsInBbox.filter((c) => !regions.some((r) => this._isCharInBbox(c.rect, r)));
+      // Only discard figure text when the remaining characters match the complete
+      // source paragraph. Overlapping/incorrect figure boxes must not delete prose.
+      aligned = DeepRead.Typography?.match(outside, mineruBlock.text);
+    }
+    if (aligned) charsInBbox = aligned;
+
     // 4. 提取格式化文本和字符映射
     const {
       text,
@@ -2911,18 +2924,22 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
           // 4. 对image和table类型特殊处理：直接使用MinerU数据，不做字符匹配
           let extractionResult;
           if (block.type === 'image' || block.type === 'table') {
-            // 对于image和table，直接使用MinerU提供的caption作为text
-            extractionResult = {
-              text: block.text || '',
-              // MinerU已经处理好的caption文本
-              chars: [],
-              // 空字符数组，因为不进行字符匹配
-              charCount: block.text ? block.text.length : 0,
-              skipCharMatching: true // 标记跳过字符匹配
+            // Captions can lie outside the image bbox. Match on this page, uniquely;
+            // keep the caption itself if OCR/text-layer disagreement prevents alignment.
+            const captionChars = DeepRead.Typography?.match(
+              charsDataList.filter((c) => c.pageIndex === page_idx), block.text
+            );
+            extractionResult = captionChars ? {
+              ...this._extractFormattedText(captionChars), chars: captionChars,
+              charCount: captionChars.length, skipCharMatching: false,
+            } : {
+              text: block.text || "", chars: [], charCount: (block.text || "").length,
+              skipCharMatching: true,
             };
           } else {
             // 对于其他类型，使用bbox直接提取对应的原文段落
-            extractionResult = this._extractTextByBbox(charsDataList, block);
+            extractionResult = this._extractTextByBbox(charsDataList, block,
+              mineruBlocks.filter((b) => b !== block && ["image", "table"].includes(b.type) && b.bbox));
             if (extractionResult.charCount === 0) {
               console.warn(`[bboxMatch] ⚠️ 未在bbox内找到字符: ${block.type}块，文本="${block.text?.substring(0, 30)}..."`);
               // 对于空结果，可以选择跳过或创建空条目，这里选择跳过
@@ -2935,6 +2952,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
             paragraph_idx: matchedParagraphs.length,
             // 在页面中的顺序索引
             text: extractionResult.text,
+            typography: DeepRead.Typography?.metrics(extractionResult.chars || []),
             // MinerU的caption文本或bbox提取的原文
             charMapping: extractionResult.skipCharMatching ? [] // image/table类型跳过字符匹配，使用空数组
             : extractionResult.charMapping,
@@ -3763,6 +3781,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
             paragraph_idx: paragraph_idx,
             paragraph_type: paraType,
             paragraph_text: paraText,
+            typography: para.typography,
             bbox: para.bbox,
             // 保留 MinerU 原始 ID 和 image/table 特有字段
             minerUid: para.minerUid,
@@ -4606,6 +4625,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
    - 格式：索引从 0 开始。points 必须覆盖所有句子，不能遗漏。单句段落使用 [[0]]。
 3. point_summaries：数组，与 point_split 对齐。每个元素是使用 ${lang.instruction} 写的精炼摘要（10词或等量字数以内）。
 4. point_translations：数组，与 point_split 对齐。每个元素是将该 point 中所有句子完整、流畅翻译成 ${lang.instruction} 的结果。
+   - 原文句子中的 **粗体**、*斜体* 是真实排版标记：仅将对应译文用同样标记包裹，普通文字保持普通，不要自行强调或把整段加粗。保留列表项与段落边界。
    - 翻译必须准确完整，每项必须是非空字符串
    - 如果一个 point 包含多个句子，请把它们作为一个连贯语义单元翻译
    - 为保证准确性，成熟技术术语可以保留英文
@@ -4635,6 +4655,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
    - Format: Indices start from 0. Points must cover all sentences without omission. Single-sentence paragraph: [[0]].
 3. point_summaries: Array aligned with point_split. Each element: concise summary in ${lang.instruction} (10 words or equivalent or less).
 4. point_translations: Array aligned with point_split. Each element: complete, fluent translation of all sentences in that point into ${lang.instruction}.
+   - Source **bold** and *italic* mark actual typography: preserve emphasis on the corresponding translated words only. Keep unmarked text plain; never bold the whole paragraph or invent emphasis. Preserve list and paragraph boundaries.
    - Translations must be accurate and complete; each must be a non-empty string
    - If a point has multiple sentences, translate them as a cohesive unit
    - Established technical terms may remain in English for accuracy
@@ -4657,7 +4678,7 @@ Output (if target language is English):
 }`;
     const formattedParagraphs = paragraphs.map((para) => {
       const paraId = `${para.page_idx}_${para.paragraph_idx}`;
-      const sentences = para.sentences.map((s, idx) => `[${idx}] ${JSON.stringify(s.text)}`).join('\n  ');
+      const sentences = para.sentences.map((s, idx) => `[${idx}] ${JSON.stringify(DeepRead.Typography?.styledSentence(s, this._summaryManager.charsDataList || []) ?? s.text)}`).join('\n  ');
       return `{ id: “${paraId}”, sentences: [\n  ${sentences}\n] }`;
     }).join('\n\n');
     const jsonInstructions = this._useChinesePrompt() ? `只返回一个 JSON 对象，其中包含 'paragraphs' 数组。每个 item 必须包含：id、paragraph_summary、point_split、point_summaries、point_translations。key 和字符串值必须使用英文双引号。不要返回解释、Markdown 代码块或其他文本。` : `Return only a JSON object containing a 'paragraphs' array. Each item must contain: id, paragraph_summary, point_split, point_summaries, point_translations. Use double quotes for keys and values.`;

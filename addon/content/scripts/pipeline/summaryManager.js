@@ -262,6 +262,7 @@ DeepRead.SummaryManager = class SummaryManager {
           paragraphIndex: para.paragraph_idx,
           paragraphType: para.paragraph_type,
           paragraphText: para.paragraph_text,
+          typography: para.typography || null,
           paragraphSummary: para.paragraph_summary || '',
           minerUid: para.minerUid,
           importance_level: para.importance_level,
@@ -451,12 +452,19 @@ DeepRead.SummaryManager = class SummaryManager {
       return [];
     }
 
-    // charMapping中存储的是全局charsDataList的索引
-    const startGlobalIdx = charMapping[0];
-    const endGlobalIdx = charMapping[charMapping.length - 1];
-
-    // 直接使用全局索引获取rects
-    const rects = this._getRangeRects(this.charsDataList, startGlobalIdx, endGlobalIdx);
+    // Excluded figure labels may sit between the first and last mapped character.
+    // Build only contiguous runs, otherwise those labels reappear in the hit area.
+    const indices = [...new Set(charMapping.filter(Number.isInteger))].sort((a, b) => a - b);
+    const rects = [];
+    let start = indices[0], end = start;
+    for (const index of indices.slice(1)) {
+      if (index !== end + 1) {
+        rects.push(...this._getRangeRects(this.charsDataList, start, end));
+        start = index;
+      }
+      end = index;
+    }
+    if (start !== undefined) rects.push(...this._getRangeRects(this.charsDataList, start, end));
     return rects;
   }
 

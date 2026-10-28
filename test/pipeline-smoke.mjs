@@ -15,7 +15,7 @@ const sandbox = {
 };
 const ctx = vm.createContext(sandbox);
 for (const f of ["util.js", "l10n.js", "pipeline/languages.js", "pipeline/responseFormats.js",
-  "pipeline/summaryManager.js", "pipeline/pipeline.js"]) {
+  "services/typography.js", "pipeline/summaryManager.js", "pipeline/pipeline.js"]) {
   vm.runInContext(fs.readFileSync(path.join(scripts, f), "utf8"), ctx, { filename: f });
 }
 const DR = sandbox.DeepRead;

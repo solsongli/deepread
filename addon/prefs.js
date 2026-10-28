@@ -31,7 +31,7 @@ pref("extensions.zotero.deepread.view.figureCards", true);
 pref("extensions.zotero.deepread.view.skim", true);
 pref("extensions.zotero.deepread.view.lookup", true);
 pref("extensions.zotero.deepread.view.questions", true);
-pref("extensions.zotero.deepread.view.guided", true);
+pref("extensions.zotero.deepread.view.guided", false);
 pref("extensions.zotero.deepread.skim.depth", "full");
 pref("extensions.zotero.deepread.questions.hideAnswers", false);
 pref("extensions.zotero.deepread.view.railWidth", 280);
