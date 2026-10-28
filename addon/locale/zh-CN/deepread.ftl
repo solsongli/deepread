@@ -10,10 +10,6 @@ deepread-pane-questions-header =
     .label = 阅读问题
 deepread-pane-questions-sidenav =
     .tooltiptext = 阅读问题
-deepread-pane-glossary-header =
-    .label = 术语与符号
-deepread-pane-glossary-sidenav =
-    .tooltiptext = 术语与符号
 deepread-pane-outline-header =
     .label = AI 大纲
 deepread-pane-outline-sidenav =
@@ -111,15 +107,6 @@ deepread-pref-chat-maxcontext = 对话最大上下文字符数
 deepread-pref-privacy-title = 隐私
 deepread-pref-privacy-note = API Key 保存在本机的 Zotero 设置中；PDF 内容只会发送到您在此处配置的服务。
 
-deepread-pane-flashcards-header =
-    .label = 闪卡
-deepread-pane-flashcards-sidenav =
-    .tooltiptext = 闪卡
-deepread-pane-code-header =
-    .label = 代码
-deepread-pane-code-sidenav =
-    .tooltiptext = 代码
-
 deepread-pref-update-title = 版本与更新
 deepread-pref-update-current =
     .value = 当前版本
@@ -130,7 +117,7 @@ deepread-pref-update-releases = 查看更新日志
 
 # --- v0.8 settings pane ---
 deepread-pref-llm-title = ① 精读 API
-deepread-pref-llm-hint = 用于翻译、卡片讲解、闪卡、AI 对话。可保存多套服务，点选卡片即可一键切换。
+deepread-pref-llm-hint = 用于翻译、卡片讲解、AI 对话。可保存多套服务，点选卡片即可一键切换。
 deepread-pref-profile-add =
     .label = + 添加
 deepread-pref-profile-copy =
@@ -184,7 +171,7 @@ deepread-pref-mod-skim =
 deepread-pref-mod-skim-hint = 速读分层：工具栏下可选阅读深度（全文 / 重点 / 只看边注），淡化次要段落、标出关键句，次要卡片收成一行
 deepread-pref-mod-lookup =
     .label = 悬停查证
-deepread-pref-mod-lookup-hint = 悬停查证：鼠标停在引用、图表引用、术语和符号上显示说明，与卡片相互独立
+deepread-pref-mod-lookup-hint = 悬停查证：鼠标停在引用和图表引用上显示说明，与卡片相互独立
 deepread-pref-mod-questions =
     .label = 问题导向
 deepread-pref-mod-questions-hint = 问题导向：精读后给出 5 个阅读问题，可加自己的问题；答案挂到卡片和结构条

@@ -3959,6 +3959,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
     let mergedPointSplit = [...(base.point_split || [])];
     let mergedPointSummaries = [...(base.point_summaries || [])];
     let mergedPointTranslations = [...(base.point_translations || [])];
+    const mergedLevels = (base.point_split || []).map((_, i) => base.point_importance_levels?.[i] || 1);
     let maxImportance = base.importance_level || 1;
 
     // 收集所有bbox用于合并（使用副本避免引用问题）
@@ -3988,6 +3989,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
       // 合并point信息
       const newPointIndices = paraSentences.map((_, idx) => currentSentenceOffset + idx);
       mergedPointSplit.push(newPointIndices);
+      mergedLevels.push(isEquation ? 1 : Math.max(1, ...(para.point_importance_levels || [])));
       mergedPointSummaries.push(para.paragraph_summary || '');
 
       // ✅ 修复：根据段落类型处理翻译合并
@@ -4033,12 +4035,15 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
       paragraph_type: 'text_with_equation',
       type: 'text_with_equation',
       text: mergedText,
+      paragraph_text: mergedText,
+      typography: base.typography,
       sentences: mergedSentences,
       importance_level: maxImportance,
       paragraph_summary: base.paragraph_summary,
       point_split: mergedPointSplit,
       point_summaries: mergedPointSummaries,
       point_translations: mergedPointTranslations,
+      point_importance_levels: mergedLevels,
       bbox: mergedBbox,
       minerUid: base.minerUid,
       _mergedCount: paragraphs.length
@@ -4096,6 +4101,8 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
       paragraph_idx: textParagraph.paragraph_idx,
       paragraph_type: 'text_with_equation',
       text: `${textParagraph.text}\n${equationParagraph.text}`,
+      paragraph_text: `${textParagraph.text}\n${equationParagraph.text}`,
+      typography: textParagraph.typography,
       type: 'text_with_equation',
       sentences: [...textSentences, ...equationSentences.map((sentence, idx) => ({
         ...sentence,
@@ -4108,6 +4115,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
       point_split: [...(textParagraph.point_split || []), equationSentenceIndices],
       point_summaries: [...(textParagraph.point_summaries || []), equationParagraph.paragraph_summary],
       point_translations: [...(textParagraph.point_translations || []), equationParagraph.point_translations || []],
+      point_importance_levels: [...(textParagraph.point_split || []).map((_, i) => textParagraph.point_importance_levels?.[i] || 1), 1],
       // 保留bbox用于fallback
       bbox: textParagraph.bbox,
       equationBbox: equationParagraph.bbox,
@@ -4592,7 +4600,11 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
           // paragraph的importance_level暂时没用到，全设置为1
           point_split: matched.point_split || [],
           point_summaries: matched.point_summaries || [],
-          point_translations: pointTranslations
+          point_translations: pointTranslations,
+          point_importance_levels: Array.isArray(matched.point_importance_levels)
+            && matched.point_importance_levels.length === (matched.point_split || []).length
+            && matched.point_importance_levels.every((v) => Number.isInteger(v) && v >= 1 && v <= 3)
+            ? matched.point_importance_levels : undefined
         });
       } else {
         // 未找到匹配，保留原数据
@@ -4626,10 +4638,13 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
 3. point_summaries：数组，与 point_split 对齐。每个元素是使用 ${lang.instruction} 写的精炼摘要（10词或等量字数以内）。
 4. point_translations：数组，与 point_split 对齐。每个元素是将该 point 中所有句子完整、流畅翻译成 ${lang.instruction} 的结果。
    - 原文句子中的 **粗体**、*斜体* 是真实排版标记：仅将对应译文用同样标记包裹，普通文字保持普通，不要自行强调或把整段加粗。保留列表项与段落边界。
+   - 尽量保持与原文相近的显示篇幅：用紧凑自然的中文，避免解释性扩写；数字、限定条件、因果和技术含义不能删减，也不能为了凑长度添加内容。
    - 翻译必须准确完整，每项必须是非空字符串
    - 如果一个 point 包含多个句子，请把它们作为一个连贯语义单元翻译
    - 为保证准确性，成熟技术术语可以保留英文
    - paragraph_summary、point_summaries、point_translations 必须使用 ${lang.instruction}；英文只能用于必要的专有名词、模型名、数据集名和指标名，不能输出完整英文解释句
+
+5. point_importance_levels：与 point_split 对齐的整数数组，1=普通，2=重要，3=核心贡献或关键证据。只突出少数真正承载主张的要点，多数为 1；不要整页都设为 2 或 3。
 
 **示例**：
 输入段落（4 个句子）：
@@ -4642,6 +4657,7 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
     “id”: “0_0”,
     “paragraph_summary”: “Transformer相对于卷积神经网络的优势”,
     “point_split”: [[0], [1, 2], [3]],
+    “point_importance_levels”: [1, 2, 3],
     “point_summaries”: [“卷积神经网络能减少顺序计算”, “但难以学习远程依赖关系”, “Transformer将操作数降为常数”],
     “point_translations”: [“减少顺序计算的目标也构成了...”, “在这些模型中，关联任意位置信号所需的操作数随距离增长...”, “在Transformer中，这被减少到恒定数量的操作...”]
   }
@@ -4656,9 +4672,12 @@ Return only the JSON array, no other explanation. If nothing to filter, return e
 3. point_summaries: Array aligned with point_split. Each element: concise summary in ${lang.instruction} (10 words or equivalent or less).
 4. point_translations: Array aligned with point_split. Each element: complete, fluent translation of all sentences in that point into ${lang.instruction}.
    - Source **bold** and *italic* mark actual typography: preserve emphasis on the corresponding translated words only. Keep unmarked text plain; never bold the whole paragraph or invent emphasis. Preserve list and paragraph boundaries.
+   - Prefer concise, natural wording close to the source visual length. Do not expand into explanations, omit qualifications/numbers/causality, or add filler to force equal lengths.
    - Translations must be accurate and complete; each must be a non-empty string
    - If a point has multiple sentences, translate them as a cohesive unit
    - Established technical terms may remain in English for accuracy
+
+5. point_importance_levels: Integers aligned with point_split: 1=ordinary, 2=important, 3=central contribution or evidence. Highlight sparsely; most points should be 1. Do not mark the whole page important.
 
 **Example**:
 Input paragraph (4 sentences):
@@ -4671,6 +4690,7 @@ Output (if target language is English):
     “id”: “0_0”,
     “paragraph_summary”: “Transformer advantages over convolution”,
     “point_split”: [[0], [1, 2], [3]],
+    “point_importance_levels”: [1, 2, 3],
     “point_summaries”: [“Convolution reduces sequential computation”, “But long-range dependencies remain hard”, “Transformer makes operations constant”],
     “point_translations”: [“The goal of reducing sequential computation also forms the foundation of...”, “In these models, the number of operations required to relate signals at arbitrary positions grows with distance...”, “In the Transformer, this is reduced to a constant number of operations...”]
 		  }
@@ -4681,7 +4701,7 @@ Output (if target language is English):
       const sentences = para.sentences.map((s, idx) => `[${idx}] ${JSON.stringify(DeepRead.Typography?.styledSentence(s, this._summaryManager.charsDataList || []) ?? s.text)}`).join('\n  ');
       return `{ id: “${paraId}”, sentences: [\n  ${sentences}\n] }`;
     }).join('\n\n');
-    const jsonInstructions = this._useChinesePrompt() ? `只返回一个 JSON 对象，其中包含 'paragraphs' 数组。每个 item 必须包含：id、paragraph_summary、point_split、point_summaries、point_translations。key 和字符串值必须使用英文双引号。不要返回解释、Markdown 代码块或其他文本。` : `Return only a JSON object containing a 'paragraphs' array. Each item must contain: id, paragraph_summary, point_split, point_summaries, point_translations. Use double quotes for keys and values.`;
+    const jsonInstructions = this._useChinesePrompt() ? `只返回一个 JSON 对象，其中包含 'paragraphs' 数组。每个 item 必须包含：id、paragraph_summary、point_split、point_summaries、point_translations、point_importance_levels。key 和字符串值必须使用英文双引号。不要返回解释、Markdown 代码块或其他文本。` : `Return only a JSON object containing a 'paragraphs' array. Each item must contain: id, paragraph_summary, point_split, point_summaries, point_translations, point_importance_levels. Use double quotes for keys and values.`;
     const paragraphListLabel = this._useChinesePrompt() ? '段落列表' : 'Paragraph list';
     return `${taskDescription}\n\n${paragraphListLabel}:\n${formattedParagraphs}\n\n${jsonInstructions}`;
   }

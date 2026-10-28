@@ -17,7 +17,7 @@
 (function () {
   const HTML_NS = "http://www.w3.org/1999/xhtml";
   const HIGHLIGHT_ALPHA = 0.28; // highlighter colours (session.levelColor) drawn over the PDF text
-  const FIT_MIN = 0.85; // translation panel font scale range when fitting it to the paragraph's box
+  const FIT_MIN = 0.82; // preserve legibility while fitting the original paragraph box
   const FIT_MAX = 1.0;
   const HOVER_POINT_COLOR = "rgba(251, 191, 36, 0.32)";
   const SHOW_DELAY = 140;
@@ -33,11 +33,12 @@
 .deepread-layer .dr-dim { position: absolute; background: rgba(255, 255, 255, 0.6); border-radius: 2px; }
 .deepread-layer .dr-dim.dr-dim-strong { background: rgba(255, 255, 255, 0.78); }
 .deepread-layer .dr-keyline { position: absolute; border-bottom: 2px solid rgba(217, 119, 6, 0.8); }
-.deepread-layer .dr-translation { position: absolute; box-sizing: content-box; padding: 3px 5px;
-  margin-left: -6px; background: #fffef9; color: #111; border-radius: 4px;
+.deepread-layer .dr-translation { position: absolute; box-sizing: border-box; padding: 2px 4px;
+  background: #fffef9; color: #111; border-radius: 4px;
   border: 1px solid rgba(251, 191, 36, 0.7); box-shadow: 0 3px 12px rgba(0, 0, 0, 0.16);
   font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
-  text-align: justify; text-align-last: start; overflow-wrap: anywhere; hyphens: none; }
+  text-align: justify; text-align-last: start; overflow-wrap: anywhere; hyphens: none;
+  pointer-events: auto; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .deepread-layer .dr-translation.dr-title { font-weight: 700; text-align: start; }
 .deepread-layer .dr-translation p { margin: 0; }
 .deepread-layer .dr-translation .katex { font-size: 1em; }
@@ -159,7 +160,6 @@
       this.trPara = null; // hovered paragraph currently shown as its translation
       this._suppressPara = null; // pressed/selected paragraph: show the original until the pointer leaves it
       this._trContent = new WeakMap(); // paragraph → rendered translation (DocumentFragment)
-      this._trFit = new WeakMap(); // paragraph → { [page width]: font scale bounded by the original text size }
       this.altDown = false;
       this._timers = {};
       this._cleanup = [];
@@ -553,7 +553,8 @@
     }
 
     _translationContent(paragraph, text) {
-      let frag = this._trContent.get(paragraph);
+      const cached = this._trContent.get(paragraph);
+      let frag = cached?.text === text ? cached.frag : null;
       if (!frag) {
         frag = inlineMarkdown(this.pdfDoc, text);
         // CommonMark rejects closing emphasis after CJK punctuation immediately
@@ -578,7 +579,7 @@
           }
           if (end) { parts.append(value.slice(end)); node.replaceWith(parts); }
         }
-        this._trContent.set(paragraph, frag);
+        this._trContent.set(paragraph, { text, frag });
       }
       return frag.cloneNode(true);
     }
@@ -586,8 +587,8 @@
     /**
      * Shows the translation in a panel the size of the paragraph, so the original stays readable:
      * on a two-column page beside it in the other column (left column → right, right column → left),
-     * otherwise right below it (above when the page has no room below). The font never exceeds the original's size; overflow may grow vertically rather than
-     * making the text unreadably small. Captions use their natural text height.
+     * otherwise below (above when needed). Match the source width and fit its height
+     * with bounded font/leading changes; long translations scroll. Captions size naturally.
      */
     _drawTranslation(ctx, paragraph) {
       const text = this._paragraphTranslation(paragraph);
@@ -607,37 +608,49 @@
       box.style.left = `${pct.left}%`;
       ctx.transient.append(box);
 
-      // Fit: the largest font (within FIT_MIN–FIT_MAX of the original) whose text fits the paragraph's height.
       const visual = ["image", "table", "chart", "figure"].includes(paragraph.paragraphType);
-      // Captions use their natural text height, never the area of the figure.
-      const target = visual ? metrics.lineHeight : Math.max(metrics.lineHeight, (pct.height / 100) * pageH);
+      const rawHeight = (pct.height / 100) * pageH;
+      // One-line boxes need space for the border; multiline prose follows its source
+      // height. Unmapped legacy figure boxes must never dictate a caption's height.
+      const target = Math.max(metrics.lineHeight + 6, rawHeight);
       const ratio = metrics.lineHeight / metrics.fontSize || 1.2;
-      const setScale = (k) => {
+      const setScale = (k, pitch = ratio) => {
         box.style.fontSize = `${metrics.fontSize * k}px`;
-        box.style.lineHeight = `${metrics.fontSize * k * ratio}px`;
+        box.style.lineHeight = `${metrics.fontSize * k * pitch}px`;
       };
-      const fits = (k) => {
-        setScale(k);
-        return box.clientHeight - 6 <= target + 1; // 6 = vertical padding
-      };
-      const cacheKey = `${geom.div.clientWidth}`;
-      let scale = this._trFit.get(paragraph)?.[cacheKey];
-      if (visual) scale = 1;
-      if (!scale) {
-        let lo = FIT_MIN;
-        let hi = FIT_MAX;
-        if (fits(hi)) lo = hi;
-        else if (!fits(lo)) hi = lo;
-        for (let i = 0; i < 8 && hi - lo > 0.01; i++) {
-          const mid = (lo + hi) / 2;
-          if (fits(mid)) lo = mid;
-          else hi = mid;
+      setScale(1);
+      if (!visual) {
+        box.style.height = `${target}px`;
+        const fits = (k, pitch) => {
+          setScale(k, pitch);
+          return box.scrollHeight <= box.clientHeight + 1 && box.scrollWidth <= box.clientWidth + 1;
+        };
+        let scale = 1, pitch = ratio;
+        if (!fits(1, pitch)) {
+          // Tighten leading before shrinking glyphs. Never enlarge short Chinese text
+          // merely to fill the English box, nor drop words to make a translation fit.
+          pitch = Math.min(ratio, 1.12);
+          let lo = Math.max(FIT_MIN, Math.min(1, 9 / metrics.fontSize)), hi = 1;
+          for (let i = 0; i < 8; i++) {
+            const mid = (lo + hi) / 2;
+            if (fits(mid, pitch)) lo = mid;
+            else hi = mid;
+          }
+          scale = lo;
         }
-        scale = lo;
-        this._trFit.set(paragraph, { ...(this._trFit.get(paragraph) || {}), [cacheKey]: scale });
+        setScale(scale, pitch);
+        box.dataset.scale = scale.toFixed(2);
       }
-      setScale(scale);
-      if (!visual) box.style.minHeight = `${target}px`;
+      else box.dataset.scale = "1.00";
+      box.dataset.overflow = String(box.scrollHeight > box.clientHeight + 1);
+      if (box.dataset.overflow === "true") {
+        box.tabIndex = 0;
+        box.title = DeepRead.bilingual("译文较长，可在框内滚动查看全文", "Scroll inside to read the full translation");
+      }
+      box.addEventListener("wheel", (event) => { event.stopPropagation(); }, { passive: true });
+      box.addEventListener("pointerdown", (event) => event.stopPropagation());
+      box.addEventListener("pointerup", (event) => event.stopPropagation());
+      box.addEventListener("pointerenter", () => clearTimeout(this._timers.hide));
 
       let side;
       if (!visual && pct.width <= 60 && this.isTwoColumn(paragraph.pageIndex)) {
@@ -662,8 +675,7 @@
         }
       }
       box.dataset.side = side;
-      box.dataset.fontSize = (metrics.fontSize * scale).toFixed(2);
-      box.dataset.scale = scale.toFixed(2);
+      box.dataset.fontSize = parseFloat(box.style.fontSize).toFixed(2);
       box.style.visibility = "";
       // Outline the paragraph the panel belongs to.
       const pad = 2;
@@ -701,12 +713,15 @@
     _onPointerMove(event) {
       if (!this.pages.size) return;
       this.altDown = !!event.altKey;
+      if (event.target?.closest?.(".dr-translation")) { clearTimeout(this._timers.hide); return; }
       const active = this.options.hoverCards || this.railActive || this.options.translationPopup;
       if (!active || event.buttons) {
         if (this.hoverPara) this._setHover(null);
         return;
       }
       const paragraph = this._hitTest(event);
+      if (!paragraph && this.trPara) { this._scheduleHide(); return; }
+      if (paragraph) clearTimeout(this._timers.hide);
       if (paragraph !== this._suppressPara) this._suppressPara = null;
       if (paragraph !== this.hoverPara) {
         this._setHover(paragraph);
@@ -752,6 +767,7 @@
     /* ---------- click: open the paragraph's card ---------- */
 
     _onPointerDown(event) {
+      if (event.target?.closest?.(".dr-translation")) { this._press = null; return; }
       if (!this.pages.size || event.button !== 0) return;
       this._press = { x: event.clientX, y: event.clientY, t: Date.now(), modified: event.shiftKey || event.ctrlKey || event.metaKey || event.altKey };
       // Pressing means working with the original text (select, annotate): show it.
@@ -778,13 +794,21 @@
       }
       if (press.modified || Date.now() - press.t > 800) return;
       if (event.target?.closest?.(".annotationLayer a, a[href]")) return;
-      this.openParagraph(paragraph);
+      this.openParagraph(paragraph, { toggle: true });
     }
 
     /** Open (or with null: close) the paragraph's card — in the margin rail, or as a pinned hover card. */
-    openParagraph(paragraph) {
+    openParagraph(paragraph, { toggle = false } = {}) {
       if (this.railActive && this.session.rail) {
-        this.session.rail.openParagraph(paragraph);
+        this.session.rail.openParagraph(paragraph, { toggle });
+        return;
+      }
+      if (toggle && paragraph && this.cardPinned && this.cardPara
+          && this.session.groupLead(`p_${paragraph.pageIndex}_${paragraph.paragraphIndex}`)
+            === this.session.groupLead(`p_${this.cardPara.pageIndex}_${this.cardPara.paragraphIndex}`)) {
+        this.cardPinned = false;
+        this._hideCard(true);
+        clearTimeout(this._timers.show);
         return;
       }
       if (!paragraph) {
@@ -871,9 +895,7 @@
           DeepRead.util.copyToClipboard(this._paragraphTranslation(paragraph));
         });
       }
-      button("卡", DeepRead.bilingual("生成闪卡", "Make a flashcard"), () => {
-        this.session.createFlashcard({ pageIndex: paragraph.pageIndex, rects: paragraph.rects, quote: paragraph.paragraphText || "", source: "paragraph" });
-      });
+
       button("AI", DeepRead.t("card.askAI"), () => {
         this.session.askAI({ text: paragraph.paragraphText || "", pageIndex: paragraph.pageIndex, block: DeepRead.Rail.blockLabel(paragraph) });
       });

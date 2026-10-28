@@ -1,5 +1,12 @@
 # DeepRead — developer notes and module contracts
 
+Current reading-flow branch: glossary, flashcards and code repository panels/services have been removed.
+Their historical contracts below are retained as version history, not current runtime entry points.
+Legacy SQLite columns/tables are preserved. New runtime helpers are `services/cardGroups.js` (AI/manual/
+continuation grouping without rewriting paragraph keys) and `services/highlights.js` (sparse legacy fallback).
+Current regression: `test/readingFlow.test.mjs` and offline `test/e2e/readingFlow.js`; research rationale:
+`docs/READING_METHODS.md`. UI navigation opens cards explicitly; only source pointer clicks request toggling.
+
 DeepRead is a Zotero 7–10 plugin (bootstrapped, no build step for runtime code). It rebuilds the AI reading features of
 "Vibero" (an AGPL fork of Zotero 8): MinerU PDF structure parsing → per-paragraph LLM summary / key points / point
 translations → overlays in the PDF reader, plus article summary cards, AI outline and AI chat. All network calls go to

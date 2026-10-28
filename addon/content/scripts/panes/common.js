@@ -124,36 +124,6 @@
         ...common("questions"),
       });
 
-      paneIDs.glossary = Zotero.ItemPaneManager.registerSection({
-        paneID: "deepread-glossary",
-        header: { l10nID: "deepread-pane-glossary-header", icon: icon("glossary") },
-        sidenav: { l10nID: "deepread-pane-glossary-sidenav", icon: icon("glossary") },
-        sectionButtons: [{
-          type: "regenerate",
-          icon: "chrome://zotero/skin/16/universal/refresh.svg",
-          l10nID: "deepread-section-button-regenerate",
-          onClick: ({ body }) => {
-            const session = bodies.get(body)?.session;
-            session?.buildGlossary().catch((e) => DeepRead.Panes.reportError(session, e));
-          },
-        }],
-        ...common("glossary"),
-      });
-
-      paneIDs.flashcards = Zotero.ItemPaneManager.registerSection({
-        paneID: "deepread-flashcards",
-        header: { l10nID: "deepread-pane-flashcards-header", icon: icon("flashcards") },
-        sidenav: { l10nID: "deepread-pane-flashcards-sidenav", icon: icon("flashcards") },
-        ...common("flashcards"),
-      });
-
-      paneIDs.code = Zotero.ItemPaneManager.registerSection({
-        paneID: "deepread-code",
-        header: { l10nID: "deepread-pane-code-header", icon: icon("code") },
-        sidenav: { l10nID: "deepread-pane-code-sidenav", icon: icon("code") },
-        ...common("code"),
-      });
-
       paneIDs.chat = Zotero.ItemPaneManager.registerSection({
         paneID: "deepread-chat",
         header: { l10nID: "deepread-pane-chat-header", icon: icon("chat") },

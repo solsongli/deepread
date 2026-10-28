@@ -112,9 +112,13 @@ DeepRead.ResponseFormats = (function () {
       point_summaries: {
         type: 'array',
         items: { type: 'string', minLength: 5, maxLength: 100 }
+      },
+      point_importance_levels: {
+        type: 'array',
+        items: { type: 'integer', enum: [1, 2, 3] }
       }
     };
-    const required = ['id', 'paragraph_summary', 'point_split', 'point_summaries'];
+    const required = ['id', 'paragraph_summary', 'point_split', 'point_summaries', 'point_importance_levels'];
     if (includeTranslations) {
       props.point_translations = {
         type: 'array',

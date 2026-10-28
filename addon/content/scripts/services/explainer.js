@@ -49,8 +49,8 @@
     "{\"cards\":[{\"keys\":[\"<key>\",\"<key>\"],\"role\":\"<one role>\",\"title\":\"<short title>\",\"explanation\":\"<your explanation>\"}]}",
     "Rules for cards:",
     "- The keys of one card must be consecutive in the order given. Never skip a paragraph inside a card.",
-    "- Merge only paragraphs that explain the same point, step or result (a paragraph that continues the previous one's argument). Put at most 4 paragraphs in one card.",
-    "- Most cards will have a single key. When in doubt, do not merge.",
+    "- Merge only paragraphs that explain the same point, step or result (a paragraph that continues the previous one's argument). Use up to 8 short fragments in one card, but never merge an entire section with unrelated claims.",
+    "- Prefer one card for one complete idea. Merge parser fragments and continuations of the same argument; split at topic or section changes, never just because a PDF block ended.",
     "- Every input key appears in exactly one card, and keys are copied exactly as given.",
     "- A merged card's explanation covers all of its paragraphs (3 to 7 sentences).",
     "- The title is 4 to 14 words (or at most 16 characters for Chinese, Japanese or Korean) naming what the card is about, in the target language.",
@@ -104,9 +104,9 @@
         size = 0;
       };
       for (const p of page.paragraphs || []) {
-        if (!eligible(p)) continue;
+        if (!eligible(p)) { flush(); continue; }
         const k = key(page.pageIndex, p.paragraphIndex);
-        if (only && !only.has(k)) continue;
+        if (only && !only.has(k)) { flush(); continue; }
         const text = str(p.paragraphText);
         if (items.length && size + text.length > MAX_BATCH_CHARS) flush();
         items.push({ key: k, text, summary: str(p.paragraphSummary) });

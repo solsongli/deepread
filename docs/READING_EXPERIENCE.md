@@ -21,6 +21,8 @@
 
 ## 使用与局限
 
+后续阅读方法调研与本轮实现见 [READING_METHODS.md](READING_METHODS.md)。本轮进一步改为译文等宽、尽量等高，超出时滚动；增加连续片段自动合并、手动合并／拆开、再次点击原文收起、模型重要度高亮和旧缓存稀疏建议；移除术语与符号、闪卡、代码功能及请求，数据库旧内容保留。下文 v1.0.1 的实现记录描述第一轮修复。
+
 - 旧缓存的图注大字号回退和不放大策略立即生效。粗体翻译、图注字符定位、混块重对齐需要重新精读；仅重新生成 AI 讲解不够。
 - 扫描版、字体元数据缺失、OCR 与文字层不一致、重复图注无法唯一匹配时，保留原有内容。不是完整的版面识别模型，不保证纠正所有 MinerU 分块错误。
 - 强调范围的跨语言映射仍由用户配置的翻译模型执行；已验证输入标记和显示链路，没有调用真实付费模型验证语义对齐。
@@ -32,6 +34,7 @@
 npm test
 python3 test/build-reading-fixture.py
 E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/typography.pdf" scripts/e2e.sh test/e2e/typography.js
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/typography.pdf" scripts/e2e.sh test/e2e/readingFlow.js
 npm run build
 ```
 

@@ -255,7 +255,7 @@ await test("grouping prompt states the cards shape and rules; group:false keeps 
   const user = requests[0].messages.at(-1).content;
   assert.match(user, /"cards":\[\{"keys":/);
   assert.match(user, /consecutive/);
-  assert.match(user, /at most 4 paragraphs/i);
+  assert.match(user, /up to 8 short fragments/i);
   assert.match(user, /exactly one card/);
   requests.length = 0;
   await E.explainPages(data(), { concurrency: 1, group: false });

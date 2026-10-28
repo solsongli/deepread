@@ -1,5 +1,5 @@
 /*
- * Margin rail: persistent paragraph summary cards (and flashcards) beside the PDF.
+ * Margin rail: persistent paragraph summary cards beside the PDF.
  *
  * Vibero widened every PDF page inside a modified pdf.js to make room for its margin cards.
  * A plugin cannot do that, so the PDF iframe is narrowed instead and a rail is placed next to
@@ -235,7 +235,7 @@
       return DeepRead.prefs.get("view.railLayout") === "right" ? "right" : "split";
     }
 
-    /** Which rail a paragraph/flashcard belongs to, from its horizontal position on the page. */
+    /** Which rail a paragraph belongs to, from its horizontal position on the page. */
     _sideFor(pageIndex, rect) {
       if (this.layoutMode !== "split" || !rect) return "right";
       const geom = this.overlay._geometry(pageIndex);
@@ -259,9 +259,18 @@
      * Open a paragraph's card (full card, next to its paragraph, scrolled into view); null closes it.
      * With "keep cards open" (pref cards.keepOpen) the previously opened card stays expanded.
      */
-    openParagraph(paragraph) {
+    openParagraph(paragraph, { toggle = false } = {}) {
       const raw = paragraph ? `p_${paragraph.pageIndex}_${paragraph.paragraphIndex}` : null;
       const key = raw ? this.session.groupLead(raw) : null;
+      if (toggle && key && this.isOpen(key)) {
+        this.expanded.delete(key);
+        if (this.focusKey === key) this.focusKey = null;
+        this._revealPending = false;
+        this._invalidate(key);
+        this.schedule(true);
+        return;
+      }
+      this.focusParagraphKey = raw;
       if (key === this.focusKey) {
         if (key) this._revealPending = true;
         this.schedule();
@@ -397,10 +406,10 @@
     /** Should the rail be shown right now? */
     _wanted() {
       if (!this.attached || !this.enabled) return false;
-      return this.overlay.pages.size > 0 || (this.session.flashcards || []).length > 0;
+      return this.overlay.pages.size > 0;
     }
 
-    /** Re-evaluate visibility and contents (call after data, flashcards or settings change). */
+    /** Re-evaluate visibility and contents (call after data or settings change). */
     refresh() {
       if (!this.attached) return;
       if (!this._wanted()) {
@@ -603,25 +612,18 @@
 
     _items() {
       const items = [];
-      const shownParagraphs = new Set();
+      const all = new Map([...this.overlay.pages].flatMap(([page, paras]) => paras.map((p) => [`p_${page}_${p.paragraphIndex}`, p])));
       for (const [pageIndex, paragraphs] of this.overlay.pages) {
-        const byKey = new Map(paragraphs.map((p) => [`p_${pageIndex}_${p.paragraphIndex}`, p]));
         for (const paragraph of paragraphs) {
           const key = `p_${pageIndex}_${paragraph.paragraphIndex}`;
           // Paragraphs merged into one card are drawn inside their first paragraph's card.
           if (this.session.groupLead(key) !== key || this.session.isCardHidden?.(key)) continue;
-          const keys = this.session.groupMembers(key).filter((k) => byKey.has(k));
-          const members = keys.length > 1 ? keys.map((k) => byKey.get(k)) : null;
-          for (const k of keys.length ? keys : [key]) shownParagraphs.add(k);
-          items.push({ key, kind: "paragraph", pageIndex, rect: paragraph.bbox, data: paragraph, members });
+          const keys = this.session.groupMembers(key).filter((k) => all.has(k));
+          const members = keys.length > 1 ? keys.map((k) => all.get(k)) : null;
+
+          const anchor = this.focusKey === key && keys.includes(this.focusParagraphKey) ? all.get(this.focusParagraphKey) : paragraph;
+          items.push({ key, kind: "paragraph", pageIndex: anchor.pageIndex, rect: anchor.bbox, data: paragraph, members });
         }
-      }
-      for (const card of this.session.flashcards || []) {
-        // Cards linked to a visible paragraph card are rendered inside it (see _fillParagraph).
-        if (shownParagraphs.has(this.session.flashcardParagraphKey(card))) continue;
-        const rect = card.rects?.length ? DeepRead.Overlay.unionRect(card.rects) : null;
-        if (!rect) continue;
-        items.push({ key: `f_${card.id}`, kind: "flashcard", pageIndex: card.pageIndex, rect, data: card });
       }
       if (DeepRead.Modules.enabled(this.session, "figureCards") && this.session.hasResults) {
         const figures = this.session.figures();
@@ -779,7 +781,7 @@
       const x = side === "left" ? w - 3 : 3;
       const x2 = side === "left" ? w - 12 : 12;
       for (const { anchor, top, kind } of links) {
-        const color = kind === "flashcard" ? "rgba(202,138,4,0.75)" : kind === "figure" ? "rgba(217,119,6,0.7)" : "rgba(107,114,128,0.55)";
+        const color = kind === "figure" ? "rgba(217,119,6,0.7)" : "rgba(107,114,128,0.55)";
         const dot = this.readerDoc.createElementNS(SVG_NS, "circle");
         dot.setAttribute("cx", String(x));
         dot.setAttribute("cy", String(anchor + 4));
@@ -799,12 +801,7 @@
 
     /* ---------- cards ---------- */
 
-    _cardSignature(c) {
-      return `${c.id}|${c.question}|${c.answer}|${c.note}|${c.updatedAt}|${this.session.flipped?.has(c.id)}|${this.session.editingFlashcard === c.id}|${c._busy || ""}`;
-    }
-
     _signature(item) {
-      if (item.kind === "flashcard") return `f|${this._cardSignature(item.data)}`;
       if (item.kind === "figure") {
         const focus = this.figureFocus?.id === item.data.id ? this.figureFocus.panel || "*" : "";
         return `g|${JSON.stringify(this.session.figureGuide(item.data.id))}|${this.session.explainingFigures}|${focus}`
@@ -813,7 +810,6 @@
       const paras = item.members || [item.data];
       const keys = paras.map((p) => `p_${p.pageIndex}_${p.paragraphIndex}`);
       const levels = paras.flatMap((p) => p.points || []).map((pt) => this.session.pointLevel(pt)).join("");
-      const attached = keys.flatMap((k) => this.session.flashcardsForParagraph(k)).map((c) => this._cardSignature(c)).join("||");
       const skim = this.session.skimDepth === "full" ? "" : `${this.session.skimDepth}:${this.session.skimTiers().tier.get(item.key) || ""}`;
       const questions = (this.session.questionsForKey?.(item.key) || []).map((q) => q.id).join(",");
       const guided = this.session.guide && DeepRead.Modules.enabled(this.session, "guided") ? this.session.guide.meta?.finishedAt || 1 : "";
@@ -821,7 +817,7 @@
         + `|${paras.map((p) => this.session.paragraphSummary(p)).join("|")}|${levels}|${this.isOpen(item.key)}|${this.focusKey === item.key}|${this._translationOpen(item.key)}`
         + `|${this.session.explanation(item.key)}|${this.session.isExplaining(item.key)}|${this.session.paragraphRole?.(item.key)}`
         + `|${this.compactPages?.has(`${item.side || "right"}:${item.pageIndex}`) ? "c" : ""}`
-        + `|${this.session.paragraphNote(item.key)}|${this.noteEditing === item.key}|${attached}`;
+        + `|${keys.map((k) => this.session.paragraphNote(k)).join("|")}|${this.noteEditing === item.key}|`;
     }
 
     _invalidate(key) {
@@ -845,8 +841,7 @@
       }
       if (card.sig !== sig) {
         card.el.replaceChildren();
-        if (item.kind === "flashcard") this._fillFlashcard(card.el, item.data);
-        else if (item.kind === "figure") this._fillFigure(card.el, item.data, item);
+        if (item.kind === "figure") this._fillFigure(card.el, item.data, item);
         else this._fillParagraph(card.el, item.key, item.data, item.members);
         card.sig = sig;
         card.height = 0;
@@ -953,10 +948,9 @@
         head.append(range);
       }
       // One-line (compact) cards keep a hint of what is folded inside.
-      const attached = [...new Set(keys.flatMap((k) => session.flashcardsForParagraph(k)))];
+
       const badges = el(doc, "span", "dr-badges");
-      const cardCount = attached.length;
-      if (cardCount) badges.append(el(doc, "span", "dr-badge dr-badge-fc", DeepRead.bilingual(`闪卡 ${cardCount}`, `${cardCount} cards`)));
+
       if (session.paragraphNote(key)) badges.append(el(doc, "span", "dr-badge dr-badge-note", DeepRead.bilingual("理解", "Note")));
       if (badges.childNodes.length) head.append(badges);
 
@@ -971,14 +965,6 @@
           DeepRead.util.copyToClipboard(translations.join("\n\n"));
         });
       }
-      this._button(actions, "卡", DeepRead.bilingual("生成闪卡", "Make a flashcard"), () => {
-        session.createFlashcard({
-          pageIndex: paragraph.pageIndex,
-          rects: paras.filter((p) => p.pageIndex === paragraph.pageIndex).flatMap((p) => p.rects || []),
-          quote: paras.map((p) => p.paragraphText || "").filter(Boolean).join("\n\n"),
-          source: "paragraph",
-        });
-      });
       this._button(actions, "✎", DeepRead.bilingual("写我的理解", "Add my understanding"), () => {
         this.noteEditing = key;
         this._invalidate(key);
@@ -992,6 +978,8 @@
       this._button(actions, "AI", DeepRead.t("card.askAI"), () => {
         session.askAI({ text: paras.map((p) => p.paragraphText || "").filter(Boolean).join("\n\n"), pageIndex: paragraph.pageIndex, block: session.groupLabel(key) });
       });
+      if (session.previousCard(key)) this._button(actions, "合", DeepRead.bilingual("与上一张卡片合并", "Merge with previous card"), () => session.mergeCardWithPrevious(key));
+      if (session.groupMembers(key).length > 1) this._button(actions, "拆", DeepRead.bilingual("拆开这张合并卡片", "Split this card"), () => session.splitCard(key));
       this._button(actions, "×", DeepRead.bilingual("隐藏此卡片", "Hide this card"), () => {
         session.setCardHidden(key, true);
       });
@@ -1113,11 +1101,10 @@
         node.append(block);
       }
 
-      // Flashcards that belong to this card's paragraphs sit right here, next to them.
-      if (attached.length) {
-        const box = el(doc, "div", "dr-attached");
-        for (const card of attached) box.append(this._flashcardBlock(card, key));
-        node.append(box);
+      for (const member of paras.slice(1)) {
+        const noteKey = `p_${member.pageIndex}_${member.paragraphIndex}`;
+        const memberNote = session.paragraphNote(noteKey);
+        if (memberNote) node.append(el(doc, "div", "dr-note", `${session.groupLabel(noteKey)} · ${memberNote}`));
       }
       node.onpointerenter = () => (members ? this.overlay.outlineParagraphs(paras) : this.overlay._drawHover(paragraph));
       node.onpointerleave = () => this.overlay._clearTransient();
@@ -1253,123 +1240,6 @@
       }
     }
 
-    _fillFlashcard(node, card) {
-      node.classList.add("dr-flash");
-      node.append(this._flashcardBlock(card, null));
-      node.onpointerenter = () => {
-        const rect = DeepRead.Overlay.unionRect(card.rects || []);
-        if (rect) this.overlay._drawHover({ pageIndex: card.pageIndex, bbox: rect, rects: card.rects, points: [] });
-      };
-      node.onpointerleave = () => this.overlay._clearTransient();
-    }
-
-    /**
-     * One flashcard: question, folded AI answer (click to reveal), and the reader's own
-     * understanding, which is always shown. `ownerKey` is the paragraph card it sits in (or null).
-     */
-    _flashcardBlock(card, ownerKey) {
-      const doc = this.readerDoc;
-      const session = this.session;
-      const cardKey = ownerKey || `f_${card.id}`;
-      const block = el(doc, "div", ownerKey ? "dr-fc dr-fc-attached" : "dr-fc");
-      const head = el(doc, "div", "dr-rhead");
-      head.append(el(doc, "div", "dr-fc-label", DeepRead.bilingual("闪卡", "FLASHCARD") + (card._busy ? ` · ${card._busy}` : "")));
-      const actions = el(doc, "div", "dr-ractions");
-      head.append(actions);
-      block.append(head);
-
-      if (session.editingFlashcard === card.id) {
-        const q = el(doc, "textarea");
-        q.rows = 2;
-        q.placeholder = DeepRead.bilingual("问题", "Question");
-        this._draft(q, `fc:${card.id}:q`, card.question);
-        const a = el(doc, "textarea");
-        a.rows = 3;
-        a.placeholder = DeepRead.bilingual("答案（可留空，或点 AI 回答）", "Answer (optional, or ask AI)");
-        this._draft(a, `fc:${card.id}:a`, card.answer);
-        const n = el(doc, "textarea");
-        n.rows = 3;
-        n.placeholder = DeepRead.bilingual("我的理解（始终展开显示）", "My understanding (always shown)");
-        this._draft(n, `fc:${card.id}:n`, card.note);
-        const buttons = el(doc, "div", "dr-fc-buttons");
-        const save = this._button(buttons, DeepRead.bilingual("保存", "Save"), "", async () => {
-          session.editingFlashcard = null;
-          this._clearDrafts(`fc:${card.id}:`);
-          await session.saveFlashcard({ ...card, question: q.value.trim(), answer: a.value.trim(), note: n.value.trim() });
-        });
-        save.classList.add("dr-primary");
-        this._button(buttons, DeepRead.bilingual("AI 回答", "AI answer"), "", async (e) => {
-          const button = e.currentTarget;
-          button.disabled = true;
-          try {
-            a.value = await DeepRead.Flashcards.answer({
-              question: q.value.trim() || card.question,
-              quote: card.quote,
-              context: session.flashcardContext(card.pageIndex),
-            });
-          }
-          catch (error) {
-            a.value = DeepRead.util.formatError(error);
-          }
-          finally {
-            this.drafts.set(`fc:${card.id}:a`, a.value);
-            button.disabled = false;
-            this.schedule(true);
-          }
-        });
-        this._button(buttons, DeepRead.bilingual("取消", "Cancel"), "", () => {
-          session.editingFlashcard = null;
-          this._clearDrafts(`fc:${card.id}:`);
-          if (!card.question && !card.answer && !card.note) session.deleteFlashcard(card.id);
-          else session._emit("flashcards", { id: card.id });
-        });
-        for (const field of [q, a, n]) {
-          field.addEventListener("input", () => this.schedule(true));
-          field.addEventListener("keydown", (e) => e.stopPropagation());
-        }
-        block.append(q, a, n, buttons);
-        block.addEventListener("click", (e) => e.stopPropagation());
-        setTimeout(() => (card.question ? n : q).focus(), 0);
-        return block;
-      }
-
-      this._button(actions, "✎", DeepRead.bilingual("编辑 / 写我的理解", "Edit / add my understanding"), () => {
-        session.editingFlashcard = card.id;
-        session._emit("flashcards", { id: card.id });
-      });
-      this._button(actions, "↗", DeepRead.bilingual("定位原文", "Jump to source"), () => session.navigateToFlashcard(card));
-      this._button(actions, "×", DeepRead.bilingual("删除", "Delete"), () => {
-        if (Services.prompt.confirm(null, "DeepRead", DeepRead.bilingual("删除这张闪卡？", "Delete this flashcard?"))) {
-          session.deleteFlashcard(card.id);
-        }
-      });
-      block.append(el(doc, "div", "dr-fc-q", card.question || (card._busy ? "…" : DeepRead.bilingual("（无问题，点 ✎ 编辑）", "(no question — click ✎)"))));
-      const flipped = session.flipped?.has(card.id);
-      if (flipped && card.answer) {
-        const answer = el(doc, "div", "dr-fc-a");
-        answer.append(DeepRead.Markdown.render(doc, card.answer, answer));
-        block.append(answer);
-      }
-      else if (card.answer) {
-        block.append(el(doc, "div", "dr-muted dr-fc-reveal", DeepRead.bilingual("▸ 点击查看答案", "▸ Click to reveal the answer")));
-      }
-      if (card.note) {
-        const note = el(doc, "div", "dr-note dr-fc-note");
-        note.append(el(doc, "div", "dr-note-label", DeepRead.bilingual("我的理解", "My understanding")), el(doc, "div", "dr-note-text", card.note));
-        block.append(note);
-      }
-      block.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (e.target.closest("button, a, textarea, .dr-note")) return;
-        session.flipped = session.flipped || new Set();
-        if (session.flipped.has(card.id)) session.flipped.delete(card.id);
-        else session.flipped.add(card.id);
-        this._invalidate(cardKey);
-      });
-      return block;
-    }
-
-    /** Highlight the rail card of a paragraph hovered in the PDF. */
     linkParagraph(paragraph) {
       if (!this.root) return;
       const key = paragraph ? this.session.groupLead(`p_${paragraph.pageIndex}_${paragraph.paragraphIndex}`) : null;

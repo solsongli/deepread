@@ -142,19 +142,6 @@
       },
     }, DeepRead.t("selection.ask"));
 
-    const flashButton = annotation.position
-      ? h(doc, "button", {
-        onclick: async (e) => {
-          const button = e.currentTarget;
-          button.disabled = true;
-          const position = annotation.position;
-          const rects = Array.isArray(position.rects) ? position.rects : [];
-          await DeepRead.Session.forReader(reader)?.createFlashcard({ pageIndex: position.pageIndex, rects, quote: text, source: "selection" });
-          button.textContent = "✓";
-        },
-      }, DeepRead.bilingual("闪卡", "Flashcard"))
-      : null;
-
     extra.append(
       h(doc, "button", { onclick: () => DeepRead.util.copyToClipboard(translation) }, DeepRead.t("selection.copy")),
       annotation.position
@@ -175,7 +162,7 @@
         : null);
 
     const container = h(doc, "div", { class: "deepread-selection" },
-      h(doc, "div", { class: "dr-buttons" }, translateButton, askButton, flashButton),
+      h(doc, "div", { class: "dr-buttons" }, translateButton, askButton),
       result,
       extra);
     append(container);

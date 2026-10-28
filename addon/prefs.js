@@ -48,8 +48,6 @@ pref("extensions.zotero.deepread.view.highlights", true);
 pref("extensions.zotero.deepread.view.hoverCards", true);
 pref("extensions.zotero.deepread.view.translationPopup", true);
 pref("extensions.zotero.deepread.chat.maxContextChars", 120000);
-pref("extensions.zotero.deepread.github.token", "");
-pref("extensions.zotero.deepread.deepwiki.endpoint", "https://mcp.deepwiki.com/mcp");
 pref("extensions.zotero.deepread.lastVersion", "");
 
 pref("extensions.zotero.deepread.agent.kind", "none");

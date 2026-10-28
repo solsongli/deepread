@@ -19,18 +19,16 @@
     "services/textLayerParser.js",
     "services/grobidParser.js",
     "services/parser.js",
-    "services/flashcards.js",
     "services/explainer.js",
     "services/structure.js",
     "services/figures.js",
     "services/references.js",
     "services/questions.js",
-    "services/glossary.js",
     "services/skim.js",
+    "services/highlights.js",
+    "services/cardGroups.js",
     "services/guide.js",
     "services/agentRunner.js",
-    "services/github.js",
-    "services/deepwiki.js",
     "pipeline/languages.js",
     "pipeline/responseFormats.js",
     "pipeline/summaryManager.js",
@@ -49,13 +47,11 @@
     "panes/summaryPane.js",
     "panes/outlinePane.js",
     "panes/chatPane.js",
-    "panes/flashcardPane.js",
-    "panes/codePane.js",
     "panes/questionsPane.js",
   ];
 
   // Core modules must load; optional feature modules only log on failure.
-  const OPTIONAL = new Set(["services/github.js", "services/deepwiki.js", "panes/codePane.js", "panes/flashcardPane.js"]);
+  const OPTIONAL = new Set();
   for (const file of MODULES) {
     try {
       Services.scriptloader.loadSubScript(`${DeepRead.rootURI}content/scripts/${file}`, this);
@@ -73,7 +69,6 @@
   DeepRead.startup = async function () {
     DeepRead.log(`starting ${DeepRead.version}`);
     await DeepRead.Store.init();
-    await DeepRead.Flashcards.init();
 
     DeepRead.prefPaneID = await Zotero.PreferencePanes.register({
       pluginID: PLUGIN_ID,
@@ -101,8 +96,6 @@
     win.MozXULElement.insertFTLIfNeeded("deepread.ftl");
     DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/styles/panes.css", "deepread-panes-css");
     DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/lib/katex/katex.min.css", "deepread-katex-css");
-    DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/styles/flashcards.css", "deepread-flashcards-css");
-    DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/styles/code.css", "deepread-code-css");
   };
 
   DeepRead.onMainWindowUnload = function (win) {
@@ -116,8 +109,6 @@
     for (const win of windows) {
       win.document.getElementById("deepread-panes-css")?.remove();
       win.document.getElementById("deepread-katex-css")?.remove();
-      win.document.getElementById("deepread-flashcards-css")?.remove();
-      win.document.getElementById("deepread-code-css")?.remove();
       win.document.querySelector('link[href="deepread.ftl"]')?.remove();
     }
     windows.clear();

@@ -350,6 +350,7 @@ DeepRead.SummaryManager = class SummaryManager {
               rects: pointRects,
               importance_level: pointImportanceLevel // 添加 importance_level 字段（Requirements: 3.1, 3.2）
             };
+            if (Array.isArray(para.point_importance_levels)) pointData.importance_source = "model";
             paragraphData.points.push(pointData);
           }
         }

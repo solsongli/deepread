@@ -1,6 +1,6 @@
 /*
  * Hover lookup (module "lookup"): rest the pointer on a citation ("[18]", "(Ho et al., 2020)"), a figure or
- * table reference ("Fig. 3", "Table 1"), a term or a symbol of the paper's glossary, and a small popover
+ * table reference ("Fig. 3", "Table 1"), and a small popover
  * explains it. Independent of the margin cards. Text under the pointer comes from the reader's structured
  * text layer (pdfDocument.getPageData → chars with PDF rects), so it works whatever parser was used.
  *
@@ -255,20 +255,6 @@
         const figure = session.figures().find((f) => f.kind === kind && String(f.number).toUpperCase() === m[2].toUpperCase());
         if (figure) return { kind: "figure", key: `g:${figure.id}`, figure, panel: m[3] || null, start: m.index, end: m.index + m[0].length };
       }
-      const glossary = session.glossary;
-      if (glossary && DeepRead.Glossary) {
-        // 3) term
-        const term = DeepRead.Glossary.termAt(text, offset, glossary);
-        if (term) return { kind: "term", key: `t:${term.entry.id}`, entry: term.entry, start: term.start, end: term.end };
-        // 4) symbol: the run of non-space characters under the pointer
-        let a = offset;
-        let b = offset;
-        while (a > 0 && !/\s/.test(text[a - 1])) a--;
-        while (b < text.length && !/\s/.test(text[b])) b++;
-        const token = text.slice(a, b);
-        const entry = token && DeepRead.Glossary.matchSymbol(token, glossary);
-        if (entry) return { kind: "symbol", key: `s:${entry.id}`, entry, start: a, end: b };
-      }
       return null;
     }
 
@@ -306,7 +292,7 @@
       pop.dataset.kind = item.kind;
       if (item.kind === "citation") this._fillCitation(pop, item);
       else if (item.kind === "figure") this._fillFigure(pop, item);
-      else this._fillGlossary(pop, item);
+
       pop.hidden = false;
       this._position(pop, item);
     }
@@ -404,31 +390,7 @@
       }]]);
     }
 
-    _fillGlossary(pop, item) {
-      const doc = this.readerDoc;
-      const entry = item.entry;
-      const symbol = item.kind === "symbol";
-      pop.append(el(doc, "span", `dr-lk-kind ${symbol ? "dr-sym" : "dr-term"}`, symbol ? DeepRead.bilingual("符号", "Symbol") : DeepRead.bilingual("术语", "Term")));
-      const title = el(doc, "div", "dr-lk-title");
-      if (symbol) title.append(DeepRead.Overlay.inlineMarkdown(doc, `$${entry.symbol}$`));
-      else title.textContent = entry.aliases?.length ? `${entry.term}（${entry.aliases.join("、")}）` : entry.term;
-      pop.append(title);
-      const body = el(doc, "div", "dr-lk-text");
-      body.append(DeepRead.Overlay.inlineMarkdown(doc, symbol ? entry.meaning : entry.definition));
-      pop.append(body);
-      const where = DeepRead.Glossary.occurrences(entry, this.session.blocks());
-      const first = entry.key ? this.session._paragraphByKey(entry.key) : null;
-      const meta = [];
-      if (first) meta.push(DeepRead.bilingual(`首次出现：第 ${first.page.pageIndex + 1} 页`, `First: p. ${first.page.pageIndex + 1}`));
-      if (where.length) meta.push(DeepRead.bilingual(`全文 ${where.length} 段出现`, `In ${where.length} paragraphs`));
-      if (meta.length) pop.append(el(doc, "div", "dr-lk-meta", meta.join(" · ")));
-      if (first) {
-        this._actions(pop, [[DeepRead.bilingual("看首次出现", "Go to first use"), () => {
-          this.session.openBlock(first.page.pageIndex, first.paragraph.paragraphIndex);
-          this.hide();
-        }]]);
-      }
-    }
+
 
     _drawThumb(canvas, figure) {
       const [x1, y1, x2, y2] = figure.bbox;

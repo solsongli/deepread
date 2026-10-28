@@ -207,6 +207,7 @@ function makeFakeLLM(log) {
           point_split: Array.from({ length: n }, (_, i) => [i]),
           point_summaries: Array.from({ length: n }, (_, i) => `point ${m[1]} #${i}`),
           point_translations: Array.from({ length: n }, (_, i) => `翻译 ${m[1]} #${i}`),
+          point_importance_levels: Array.from({ length: n }, (_, i) => i === 0 ? 3 : 1),
         });
       }
       return { content: JSON.stringify({ paragraphs }) };
@@ -274,6 +275,8 @@ await check("end-to-end run() on a synthetic one-page paper", async () => {
     }
     for (const pt of pp.points) {
       assert.ok(pt.rects.length > 0 && pt.rects[0].length === 4, "point rects");
+      assert.equal(pt.importance_source, "model");
+      assert.equal(pt.importance_level, pt.pointIndex === 0 ? 3 : 1);
       assert.ok(pt.translation.startsWith("翻译"), `translation: ${pt.translation}`);
       assert.ok(pt.summary.startsWith("point"), pt.summary);
     }

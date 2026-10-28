@@ -10,10 +10,6 @@ deepread-pane-questions-header =
     .label = Reading Questions
 deepread-pane-questions-sidenav =
     .tooltiptext = Reading Questions
-deepread-pane-glossary-header =
-    .label = Terms & Symbols
-deepread-pane-glossary-sidenav =
-    .tooltiptext = Terms & Symbols
 deepread-pane-outline-header =
     .label = AI Outline
 deepread-pane-outline-sidenav =
@@ -111,15 +107,6 @@ deepread-pref-chat-maxcontext = Chat max context characters
 deepread-pref-privacy-title = Privacy
 deepread-pref-privacy-note = API keys are stored in Zotero preferences on this computer. PDF content is sent only to the services you configure here.
 
-deepread-pane-flashcards-header =
-    .label = Flashcards
-deepread-pane-flashcards-sidenav =
-    .tooltiptext = Flashcards
-deepread-pane-code-header =
-    .label = Code
-deepread-pane-code-sidenav =
-    .tooltiptext = Code
-
 deepread-pref-update-title = Version & updates
 deepread-pref-update-current =
     .value = Current version
@@ -130,7 +117,7 @@ deepread-pref-update-releases = Release notes
 
 # --- v0.8 settings pane ---
 deepread-pref-llm-title = ① Reading API
-deepread-pref-llm-hint = Used for translation, card explanations, flashcards and AI chat. Save several providers and switch with one click.
+deepread-pref-llm-hint = Used for translation, card explanations and AI chat. Save several providers and switch with one click.
 deepread-pref-profile-add =
     .label = + Add
 deepread-pref-profile-copy =
@@ -184,7 +171,7 @@ deepread-pref-mod-skim =
 deepread-pref-mod-skim-hint = Skim layers: choose a reading depth (full / key / margin only); minor paragraphs fade, key sentences are marked, minor cards fold to one line
 deepread-pref-mod-lookup =
     .label = Hover lookup
-deepread-pref-mod-lookup-hint = Hover lookup: citations, figure references, terms and symbols explain themselves on hover; independent of the cards
+deepread-pref-mod-lookup-hint = Hover lookup: citations and figure references explain themselves on hover; independent of the cards
 deepread-pref-mod-questions =
     .label = Question-led reading
 deepread-pref-mod-questions-hint = Question-led reading: five reading questions after the deep read, plus your own; answers link to cards and the section bar
