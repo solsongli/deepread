@@ -1,6 +1,6 @@
 {
   "name": "zotero-deepread",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "DeepRead: AI reading assistant plugin for Zotero 7-10",
