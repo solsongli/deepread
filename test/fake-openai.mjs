@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fake OpenAI-compatible server that answers DeepRead/Vibero pipeline prompts with valid structured output.
+// Fake OpenAI-compatible server that answers DeepRead pipeline prompts with valid structured output.
 // Usage: node test/fake-openai.mjs [--port 18766] [--no-json-schema] [--delay-ms N]
 import http from 'node:http';
 

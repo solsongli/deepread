@@ -2,7 +2,23 @@
 
 Run the whole DeepRead pipeline inside Zotero without real MinerU / LLM services. Node built-ins and Python 3 stdlib only.
 
-## 1. Build fixtures (git-ignored output in `test/fixtures/demo/`)
+## Self-contained reading fixtures
+
+Current layout and reading-flow regressions generate their own small PDFs locally:
+
+```bash
+npm test
+python3 -E test/build-reading-fixture.py
+python3 -E test/build-continuation-fixture.py
+python3 -E test/build-layout-fixture.py
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/paragraph-layout.pdf" scripts/e2e.sh test/e2e/translationLayout.js
+```
+
+These fixtures do not require a downloaded demo dataset. End-to-end tests use isolated profiles under
+`.test-profile/`; run them sequentially. The historical full-pipeline fixture remains available below for
+reference comparisons.
+
+## 1. Legacy demo fixture (git-ignored output in `test/fixtures/demo/`)
 
 ```
 python3 test/build-fixture.py

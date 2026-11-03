@@ -1,9 +1,8 @@
 /*
  * Margin rail: persistent paragraph summary cards beside the PDF.
  *
- * Vibero widened every PDF page inside a modified pdf.js to make room for its margin cards.
- * A plugin cannot do that, so the PDF iframe is narrowed instead and a rail is placed next to
- * it in the reader document. Each card is anchored at the vertical position of its paragraph,
+ * The PDF iframe shares the reader width with adjacent card rails in the reader document.
+ * Each card is anchored at the vertical position of its paragraph,
  * pushed down to avoid overlaps (with a connector back to the anchor), and kept in sync with
  * scrolling and zooming.
  *

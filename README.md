@@ -1,6 +1,6 @@
 # DeepRead：Zotero AI 精读插件
 
-DeepRead 是一个免费、开源的 Zotero 插件，支持 Zotero 7–10。它把 Vibero 的 AI 精读能力做成了普通插件，可以直接装进官方 Zotero 使用：
+DeepRead 是一个免费、开源、独立维护的 Zotero AI 阅读插件，支持 Zotero 7–10，可直接安装到官方 Zotero。它提供段落讲解、保留原文结构的翻译、图表证据笔记、阅读问题与原文定位：
 
 - **不需要账号、积分或订阅。** 解析和大模型服务都用你自己的 API Key。
 - **PDF 内容只发往你在设置里配置的服务。** 插件不会连接其他任何服务器。
@@ -173,12 +173,12 @@ npm run release -- X.Y.Z               # 发布新版本：测试 → 打包 →
 
 阅读方法的网络调研见 [READING_METHODS.md](docs/READING_METHODS.md)，实现与验证边界见 [READING_EXPERIENCE.md](docs/READING_EXPERIENCE.md)。旧精读缓存的字号修复即时生效；原文强调、图注精确定位和模型要点重要度需要「重新精读」生成新结果。旧缓存的卡片合并、点击收起、框尺寸适配和本地推荐高亮即时生效；跨页／跨图的联合翻译会在已有精读 API 可用时自动补齐，无需整篇重新解析。
 
-各模块的约定和接口见 `docs/DEV_NOTES.md`，流水线移植说明见 `docs/PIPELINE_PORT.md`。
+各模块的当前约定和接口见 [开发说明](docs/DEV_NOTES.md)。早期流水线的来源与集成记录保留在 [历史说明](docs/PIPELINE_PORT.md)。
 
 ## 许可与致谢
 
 - 本插件采用 **AGPL-3.0-or-later** 许可，见 `LICENSE`。
-- 解析与提示词流水线移植自 Vibero。Vibero 是 Zotero 的 AGPL-3.0 分支，著作权归原作者所有。本插件不使用 Vibero 的名称、标识或任何服务。
+- 当前源码保留了来自 Vibero 的部分流水线实现，原作者归属与 AGPL 许可继续适用；具体文件范围见 [NOTICE.md](NOTICE.md)。
 - 本插件基于 Zotero（AGPL-3.0）开发。
 - 打包了 marked（MIT）和 KaTeX（MIT）两个第三方库，详见 `NOTICE.md`。
-- v0.4–v0.5 的整篇翻译借鉴并移植了 ReadFlow / RetainPDF（MIT）的部分实现，这部分在 v0.6.0 中已移除，代码保留在 `v0.5.0` 标签中。v1.1.1 的悬停翻译适配了 RetainPDF 的结构与缩进规则，归属和 MIT 许可见 `NOTICE.md`。
+- 当前悬停翻译适配了 RetainPDF 的列表与缩进规则，归属和 MIT 许可见 [NOTICE.md](NOTICE.md)。v0.4–v0.5 的整篇翻译实现已从当前版本移除，历史代码保留在 `v0.5.0` 标签中。

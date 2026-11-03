@@ -6,9 +6,26 @@ DeepRead is licensed under the GNU Affero General Public License v3.0 or later (
 
 DeepRead is built on [Zotero](https://www.zotero.org/) (AGPL-3.0-or-later, Corporation for Digital Scholarship).
 
-DeepRead contains code ported from **Vibero**, an AGPL-3.0 fork of Zotero, by its respective authors. Ported sections keep a
-header note `Ported from Vibero (AGPL-3.0, a Zotero fork)`. DeepRead does not use Vibero's name, logo, or services, and
-does not call any Vibero or Supabase endpoints.
+DeepRead is maintained as a separate plugin for official Zotero. Its current features and integrations are developed
+in this repository. Independent maintenance does not change the provenance of retained upstream code.
+
+## Vibero-derived pipeline code
+
+DeepRead contains code ported from **Vibero**, an AGPL-3.0 fork of Zotero, by its respective authors. The following
+files retain upstream implementations alongside DeepRead modifications:
+
+| File | Retained origin and subsequent work |
+| --- | --- |
+| `addon/content/scripts/pipeline/pipeline.js` | Reader pipeline, coordinate helpers and prompt-processing methods; extended with DeepRead adapters, translation structure and continuation handling. |
+| `addon/content/scripts/pipeline/summaryManager.js` | Summary data management; extended with page geometry and translation metadata. |
+| `addon/content/scripts/pipeline/languages.js` | Language-option constants; the language-detection heuristic is implemented locally. |
+| `addon/content/scripts/pipeline/responseFormats.js` | Response-schema builders; extended with importance levels and layout translations. |
+
+Their `Ported from Vibero` headers and AGPL notices remain in place. Reader presentation files also retain their
+existing design acknowledgements. The original integration record is in `docs/PIPELINE_PORT.md`; it records
+provenance and does not describe every feature added since that integration.
+
+DeepRead uses its own product name and interface branding. It does not call Vibero or Supabase service endpoints.
 
 ## RetainPDF layout rules
 

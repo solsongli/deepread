@@ -1,4 +1,9 @@
-# Porting Vibero's reader pipeline
+# Reader pipeline: provenance and original integration
+
+This document records the initial integration of Vibero-derived code. The instructions and source slices below
+describe that historical work, not a requirement that current implementations remain unchanged. DeepRead has since
+added parsing options, structured translation, continuation handling and reading interfaces. Current module contracts
+are in `DEV_NOTES.md`; the retained code's attribution and licensing scope are in `../NOTICE.md`.
 
 Source (git-ignored, local only): `.port-src/vibero/`. These are verbatim slices of Vibero's reader bundle
 (`chrome/content/reader/reader.js`, class `Reader`, 8-space indented methods) and Zotero-side helpers.

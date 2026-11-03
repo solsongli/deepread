@@ -95,7 +95,7 @@ await check("_call_llm_api semantics", async () => {
   assert.equal(await p._call_llm_api("hi"), "not json at all");
   reply = "";
   assert.equal(await p._call_llm_api("hi"), "");
-  // fenced JSON: returned raw (like Vibero), the consumer's _parseJSONWithRetry strips the fence
+  // Fenced JSON is returned raw; the consumer's _parseJSONWithRetry strips the fence.
   reply = '```json\n{"a":1}\n```';
   const raw = await p._call_llm_api("hi");
   assert.equal(typeof raw, "string");
@@ -335,5 +335,5 @@ await check("run() stops after abort and does not call the LLM", async () => {
 });
 
 console.log(process.exitCode ? `\nFAILED (${passed} passed)` : `\nAll ${passed} checks passed`);
-// the ported code leaves 4/5-minute timeout timers behind (as in Vibero); do not wait for them
+// Pipeline requests leave 4/5-minute timeout timers behind; do not wait for them.
 process.exit(process.exitCode || 0);

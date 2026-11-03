@@ -13,10 +13,11 @@ continuation grouping without rewriting paragraph keys) and `services/highlights
 Current regression: `test/readingFlow.test.mjs` and offline `test/e2e/readingFlow.js`; research rationale:
 `docs/READING_METHODS.md`. UI navigation opens cards explicitly; only source pointer clicks request toggling.
 
-DeepRead is a Zotero 7–10 plugin (bootstrapped, no build step for runtime code). It rebuilds the AI reading features of
-"Vibero" (an AGPL fork of Zotero 8): MinerU PDF structure parsing → per-paragraph LLM summary / key points / point
-translations → overlays in the PDF reader, plus article summary cards, AI outline and AI chat. All network calls go to
-services **the user configures with their own keys**. Never call Vibero/Supabase endpoints.
+DeepRead is a separately maintained Zotero 7–10 plugin (bootstrapped, no build step for runtime code). Its reader
+pipeline parses PDF structure, maps paragraphs to source positions, generates summaries and translations, and
+renders reading aids in the PDF viewer. The current modules also include reading goals, evidence notes, structured
+translation and AI chat. Service calls use the providers **the user configures with their own keys**.
+Retained upstream code and design references are documented in `NOTICE.md` and the relevant file headers.
 
 Primary test target: Zotero 10.0.6 at `~/.local/opt/zotero-10.0.6` (Gecko 140 / Firefox ESR 140 JS engine).
 
@@ -101,7 +102,8 @@ DeepRead.Parser.isConfigured(config?) → boolean
 block_mapping, sections, markdown, github_url, user_state`.
 
 ### DeepRead.Pipeline — `scripts/pipeline/pipeline.js` (+ `summaryManager.js`, `languages.js`, `responseFormats.js`)
-Port of Vibero's reader-side pipeline. See `docs/PIPELINE_PORT.md`.
+PDF parsing, source alignment, LLM summaries and translation. Current extensions are described above; retained
+upstream provenance and the original integration contract are recorded in `docs/PIPELINE_PORT.md` and `NOTICE.md`.
 
 ### Reader integration, panes — `scripts/reader/*`, `scripts/panes/*`
 Owned by the lead; not part of delegated tasks.

@@ -1,4 +1,4 @@
-/* "速读卡" section: run status + Vibero-style 5-part article summary with jump-to-source points.
+/* "速读卡" section: run status and a five-part article summary with jump-to-source points.
  * License: AGPL-3.0-or-later */
 /* global DeepRead */
 

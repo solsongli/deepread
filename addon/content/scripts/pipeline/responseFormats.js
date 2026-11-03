@@ -3,7 +3,7 @@
  * (OpenAI-compatible / DashScope json_schema). Each builder returns { response_format: {...} }.
  *
  * Ported from Vibero (AGPL-3.0, a Zotero fork): reader-llm-response-formats.js, UMD wrapper removed;
- * the factory body and its outputs are unchanged.
+ * DeepRead has extended the schemas with point importance and source-layout translations.
  *
  * License: AGPL-3.0-or-later
  */

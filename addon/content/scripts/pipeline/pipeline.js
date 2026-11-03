@@ -2,10 +2,9 @@
  * summaries, key points and translations -> article summary / outline -> hierarchical data for the overlays.
  * Ported from Vibero (AGPL-3.0, a Zotero fork). License: AGPL-3.0-or-later
  *
- * The method bodies below (from setParseResultInSummaryManager on) are Vibero's, kept as close to the original as
- * possible. UI / login / credits code was dropped; the class constructor, shims (_l10n, _call_llm_api, _parsePDF,
- * progress/notification hooks, ...) and the public API (run, generateOutline, regenerateArticleSummary, loadState,
- * getState) are DeepRead's. See docs/PIPELINE_PORT.md.
+ * Includes inherited parsing, mapping and prompt-processing methods together with DeepRead's runtime adapters
+ * and later extensions. Structured translation, source typography and continuation handling are integrated into
+ * the current pipeline. The original integration is recorded in docs/PIPELINE_PORT.md; attribution is in NOTICE.md.
  */
 /* global DeepRead, Zotero */
 
@@ -59,7 +58,7 @@ DeepRead.Pipeline = class Pipeline {
   }
 
   // ---------------------------------------------------------------------------------------------------------
-  // Shims replacing Vibero's Reader environment
+  // Runtime adapters for the PDF reader, parser and configured LLM provider
   // ---------------------------------------------------------------------------------------------------------
 
   /** The ported code reads the PDF viewer through `this._primaryView._iframeWindow.PDFViewerApplication`. */
@@ -82,7 +81,7 @@ DeepRead.Pipeline = class Pipeline {
     return DeepRead.bilingual(zh, en);
   }
 
-  /** Messages for Vibero's getLocalizedString() keys used by run() and friends. */
+  /** Localized messages for the reader pipeline's existing message keys. */
   _l10n(key, args = {}) {
     const B = (zh, en) => DeepRead.bilingual(zh, en);
     const table = {
@@ -161,7 +160,7 @@ DeepRead.Pipeline = class Pipeline {
   }
 
   /**
-   * Vibero's `_parsePDF(optionsJson, onPoll)` shape on top of the injected parsePDF.
+   * Parser-result compatibility shape on top of the injected parsePDF.
    * @returns {Promise<{success: true, pdfProcessResult: {resultDir, contentList}}|{success: false, error, message}>}
    */
   async _parsePDF(optionsJson = "", onPoll = null) {
@@ -196,7 +195,7 @@ DeepRead.Pipeline = class Pipeline {
   }
 
   /**
-   * Same contract as Vibero's Zotero.pdfParser.llmRequest(prompt, options): JSON array -> array; JSON object ->
+   * LLM response contract: JSON array -> array; JSON object ->
    * the raw content string; unparseable -> raw content; empty -> "". Errors propagate unchanged.
    */
   async _call_llm_api(prompt, options = undefined) {
@@ -381,7 +380,7 @@ DeepRead.Pipeline = class Pipeline {
   }
 
   // ---------------------------------------------------------------------------------------------------------
-  // Ported Vibero methods (reader.js / pdfParser helpers)
+  // Parsing, mapping and prompt-processing methods (provenance in the file header)
   // ---------------------------------------------------------------------------------------------------------
 
   async setParseResultInSummaryManager(pdfProcessResult) {
@@ -5163,7 +5162,7 @@ Output (if target language is English):
   }
 
   // ---------------------------------------------------------------------------------------------------------
-  // Excluded-page helpers (re-created; Vibero's versions were not part of the ported slice)
+  // Excluded-page helpers
   // ---------------------------------------------------------------------------------------------------------
 
   _getIncludedOriginalPageIndices(totalPages, excludedSet = new Set()) {
@@ -5188,7 +5187,7 @@ Output (if target language is English):
   // ---------------------------------------------------------------------------------------------------------
 
   /**
-   * Full pipeline (re-creates Vibero's _onFlowReparse data steps without UI / credits / DB).
+   * Full pipeline: parse, align source text, generate summaries/translations, and build reader data.
    * @returns {Promise<{resultDir, contentList, markdown, hierarchicalData, articleSummary, blockMapping, sourceLocale}>}
    */
   async run({ excludedPageIndices = [] } = {}) {
@@ -5375,7 +5374,7 @@ Output (if target language is English):
   }
 
   /**
-   * AI outline (data path of Vibero's generateOutlineForSidebar({ forceAI: true, regenerate: true })).
+   * Generate an AI outline from the current parsed paper.
    * Needs run() or loadState() first. Returns the outline root node and stores it as the manager's sections.
    */
   async generateOutline() {
@@ -5398,7 +5397,7 @@ Output (if target language is English):
   }
 
   /**
-   * Re-generate the full article summary (data path of Vibero's regenerateArticleSummary).
+   * Re-generate the full article summary from the current parsed paper.
    * @returns {Promise<{articleSummary, blockMapping}>}
    */
   async regenerateArticleSummary() {

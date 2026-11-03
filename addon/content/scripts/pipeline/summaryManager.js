@@ -1,8 +1,8 @@
 /* DeepRead — SummaryManager: in-memory store for parsed paper data (chars, hierarchical paragraphs/sentences/points,
  * article summary, outline sections, block mapping).
  * Ported from Vibero (AGPL-3.0, a Zotero fork). License: AGPL-3.0-or-later
- * Changes: printAllData() dropped; setPageSizes()/pageSizes added so MinerU per-mille bboxes are converted with real
- * PDF page sizes (falls back to 612x792 only when unknown).
+ * DeepRead changes include real page-size conversion, disjoint character ranges, source typography,
+ * structured translations and continuation metadata.
  */
 /* global DeepRead */
 
