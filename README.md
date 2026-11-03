@@ -182,3 +182,7 @@ npm run release -- X.Y.Z               # 发布新版本：测试 → 打包 →
 - 本插件基于 Zotero（AGPL-3.0）开发。
 - 打包了 marked（MIT）和 KaTeX（MIT）两个第三方库，详见 `NOTICE.md`。
 - 当前悬停翻译适配了 RetainPDF 的列表与缩进规则，归属和 MIT 许可见 [NOTICE.md](NOTICE.md)。v0.4–v0.5 的整篇翻译实现已从当前版本移除，历史代码保留在 `v0.5.0` 标签中。
+
+## 交流社区
+
+欢迎在 [LINUX DO](https://linux.do/) 社区交流开源工具与论文阅读经验。
