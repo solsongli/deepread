@@ -3,6 +3,17 @@
     "deepread@lsy-aia.github.io": {
       "updates": [
         {
+          "version": "1.3.0",
+          "update_link": "https://github.com/solsongli/deepread/releases/download/v1.3.0/deepread-1.3.0.xpi",
+          "update_hash": "sha256:9212282c127cb77b5e6ca9ac92e3291c65e8062faf813d64bcc2d0cb72d7a145",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "7.0",
+              "strict_max_version": "10.9.9"
+            }
+          }
+        },
+        {
           "version": "1.2.0",
           "update_link": "https://github.com/solsongli/deepread/releases/download/v1.2.0/deepread-1.2.0.xpi",
           "update_hash": "sha256:99ad06481d7f617b478d45a96af506e1bc54405cd34371ec3e2517afa1333b23",
@@ -94,17 +105,6 @@
           "version": "0.7.0",
           "update_link": "https://github.com/solsongli/deepread/releases/download/v0.7.0/deepread-0.7.0.xpi",
           "update_hash": "sha256:0cb99d5fc47a321c3057bd4a68692656aff4c6edd68c4bda26ea98748eb3f734",
-          "applications": {
-            "zotero": {
-              "strict_min_version": "7.0",
-              "strict_max_version": "10.9.9"
-            }
-          }
-        },
-        {
-          "version": "0.6.1",
-          "update_link": "https://github.com/solsongli/deepread/releases/download/v0.6.1/deepread-0.6.1.xpi",
-          "update_hash": "sha256:f4858f29198c4cec85122ea7833bbf0841b864dfe02b3308d8c4baedd325f3f3",
           "applications": {
             "zotero": {
               "strict_min_version": "7.0",
