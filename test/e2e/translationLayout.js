@@ -107,7 +107,12 @@ E2E.run = async function () {
   box = overlay.pdfDoc.querySelector(".dr-translation");
   const pdfTheme = overlay.pdfDoc.documentElement.getAttribute("data-color-scheme");
   overlay.pdfDoc.documentElement.setAttribute("data-color-scheme", "dark");
-  check("translation follows the dark reader theme", overlay.pdfWin.getComputedStyle(box).backgroundColor === "rgb(34, 37, 42)" && overlay.pdfWin.getComputedStyle(box).color === "rgb(230, 230, 230)");
+  const themeProbe = overlay.pdfDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+  themeProbe.style.cssText = "background:var(--dr-surface);color:var(--dr-text)"; overlay.pdfDoc.body.append(themeProbe);
+  check("translation follows the dark reader theme", overlay.pdfWin.getComputedStyle(themeProbe).getPropertyValue("--dr-surface").trim()
+    && overlay.pdfWin.getComputedStyle(box).backgroundColor === overlay.pdfWin.getComputedStyle(themeProbe).backgroundColor
+    && overlay.pdfWin.getComputedStyle(box).color === overlay.pdfWin.getComputedStyle(themeProbe).color);
+  themeProbe.remove();
   if (pdfTheme === null) overlay.pdfDoc.documentElement.removeAttribute("data-color-scheme"); else overlay.pdfDoc.documentElement.setAttribute("data-color-scheme", pdfTheme);
   overlay._setHover(null);
 
@@ -139,11 +144,15 @@ E2E.run = async function () {
   const theme = doc.documentElement.getAttribute("data-color-scheme");
   doc.documentElement.setAttribute("data-color-scheme", "dark");
   const darkColors = [];
+  const darkStripes = [];
   for (const role of ["contribution", "method", "result"]) {
     s.explanations.p_0_1.role = role; s._emit("explanations"); await sleep(50);
     darkColors.push(doc.defaultView.getComputedStyle(rail.cards.get("p_0_1").el.querySelector(".dr-phead")).backgroundColor);
+    const roleCard = rail.cards.get("p_0_1").el;
+    darkStripes.push(doc.defaultView.getComputedStyle(roleCard).borderInlineStartColor === doc.defaultView.getComputedStyle(roleCard.querySelector(".dr-role")).backgroundColor);
   }
   check("roles stay distinct in dark mode", new Set(darkColors).size === 3);
+  check("dark card borders preserve their role accent", darkStripes.every(Boolean));
   if (theme === null) doc.documentElement.removeAttribute("data-color-scheme"); else doc.documentElement.setAttribute("data-color-scheme", theme);
   s.explanations.p_0_1.role = "contribution"; s._emit("explanations");
   await D.Store.savePaper(s.key, s.item.id, { hierarchical_data: hierarchy });

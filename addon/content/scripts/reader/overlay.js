@@ -42,18 +42,18 @@
 .deepread-layer .dr-dim.dr-dim-strong { background: rgba(255, 255, 255, 0.78); }
 .deepread-layer .dr-keyline { position: absolute; border-bottom: 2px solid rgba(217, 119, 6, 0.8); }
 .deepread-layer .dr-translation { position: absolute; box-sizing: border-box; padding: 2px 4px;
-  background: #fffef9; color: #111; border-radius: 4px;
-  border: 1px solid rgba(251, 191, 36, 0.7); box-shadow: 0 3px 12px rgba(0, 0, 0, 0.16);
+  background: var(--dr-surface, #fff); color: var(--dr-text, #202939); border-radius: 5px;
+  border: 1px solid var(--dr-border, #d8dee8); box-shadow: var(--dr-popover-shadow, 0 3px 12px rgba(0, 0, 0, 0.16));
   font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
   text-align: justify; text-align-last: start; overflow-wrap: anywhere; hyphens: none;
   pointer-events: auto; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .deepread-layer .dr-translation.dr-title { font-weight: 700; text-align: start; }
 .deepread-layer .dr-translation p { margin: 0; }
 .deepread-layer .dr-translation .katex { font-size: 1em; }
-.deepread-layer .dr-translation:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.deepread-layer .dr-translation:focus-visible { outline: 2px solid var(--dr-accent, #2459a9); outline-offset: 2px; }
 .deepread-layer .dr-translation[data-overflow="true"] { scrollbar-color: #a78b42 transparent; }
 :root[data-color-scheme="dark"] .deepread-layer .dr-rect { mix-blend-mode: screen; }
-:root[data-color-scheme="dark"] .deepread-layer .dr-translation { background: #22252a; color: #e6e6e6; }
+:root[data-color-scheme="dark"] .deepread-layer .dr-translation { background: var(--dr-surface, #202938); color: var(--dr-text, #e8edf5); }
 :root[data-color-scheme="dark"] .deepread-layer .dr-translation:focus-visible { outline-color: #93c5fd; }
 ${STRUCTURE_CSS}
 `;
@@ -191,6 +191,9 @@ ${STRUCTURE_CSS}
       this.app = (pdfWin.wrappedJSObject || pdfWin).PDFViewerApplication;
       this.readerDoc = readerWin.document;
       this.iframeEl = view._iframe;
+      DeepRead.UI?.install(this.pdfDoc);
+      DeepRead.UI?.install(this.readerDoc);
+      this._cleanup.push(() => DeepRead.UI?.uninstall(pdfWin.document));
 
       this._injectStyle(this.pdfDoc, "deepread-page-css", PAGE_CSS);
       // Translations may contain inline math rendered with KaTeX.

@@ -16,32 +16,34 @@
 
   const CSS = `
 .deepread-lookup { position: fixed; z-index: 2147483001; width: 320px; max-height: 60vh; overflow: auto; box-sizing: border-box;
-  padding: 9px 11px; border-radius: 9px; background: #fff; color: #1f2328; border: 1px solid rgba(0,0,0,0.12);
-  box-shadow: 0 10px 28px rgba(15,23,42,0.18); font: 12.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+  padding: 13px 14px; border-radius: var(--dr-radius, 10px); background: var(--dr-surface, #fff); color: var(--dr-text, #202939);
+  border: 1px solid var(--dr-border, #d8dee8); box-shadow: var(--dr-popover-shadow, 0 12px 36px rgba(20,35,55,.16));
+  font: 12.5px/1.6 var(--dr-font, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif);
+  overscroll-behavior: contain; scrollbar-width: thin; overflow-wrap: anywhere; }
 .deepread-lookup[hidden] { display: none; }
-.deepread-lookup { overscroll-behavior: contain; scrollbar-width: thin; overflow-wrap: anywhere; }
-.deepread-lookup:focus-visible, .deepread-lookup button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
-.deepread-lookup .dr-lk-close { float: inline-end; margin-inline-start: 6px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.deepread-lookup .dr-lk-close:hover { background: rgba(127,127,127,0.15); }
-.deepread-lookup .dr-lk-kind { display: inline-block; margin-bottom: 4px; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 700; }
-.deepread-lookup .dr-lk-kind.dr-cite { background: #e0ecff; color: #1e40af; }
-.deepread-lookup .dr-lk-kind.dr-fig { background: #fcf1dc; color: #92400e; }
-.deepread-lookup .dr-lk-kind.dr-tab { background: #e4f4f1; color: #115e59; }
-.deepread-lookup .dr-lk-title { font-weight: 700; margin-bottom: 2px; }
-.deepread-lookup .dr-lk-meta { color: #57606a; font-size: 11.5px; }
-.deepread-lookup .dr-lk-text { margin-top: 4px; overflow-wrap: anywhere; }
-.deepread-lookup .dr-lk-ref { margin-top: 4px; font-size: 11.5px; color: #424a53; overflow-wrap: anywhere; }
-.deepread-lookup .dr-lk-lib { margin-top: 6px; padding: 4px 7px; border-radius: 6px; background: #ecfdf3; color: #166534; font-size: 11.5px; }
-.deepread-lookup .dr-lk-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
-.deepread-lookup .dr-lk-actions button { border: 1px solid rgba(0,0,0,0.15); border-radius: 5px; background: #fff; color: inherit;
-  font: inherit; font-size: 11.5px; padding: 1px 8px; cursor: pointer; }
-.deepread-lookup .dr-lk-actions button:hover { background: #f3f4f6; }
-.deepread-lookup canvas { display: block; max-width: 100%; margin-top: 6px; border-radius: 4px; background: #f4f4f1; }
-.deepread-lookup ol { margin: 5px 0 0; padding-inline-start: 1.3em; }
-:root[data-color-scheme="dark"] .deepread-lookup { background: #2a2d32; color: #e6e6e6; border-color: rgba(255,255,255,0.14); }
-:root[data-color-scheme="dark"] .deepread-lookup .dr-lk-meta, :root[data-color-scheme="dark"] .deepread-lookup .dr-lk-ref { color: #b8bec6; }
-:root[data-color-scheme="dark"] .deepread-lookup .dr-lk-actions button { background: #33373d; border-color: rgba(255,255,255,0.15); }
-:root[data-color-scheme="dark"] .deepread-lookup:focus-visible, :root[data-color-scheme="dark"] .deepread-lookup button:focus-visible { outline-color: #93c5fd; }
+.deepread-lookup:focus-visible, .deepread-lookup button:focus-visible { outline: 2px solid var(--dr-accent, #2459a9); outline-offset: 2px; }
+.deepread-lookup .dr-lk-close { float: inline-end; min-width: 24px; height: 24px; margin: -3px -4px 3px 6px; padding: 0;
+  border: 0; border-radius: var(--dr-control-radius, 6px); background: transparent; color: var(--dr-muted, #526075); font: inherit; cursor: pointer; }
+.deepread-lookup .dr-lk-close:hover { background: var(--dr-surface-soft, #f4f6fa); color: var(--dr-text, #202939); }
+.deepread-lookup .dr-lk-kind { display: inline-block; margin-bottom: 7px; padding: 1px 7px; border-radius: 4px; font-size: 10.5px; line-height: 1.6; font-weight: 600; }
+.deepread-lookup .dr-lk-kind.dr-cite { background: var(--dr-accent-soft, #eaf1fc); color: var(--dr-accent, #2459a9); }
+.deepread-lookup .dr-lk-kind.dr-fig { background: var(--dr-warning-soft, #fff6e6); color: var(--dr-warning, #8b5710); }
+.deepread-lookup .dr-lk-kind.dr-tab { background: var(--dr-success-soft, #edf7f1); color: var(--dr-success, #14664c); }
+.deepread-lookup .dr-lk-title { font-size: 13px; line-height: 1.5; font-weight: 650; margin-bottom: 5px; }
+.deepread-lookup .dr-lk-meta { color: var(--dr-muted, #526075); font-size: 11.5px; margin-top: 2px; }
+.deepread-lookup .dr-lk-text { margin-top: 8px; }
+.deepread-lookup .dr-lk-ref { margin-top: 8px; font-size: 12px; color: var(--dr-muted, #526075); }
+.deepread-lookup .dr-lk-lib { margin-top: 9px; padding: 6px 8px; border-radius: var(--dr-control-radius, 6px);
+  background: var(--dr-success-soft, #edf7f1); color: var(--dr-success, #14664c); font-size: 11.5px; }
+.deepread-lookup .dr-lk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--dr-border, #d8dee8); }
+.deepread-lookup .dr-lk-actions button, .deepread-lookup .dr-lk-lib button { border: 1px solid var(--dr-border, #d8dee8);
+  border-radius: var(--dr-control-radius, 6px); background: var(--dr-surface, #fff); color: var(--dr-text, #202939);
+  font: inherit; font-size: 11.5px; min-height: 27px; padding: 3px 9px; cursor: pointer; }
+.deepread-lookup .dr-lk-actions button:hover, .deepread-lookup .dr-lk-lib button:hover { background: var(--dr-accent-soft, #eaf1fc); color: var(--dr-accent, #2459a9); }
+.deepread-lookup .dr-lk-actions + .dr-lk-kind { margin-top: 15px; }
+.deepread-lookup canvas { display: block; max-width: 100%; margin-top: 9px; border-radius: var(--dr-control-radius, 6px); background: var(--dr-surface-soft, #f4f6fa); }
+.deepread-lookup ol { margin: 10px 0 0; padding-inline-start: 1.5em; }
+.deepread-lookup ol li + li { margin-top: 6px; }
 `;
 
   function el(doc, tag, cls, text) {
@@ -334,6 +336,7 @@
 
     _ensurePopover() {
       const doc = this.readerDoc;
+      DeepRead.UI?.install(doc);
       if (!doc.getElementById("deepread-lookup-css")) {
         const style = el(doc, "style");
         style.id = "deepread-lookup-css";

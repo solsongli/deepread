@@ -63,7 +63,12 @@ E2E.run = async function () {
   lookup._position(lookup.popover, lookup.current);
   const theme = lookup.readerDoc.documentElement.getAttribute("data-color-scheme");
   lookup.readerDoc.documentElement.setAttribute("data-color-scheme", "dark");
-  check("lookup follows the dark reader theme", lookup.readerWin.getComputedStyle(lookup.popover).backgroundColor === "rgb(42, 45, 50)");
+  const surface = lookup.readerDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+  surface.style.background = "var(--dr-surface)";
+  lookup.readerDoc.body.append(surface);
+  check("lookup follows the dark reader theme", !!lookup.readerWin.getComputedStyle(surface).getPropertyValue("--dr-surface").trim()
+    && lookup.readerWin.getComputedStyle(lookup.popover).backgroundColor === lookup.readerWin.getComputedStyle(surface).backgroundColor);
+  surface.remove();
   if (theme === null) lookup.readerDoc.documentElement.removeAttribute("data-color-scheme"); else lookup.readerDoc.documentElement.setAttribute("data-color-scheme", theme);
   const pageChars = lookup._pageChars.bind(lookup);
   let resolve;

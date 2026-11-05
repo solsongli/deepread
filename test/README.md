@@ -40,6 +40,16 @@ E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/lookup.pdf" scripts/e2e.
 
 These use local source data and fixed results; they do not measure real reader learning outcomes.
 
+Visual hierarchy and menus:
+
+```bash
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/paragraph-layout.pdf" scripts/e2e.sh test/e2e/visualDesign.js
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/lookup.pdf" scripts/e2e.sh test/e2e/toolbarUI.js
+```
+
+These verify menu focus/lifecycle, scrolling and viewport bounds, a 200px rail at 18px text size,
+theme installation across iframe boundaries, and effective colour contrast. Generated screenshots are UI fixtures.
+
 ## 1. Legacy demo fixture (git-ignored output in `test/fixtures/demo/`)
 
 ```

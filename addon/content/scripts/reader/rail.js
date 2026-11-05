@@ -13,220 +13,10 @@
 (function () {
   const HTML_NS = "http://www.w3.org/1999/xhtml";
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const GAP = 6;
+  const GAP = 10;
   const OVERSCAN = 400;
 
-  const CSS = `
-#primary-view.deepread-has-rail > iframe { flex: 1 1 auto; width: auto !important; min-width: 0; }
-.deepread-rail { position: relative; flex: 0 0 var(--dr-rail-width, 300px); overflow: hidden;
-  border-inline-start: 1px solid var(--color-panedivider, rgba(0,0,0,0.12));
-  background: var(--material-sidepane, #f6f7f8); color: var(--fill-primary, #1f2328);
-  font: var(--dr-card-font, 12px)/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif; }
-.deepread-rail .dr-resize { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 8; cursor: col-resize; }
-.deepread-rail.dr-right .dr-resize { left: 0; }
-.deepread-rail.dr-left .dr-resize { right: 0; }
-.deepread-rail .dr-resize:hover, .deepread-rail .dr-resize.dr-dragging { background: rgba(59,130,246,0.35); }
-.deepread-rail.dr-left { border-inline-start: none; border-inline-end: 1px solid var(--color-panedivider, rgba(0,0,0,0.12)); }
-.deepread-rail.dr-left .dr-rcard { left: 8px; right: 12px; }
-/* Collapse: the rail folds to a thin strip (e.g. to make room for the AI chat pane). */
-.deepread-rail .dr-collapse { position: absolute; top: 6px; z-index: 9; width: 18px; height: 22px; padding: 0; border: 1px solid rgba(0,0,0,0.12);
-  border-radius: 5px; background: var(--material-background, #fff); color: var(--fill-secondary, #57606a); font: 12px/1 sans-serif; cursor: pointer; opacity: 0.55; }
-.deepread-rail:hover .dr-collapse { opacity: 1; }
-.deepread-rail .dr-collapse:hover { background: #eef2fb; color: #2b59c3; }
-.deepread-rail.dr-right .dr-collapse { left: 2px; }
-.deepread-rail.dr-left .dr-collapse { right: 2px; }
-.deepread-rail.dr-collapsed { flex: 0 0 24px; cursor: pointer; }
-.deepread-rail.dr-collapsed .dr-rcard, .deepread-rail.dr-collapsed svg.dr-links, .deepread-rail.dr-collapsed .dr-resize { display: none; }
-.deepread-rail.dr-collapsed .dr-collapse { inset-inline: 2px; width: auto; height: auto; padding: 6px 0; opacity: 1;
-  writing-mode: vertical-rl; letter-spacing: 0.1em; line-height: 1.2; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-collapse { background: #2a2d32; color: #c5c9cf; border-color: rgba(255,255,255,0.15); }
-.deepread-rail svg.dr-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.deepread-rail .dr-rcard { position: absolute; left: 12px; right: 8px; box-sizing: border-box; padding: 6px 8px 5px;
-  border-radius: 8px; background: var(--material-background, #fff); border: 1px solid rgba(0,0,0,0.08);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06); transition: box-shadow .15s; }
-.deepread-rail .dr-rcard:hover, .deepread-rail .dr-rcard.dr-linked { box-shadow: 0 0 0 1.5px rgba(251,191,36,0.9), 0 4px 14px rgba(0,0,0,0.10); }
-.deepread-rail .dr-rhead { display: flex; gap: 4px; align-items: flex-start; }
-.deepread-rail .dr-rsummary { flex: 1; font-weight: 600; cursor: pointer; outline: none; }
-.deepread-rail .dr-rsummary[contenteditable="true"] { cursor: text; background: rgba(59,130,246,0.08); border-radius: 4px; }
-.deepread-rail .dr-ractions { display: none; gap: 1px; flex-shrink: 0; }
-.deepread-rail .dr-rcard:hover .dr-ractions, .deepread-rail .dr-rcard:focus-within .dr-ractions { display: flex; }
-.deepread-rail .dr-ractions button { border: none; background: transparent; color: var(--fill-secondary, #57606a); cursor: pointer;
-  font-size: 0.92em; padding: 0 4px; border-radius: 4px; line-height: 1.5; }
-.deepread-rail .dr-ractions button:hover { background: rgba(0,0,0,0.07); color: inherit; }
-.deepread-rail ul { margin: 3px 0 0; padding: 0; list-style: none; }
-.deepread-rail li { position: relative; padding: 1px 4px 1px 11px; border-radius: 4px; cursor: pointer; color: var(--fill-secondary, #424a53); }
-.deepread-rail li::before { content: ""; position: absolute; left: 3px; top: 7px; width: 4px; height: 4px; border-radius: 50%; background: #8c959f; }
-.deepread-rail li.dr-hl::before { background: var(--dr-hl); }
-.deepread-rail li.dr-hl { color: inherit; background: color-mix(in srgb, var(--dr-hl) 18%, transparent); }
-.deepread-rail li:hover { background: rgba(251,191,36,0.16); }
-.deepread-rail li.dr-hl:hover { background: color-mix(in srgb, var(--dr-hl) 28%, transparent); }
-.deepread-rail .dr-explain { margin-top: 3px; color: var(--fill-primary, #1f2328); overflow-wrap: anywhere; }
-.deepread-rail .dr-explain p { margin: 0.25em 0; }
-.deepread-rail .dr-explain ul, .deepread-rail .dr-explain ol { margin: 0.2em 0; padding-inline-start: 1.3em; list-style: revert; }
-.deepread-rail .dr-explain li { padding: 0; cursor: auto; color: inherit; }
-.deepread-rail .dr-explain li::before { display: none; }
-.deepread-rail .dr-explain-pending, .deepread-rail .dr-explain-missing { color: var(--fill-secondary, #6b7280); font-style: italic; }
-.deepread-rail .dr-explain-missing a { cursor: pointer; color: #2563eb; font-style: normal; }
-.deepread-rail .dr-points { font-size: 0.95em; }
-.deepread-rail .dr-trwrap { margin-top: 4px; }
-.deepread-rail .dr-trtoggle { display: inline-block; font-size: 0.9em; color: var(--fill-secondary, #6b7280); cursor: pointer; user-select: none; }
-.deepread-rail .dr-trtoggle:hover { color: var(--fill-primary, #1f2328); }
-.deepread-rail .dr-trbody { margin-top: 2px; padding: 3px 7px; border-inline-start: 3px solid #93c5fd; border-radius: 4px;
-  background: rgba(59,130,246,0.06); font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", serif; }
-.deepread-rail .dr-rcard.dr-flash { background: #fffbea; border-color: rgba(234,179,8,0.45); cursor: pointer; }
-.deepread-rail .dr-fc-label { font-size: 0.875em; font-weight: 700; color: #a16207; letter-spacing: .02em; }
-.deepread-rail .dr-fc-q { font-weight: 600; }
-.deepread-rail .dr-fc-a { margin-top: 3px; padding-top: 3px; border-top: 1px dashed rgba(161,98,7,0.35); }
-.deepread-rail .dr-fc-a p { margin: 0.2em 0; }
-.deepread-rail .dr-muted { color: var(--fill-secondary, #6b7280); }
-.deepread-rail .dr-rcard:hover { z-index: 5; }
-.deepread-rail .dr-rcard.dr-open { z-index: 6; border-color: #c9d6f3; box-shadow: 0 0 0 3px rgba(43,89,195,0.14), 0 8px 24px rgba(20,30,60,0.12); }
-/* Figure cards */
-.deepread-rail .dr-rcard.dr-figure { padding: 0 0 8px; overflow: hidden; border-radius: 10px; cursor: pointer; }
-.deepread-rail .dr-fhead { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: #f4f4f1; border-bottom: 1px solid rgba(0,0,0,0.05); }
-.deepread-rail .dr-flabel { flex-shrink: 0; padding: 0 6px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.12); background: #fff; font-size: 0.8em; font-weight: 600; line-height: 1.6; }
-.deepread-rail .dr-ftitle { flex: 1; min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.deepread-rail .dr-fcount { flex-shrink: 0; font-size: 0.8em; color: var(--fill-secondary, #4a4a46); }
-.deepread-rail .dr-fthumb { display: block; margin: 8px 10px 0; border-radius: 4px; background: #ededea; }
-.deepread-rail .dr-fbody { margin: 6px 10px 0; }
-.deepread-rail .dr-fsteps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.deepread-rail .dr-fsteps li { display: flex; gap: 7px; padding: 2px 4px; margin: 0 -4px; border-radius: 6px; cursor: inherit; color: inherit; }
-.deepread-rail .dr-fsteps li::before { display: none; }
-.deepread-rail .dr-fsteps li.dr-on { background: rgba(43,89,195,0.10); }
-.deepread-rail .dr-fnum { flex-shrink: 0; width: 1.35em; height: 1.35em; margin-top: 0.15em; border-radius: 50%; background: #1d1d1b; color: #fff;
-  display: grid; place-items: center; font-size: 0.75em; font-weight: 700; }
-.deepread-rail .dr-fsteps li.dr-on .dr-fnum { background: #2b59c3; }
-.deepread-rail .dr-ftext { font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif; line-height: 1.6; }
-.deepread-rail .dr-fcaption { font-size: 0.9em; line-height: 1.5; color: var(--fill-secondary, #4a4a46); }
-.deepread-rail .dr-evidence { margin: 8px 10px 0; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.1); cursor: default; }
-.deepread-rail .dr-evidence label { display: grid; gap: 3px; margin: 6px 0; font-size: 0.9em; }
-.deepread-rail .dr-evidence textarea { box-sizing: border-box; width: 100%; padding: 4px 6px; resize: vertical; font: inherit; line-height: 1.45; color: inherit; background: var(--material-background, #fff); border: 1px solid var(--color-panedivider, #bbb); border-radius: 4px; }
-.deepread-rail .dr-evidence p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 3px 0 8px; }
-.deepread-rail .dr-evidence button { font: inherit; padding: 2px 6px; cursor: pointer; }
-/* Figures amber, tables teal: told apart from paragraph cards at a glance. */
-.deepread-rail .dr-rcard.dr-figure { background: #fffdf8; border: 1px solid #efd9ac; border-inline-start: 3px solid #d97706; }
-.deepread-rail .dr-figure .dr-fhead { background: #fcf1dc; border-bottom-color: #f1e0bb; }
-.deepread-rail .dr-figure .dr-flabel { background: #d97706; border-color: #d97706; color: #fff; }
-.deepread-rail .dr-figure .dr-fnum { background: #92400e; }
-.deepread-rail .dr-figure .dr-fsteps li.dr-on { background: rgba(217,119,6,0.13); }
-.deepread-rail .dr-figure .dr-fsteps li.dr-on .dr-fnum { background: #d97706; }
-.deepread-rail .dr-rcard.dr-figure[data-kind="table"] { background: #fbfefd; border-color: #bfe3dd; border-inline-start-color: #0d9488; }
-.deepread-rail .dr-figure[data-kind="table"] .dr-fhead { background: #e4f4f1; border-bottom-color: #cbe9e3; }
-.deepread-rail .dr-figure[data-kind="table"] .dr-flabel { background: #0d9488; border-color: #0d9488; }
-.deepread-rail .dr-figure[data-kind="table"] .dr-fnum { background: #115e59; }
-.deepread-rail .dr-figure[data-kind="table"] .dr-fsteps li.dr-on { background: rgba(13,148,136,0.12); }
-.deepread-rail .dr-figure[data-kind="table"] .dr-fsteps li.dr-on .dr-fnum { background: #0d9488; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-rcard.dr-figure { background: #2d2a24; border-color: rgba(217,119,6,0.45); border-inline-start-color: #d97706; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-rcard.dr-figure[data-kind="table"] { background: #232b2a; border-color: rgba(13,148,136,0.45); border-inline-start-color: #14b8a6; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-figure[data-kind="table"] .dr-fhead { background: rgba(13,148,136,0.12); }
-.deepread-rail .dr-rcard.dr-figure.dr-compact .dr-fbody { display: none; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-fhead { background: rgba(255,255,255,0.05); }
-/* Paragraph cards: tinted header by the paragraph's role, white body. Colour only in labels and fine edges. */
-.deepread-rail .dr-rcard.dr-para { padding: 0 0 9px; overflow: hidden; border-radius: 10px; }
-.deepread-rail .dr-para > *:not(.dr-phead) { margin-left: 10px; margin-right: 10px; }
-.deepread-rail .dr-phead { padding: 7px 8px 6px 10px; background: #fafaf8; border-bottom: 1px solid rgba(0,0,0,0.05); margin-bottom: 2px; }
-.deepread-rail .dr-para[data-role="background"] { --dr-role-accent: #475569; --dr-role-fill: #e2e8f0; }
-.deepread-rail .dr-para[data-role="gap"] { --dr-role-accent: #c2410c; --dr-role-fill: #ffedd5; }
-.deepread-rail .dr-para[data-role="prior"] { --dr-role-accent: #a16207; --dr-role-fill: #fef3c7; }
-.deepread-rail .dr-para[data-role="contribution"] { --dr-role-accent: #7c3aed; --dr-role-fill: #ede9fe; }
-.deepread-rail .dr-para[data-role="method"] { --dr-role-accent: #1d4ed8; --dr-role-fill: #dbeafe; }
-.deepread-rail .dr-para[data-role="result"] { --dr-role-accent: #047857; --dr-role-fill: #d1fae5; }
-.deepread-rail .dr-para[data-role="limitation"] { --dr-role-accent: #be123c; --dr-role-fill: #ffe4e6; }
-.deepread-rail .dr-para[data-role]:not([data-role=""]) { border-inline-start: 4px solid var(--dr-role-accent); }
-.deepread-rail .dr-para[data-role]:not([data-role=""]) .dr-phead { background: var(--dr-role-fill); }
-.deepread-rail .dr-para .dr-rhead { align-items: center; gap: 6px; }
-.deepread-rail .dr-role { flex-shrink: 0; align-self: flex-start; margin-top: 0.12em; padding: 1px 6px; border-radius: 4px; font-size: 0.82em; font-weight: 700; line-height: 1.6; background: var(--dr-role-accent, #475569); color: #fff; }
-.deepread-rail .dr-imp { flex-shrink: 0; align-self: flex-start; margin-top: 0.5em; width: 7px; height: 7px; border-radius: 50%; }
-.deepread-rail .dr-q { flex-shrink: 0; align-self: flex-start; margin-top: 0.12em; padding: 0 5px; border-radius: 4px; font-size: 0.75em;
-  font-weight: 700; line-height: 1.6; background: #ede9fe; color: #5b21b6; cursor: pointer; }
-.deepread-rail .dr-q:hover { background: #ddd6fe; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-q { background: rgba(139,92,246,0.25); color: #ddd6fe; }
-.deepread-rail .dr-guide-notes { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
-.deepread-rail .dr-guide-note { display: flex; gap: 6px; align-items: baseline; font-size: 0.88em; line-height: 1.45; }
-.deepread-rail .dr-gn-label { flex-shrink: 0; padding: 0 5px; border-radius: 4px; font-weight: 700; font-size: 0.9em; background: #e6f4f1; color: #0f5f58; }
-.deepread-rail .dr-gn-hedge .dr-gn-label { background: #fdf2e3; color: #92400e; }
-.deepread-rail .dr-gn-claim .dr-gn-label { background: #ede9fe; color: #5b21b6; }
-.deepread-rail .dr-gn-text { color: var(--fill-secondary, #57606a); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.deepread-rail .dr-rcard.dr-compact .dr-guide-notes { display: none; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-gn-label { background: rgba(20,184,166,0.18); color: #99f6e4; }
-.deepread-rail .dr-range { flex-shrink: 0; align-self: flex-start; margin-top: 0.15em; padding: 0 5px; border-radius: 8px;
-  font-size: 0.75em; line-height: 1.6; color: var(--fill-secondary, #57606a); border: 1px solid rgba(0,0,0,0.12); }
-.deepread-rail .dr-trbody > .dr-trpart + .dr-trpart { margin-top: 0.45em; }
-.deepread-rail .dr-badges { display: none; flex-shrink: 0; gap: 3px; }
-.deepread-rail .dr-rcard.dr-compact .dr-badges { display: flex; }
-.deepread-rail .dr-badge { padding: 0 5px; border-radius: 8px; font-size: 0.78em; line-height: 1.55; font-weight: 600; }
-.deepread-rail .dr-badge-fc { background: #fbf4e4; color: #7a5300; }
-.deepread-rail .dr-badge-note { background: #eaf5ee; color: #1f6b3a; }
-.deepread-rail .dr-para .dr-explain { font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif; line-height: 1.75; margin-top: 6px; }
-.deepread-rail .dr-para .dr-points { margin-top: 7px; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.06); }
-.deepread-rail .dr-para .dr-trtoggle { padding: 1px 8px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; background: #fafaf8; }
-.deepread-rail .dr-rcard.dr-para.dr-compact { padding-bottom: 0; }
-.deepread-rail .dr-rcard.dr-para.dr-compact .dr-phead { padding: 5px 8px; border-bottom: none; margin-bottom: 0; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-para .dr-phead { background: color-mix(in srgb, var(--dr-role-accent, #475569) 28%, #1f2937) !important; border-color: rgba(255,255,255,0.12); }
-.deepread-rail .dr-rcard.dr-compact { padding-block: 3px; }
-.deepread-rail .dr-rcard.dr-compact .dr-rsummary { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.deepread-rail .dr-rcard.dr-compact .dr-points, .deepread-rail .dr-rcard.dr-compact .dr-explain,
-.deepread-rail .dr-rcard.dr-compact .dr-trwrap { display: none; }
-.deepread-rail .dr-user-collapsed .dr-explain, .deepread-rail .dr-user-collapsed .dr-points, .deepread-rail .dr-user-collapsed .dr-trwrap,
-.deepread-rail .dr-user-collapsed .dr-note, .deepread-rail .dr-user-collapsed .dr-guide-notes,
-.deepread-rail .dr-user-collapsed:hover .dr-explain, .deepread-rail .dr-user-collapsed:hover .dr-points, .deepread-rail .dr-user-collapsed:hover .dr-trwrap { display: none !important; }
-.deepread-rail .dr-user-collapsed:hover .dr-rsummary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Keep compact cards stable under the pointer. Only an explicit action opens details. */
-.deepread-rail .dr-rcard.dr-compact:hover .dr-points,
-.deepread-rail .dr-rcard.dr-compact:hover .dr-explain,
-.deepread-rail .dr-rcard.dr-compact:hover .dr-trwrap,
-.deepread-rail .dr-rcard.dr-compact:hover .dr-guide-notes,
-.deepread-rail .dr-rcard.dr-compact:hover .dr-fbody,
-.deepread-rail .dr-rcard.dr-compact:hover .dr-fthumb { display: none; }
-.deepread-rail .dr-rcard.dr-compact:hover .dr-rsummary { white-space: nowrap; font-weight: 500; }
-.deepread-rail .dr-rcard.dr-para.dr-compact:hover { padding-bottom: 0; }
-.deepread-rail .dr-rcard.dr-para.dr-compact:hover .dr-phead { border-bottom: none; margin-bottom: 0; }
-.deepread-rail .dr-rcard, .deepread-rail .dr-rcard.dr-para, .deepread-rail .dr-rcard.dr-figure { max-height: var(--dr-card-max-height, 80vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.deepread-rail .dr-para .dr-phead { position: sticky; top: 0; z-index: 2; }
-.deepread-rail .dr-rhead { flex-wrap: wrap; }
-.deepread-rail .dr-rsummary { min-width: 4em; overflow-wrap: anywhere; }
-.deepread-rail .dr-ractions { display: flex; width: 100%; justify-content: flex-end; }
-.deepread-rail .dr-compact .dr-ractions, .deepread-rail .dr-compact:hover .dr-ractions { display: none; }
-.deepread-rail :is(button, [role="button"], textarea):focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 3px; }
-.deepread-rail .dr-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0; font-size: 0.9em; }
-.deepread-rail .dr-sources button { font: inherit; padding: 2px 6px; background: transparent; color: inherit; border: 1px solid var(--color-panedivider, #bbb); border-radius: 4px; cursor: pointer; }
-.deepread-rail .dr-source-item { display: inline-flex; flex-wrap: wrap; gap: 2px; }
-.deepread-rail .dr-review-toggle[aria-pressed="true"], .deepread-rail .dr-badge-review { background: #fef3c7; color: #78350f; border: 1px solid #d97706; }
-.deepread-rail .dr-badge-review { font: inherit; font-size: 0.78em; cursor: pointer; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-review-toggle[aria-pressed="true"], :root[data-color-scheme="dark"] .deepread-rail .dr-badge-review { background: #503410; color: #fde68a; }
-.deepread-rail .dr-compact .dr-sources { display: none; }
-.deepread-rail .dr-focus-fold .dr-note { display: none; }
-.deepread-rail .dr-compact .dr-evidence { display: none; }
-.deepread-rail .dr-compact .dr-fthumb { display: none; }
-.deepread-rail .dr-card-section { color: var(--fill-secondary, #57606a); font: 600 0.85em/1.5 sans-serif; margin-bottom: 3px; }
-.deepread-rail .dr-ftoggle { border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
-:root[data-color-scheme="dark"] .deepread-rail :is(button, [role="button"], textarea):focus-visible { outline-color: #93c5fd; }
-.deepread-rail .dr-note { margin-top: 5px; padding: 4px 7px; border-radius: 6px; border-inline-start: 3px solid #10b981;
-  background: rgba(16,185,129,0.08); color: var(--fill-primary, #1f2328); cursor: text; }
-.deepread-rail .dr-note-label { font-size: 0.875em; font-weight: 700; color: #047857; }
-.deepread-rail .dr-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.deepread-rail .dr-note-editing textarea { margin-top: 2px; }
-.deepread-rail .dr-attached { margin-top: 5px; display: flex; flex-direction: column; gap: 4px; }
-.deepread-rail .dr-fc-attached { padding: 4px 7px; border-radius: 6px; background: #fffbea; border: 1px solid rgba(234,179,8,0.4); cursor: pointer; }
-.deepread-rail .dr-fc-attached:hover .dr-ractions { display: flex; }
-.deepread-rail .dr-fc-reveal { font-size: 0.92em; }
-.deepread-rail .dr-fc .dr-note { cursor: default; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-note { background: rgba(16,185,129,0.14); color: #e6e6e6; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-note-label { color: #34d399; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-fc-attached { background: #3a3320; border-color: rgba(234,179,8,0.35); }
-.deepread-rail textarea { width: 100%; box-sizing: border-box; font: inherit; resize: vertical; margin: 2px 0;
-  border: 1px solid rgba(0,0,0,0.15); border-radius: 5px; padding: 3px 5px; background: var(--material-background, #fff); color: inherit; }
-.deepread-rail .dr-fc-buttons { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
-.deepread-rail .dr-fc-buttons button { font: inherit; font-size: 0.92em; padding: 1px 7px; border-radius: 4px; cursor: pointer;
-  border: 1px solid rgba(0,0,0,0.15); background: transparent; color: inherit; }
-.deepread-rail .dr-fc-buttons button.dr-primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
-:root[data-color-scheme="dark"] .deepread-rail { background: #1f2124; color: #e6e6e6; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-rcard { background: #2a2d32; border-color: rgba(255,255,255,0.1); }
-:root[data-color-scheme="dark"] .deepread-rail li { color: #c5c9cf; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-trbody { background: rgba(59,130,246,0.12); }
-:root[data-color-scheme="dark"] .deepread-rail .dr-explain { color: #e6e6e6; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-rcard.dr-flash { background: #3a3320; border-color: rgba(234,179,8,0.35); }
-`;
+
 
   /** Which 带读 step a card note belongs to. */
   function note0Step(note) {
@@ -429,6 +219,7 @@
     }
 
     _teardownDOM() {
+      DeepRead.UI?.closeMenu(this.readerDoc);
       for (const fn of this._cleanup.splice(0)) {
         try {
           fn();
@@ -469,12 +260,8 @@
 
     _buildDOM(withLeft = false) {
       const doc = this.readerDoc;
-      if (!doc.getElementById("deepread-rail-css")) {
-        const style = doc.createElementNS(HTML_NS, "style");
-        style.id = "deepread-rail-css";
-        style.textContent = CSS;
-        (doc.head || doc.documentElement).append(style);
-      }
+      DeepRead.UI?.install(doc);
+      DeepRead.util.injectStylesheet(doc, "chrome://deepread/content/styles/rail.css", "deepread-rail-css");
       if (!doc.getElementById("deepread-katex-css")) {
         const link = doc.createElementNS(HTML_NS, "link");
         link.id = "deepread-katex-css";
@@ -808,6 +595,7 @@
       }
       for (const [key, card] of this.cards) {
         if (!keep.has(key)) {
+          DeepRead.UI?.closeMenu(this.readerDoc, card.el);
           card.el.remove();
           this.cards.delete(key);
         }
@@ -896,7 +684,9 @@
       const editingParagraph = item.kind === "paragraph" && card.el.contains(active)
         && (active?.isContentEditable || (this.noteEditing === item.key && active?.localName === "textarea"));
       if (card.sig !== sig && !editingFigure && !editingParagraph) {
-        const focusedAction = card.el.contains(active) ? active?.getAttribute("data-dr-action") : null;
+        DeepRead.UI?.closeMenu(this.readerDoc, card.el, true);
+        const focus = this.readerDoc.activeElement;
+        const focusedAction = card.el.contains(focus) ? focus?.getAttribute("data-dr-action") : null;
         const scrollTop = card.el.scrollTop;
         card.el.replaceChildren();
         if (item.kind === "figure") this._fillFigure(card.el, item.data, item);
@@ -904,8 +694,11 @@
         card.sig = sig;
         card.height = 0;
         card.el.scrollTop = scrollTop;
-        if (focusedAction) [...card.el.querySelectorAll("[data-dr-action]")]
-          .find((control) => control.getAttribute("data-dr-action") === focusedAction)?.focus({ preventScroll: true });
+        if (focusedAction) {
+          const control = [...card.el.querySelectorAll("[data-dr-action]")]
+            .find((candidate) => candidate.getAttribute("data-dr-action") === focusedAction);
+          (control?.getClientRects().length ? control : card.el.querySelector(".dr-rsummary"))?.focus({ preventScroll: true });
+        }
       }
       if (!card.height || card.width !== width || this._remeasure) {
         card.el.hidden = false;
@@ -964,7 +757,7 @@
       summary.setAttribute("role", "button");
       summary.setAttribute("data-dr-action", "summary");
       summary.setAttribute("aria-expanded", String(!compact));
-      summary.title = DeepRead.bilingual("单击或按 Enter 展开 / 收起", "Click or press Enter to open / close");
+      summary.title = `${title || ""}\n${DeepRead.bilingual("单击或按 Enter 展开 / 收起", "Click or press Enter to open / close")}`;
       const toggleCard = () => {
         if (summary.isContentEditable) return;
         if (!node.classList.contains("dr-compact")) {
@@ -1039,36 +832,47 @@
       if (badges.childNodes.length) head.append(badges);
 
       const actions = el(doc, "div", "dr-ractions");
-      if (!members) this._button(actions, "改", DeepRead.bilingual("编辑摘要（F2）", "Edit summary (F2)"), editSummary);
       const translations = this.overlay.translationsFor(paras);
-      this._button(actions, "⧉", DeepRead.t("card.copySummary"), () => {
-        const lines = paras.flatMap((p) => [session.paragraphSummary(p), ...(p.points || []).map((pt) => `- ${pt.summary}`)]);
-        DeepRead.util.copyToClipboard(lines.filter(Boolean).join("\n"));
-      });
-      if (translations.length) {
-        this._button(actions, "译", DeepRead.t("card.copyTranslation"), () => {
-          DeepRead.util.copyToClipboard(translations.join("\n\n"));
-        });
-      }
-      this._button(actions, "✎", DeepRead.bilingual("写我的理解", "Add my understanding"), () => {
+      this._button(actions, DeepRead.bilingual("笔记", "Note"), DeepRead.bilingual("写我的理解", "Add my understanding"), () => {
         this.openParagraph(paragraph);
         this.noteEditing = key;
         this._invalidate(key);
-      });
+      }).setAttribute("data-dr-action", "note");
       const eligible = paras.some((p) => DeepRead.Explainer?.eligible(p));
-      if (eligible) {
-        this._button(actions, "讲", DeepRead.bilingual("重新生成 AI 讲解", "Regenerate the AI explanation"), () => {
-          session.explainParagraph(key).catch((e) => session._notify(DeepRead.util.formatError(e), "error"));
-        });
-      }
-      this._button(actions, "AI", DeepRead.t("card.askAI"), () => {
+      this._button(actions, DeepRead.bilingual("提问", "Ask AI"), DeepRead.t("card.askAI"), () => {
         session.askAI({ text: paras.map((p) => p.paragraphText || "").filter(Boolean).join("\n\n"), pageIndex: paragraph.pageIndex, block: session.groupLabel(key) });
+      }).setAttribute("data-dr-action", "ask");
+      const focusSummary = (targetKey) => this.readerWin.requestAnimationFrame(() => {
+        this.cards.get(this.session.groupLead(targetKey))?.el.querySelector(".dr-rsummary")?.focus({ preventScroll: true });
       });
-      if (session.previousCard(key)) this._button(actions, "合", DeepRead.bilingual("与上一张卡片合并", "Merge with previous card"), () => session.mergeCardWithPrevious(key));
-      if (session.groupMembers(key).length > 1) this._button(actions, "拆", DeepRead.bilingual("拆开这张合并卡片", "Split this card"), () => session.splitCard(key));
-      this._button(actions, "×", DeepRead.bilingual("隐藏此卡片", "Hide this card"), () => {
-        session.setCardHidden(key, true);
+      const more = this._button(actions, DeepRead.bilingual("更多 ···", "More ···"), DeepRead.bilingual("卡片操作", "Card actions"), () => {
+        DeepRead.UI.openMenu(more, [
+          !members && { id: "edit", label: DeepRead.bilingual("编辑摘要", "Edit summary"), restoreFocus: false, action: editSummary },
+          { id: "copy-summary", label: DeepRead.t("card.copySummary"), action: () => {
+            const lines = paras.flatMap((p) => [session.paragraphSummary(p), ...(p.points || []).map((pt) => `- ${pt.summary}`)]);
+            DeepRead.util.copyToClipboard(lines.filter(Boolean).join("\n"));
+          } },
+          translations.length && { id: "copy-translation", label: DeepRead.t("card.copyTranslation"), action: () => DeepRead.util.copyToClipboard(translations.join("\n\n")) },
+          eligible && { id: "regenerate", label: DeepRead.bilingual("重新生成讲解", "Regenerate explanation"), action: () => {
+            session.explainParagraph(key).catch((e) => session._notify(DeepRead.util.formatError(e), "error"));
+          } },
+          { separator: true },
+          session.previousCard(key) && { id: "merge", label: DeepRead.bilingual("与上一张合并", "Merge with previous"), restoreFocus: false, action: () => {
+            session.mergeCardWithPrevious(key); focusSummary(key);
+          } },
+          session.groupMembers(key).length > 1 && { id: "split", label: DeepRead.bilingual("拆开合并卡片", "Split merged card"), restoreFocus: false, action: () => {
+            session.splitCard(key); focusSummary(key);
+          } },
+          { id: "hide", label: DeepRead.bilingual("隐藏此卡片", "Hide this card"), danger: true, restoreFocus: false, action: () => {
+            session.setCardHidden(key, true);
+            this.pdfWin?.focus();
+          } },
+        ], { label: DeepRead.bilingual("卡片操作", "Card actions"), relatedDocument: this.pdfWin?.document,
+          outsideDocument: (session.reader._window || Zotero.getMainWindow())?.document });
       });
+      more.setAttribute("data-dr-action", "more");
+      more.setAttribute("aria-haspopup", "menu");
+      more.setAttribute("aria-expanded", "false");
       head.append(actions);
       const headWrap = el(doc, "div", "dr-phead");
       headWrap.append(head);

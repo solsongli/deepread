@@ -35,7 +35,7 @@ pref("extensions.zotero.deepread.view.guided", false);
 pref("extensions.zotero.deepread.skim.depth", "full");
 pref("extensions.zotero.deepread.questions.hideAnswers", false);
 pref("extensions.zotero.deepread.view.railWidth", 280);
-pref("extensions.zotero.deepread.view.cardFontSize", 12);
+pref("extensions.zotero.deepread.view.cardFontSize", 13);
 pref("extensions.zotero.deepread.cards.autoExplain", true);
 pref("extensions.zotero.deepread.cards.translationOpen", false);
 pref("extensions.zotero.deepread.cards.keepOpen", true);

@@ -1,0 +1,80 @@
+/* Shared visual language for DeepRead only. Does not restyle Zotero's native UI.
+ * License: AGPL-3.0-or-later */
+:root {
+  --dr-surface: #ffffff;
+  --dr-surface-soft: #f4f6fa;
+  --dr-canvas: #eef1f5;
+  --dr-text: #202939;
+  --dr-muted: #526075;
+  --dr-border: #d8dee8;
+  --dr-accent: #2459a9;
+  --dr-accent-soft: #eaf1fc;
+  --dr-on-accent: #ffffff;
+  --dr-success: #14664c;
+  --dr-success-soft: #edf7f1;
+  --dr-warning: #8b5710;
+  --dr-warning-soft: #fff6e6;
+  --dr-danger: #b4233b;
+  --dr-radius: 10px;
+  --dr-control-radius: 6px;
+  --dr-shadow: 0 2px 5px rgba(24, 39, 62, 0.05);
+  --dr-popover-shadow: 0 12px 32px rgba(24, 39, 62, 0.16), 0 2px 6px rgba(24, 39, 62, 0.06);
+  --dr-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+}
+:root[data-color-scheme="dark"] {
+  --dr-surface: #202938;
+  --dr-surface-soft: #283345;
+  --dr-canvas: #19212e;
+  --dr-text: #e8edf5;
+  --dr-muted: #b3c0d1;
+  --dr-border: #414d60;
+  --dr-accent: #a7c7fa;
+  --dr-accent-soft: #293e5d;
+  --dr-on-accent: #132238;
+  --dr-success: #9cddbd;
+  --dr-success-soft: #203d34;
+  --dr-warning: #edc58e;
+  --dr-warning-soft: #423624;
+  --dr-danger: #ffabb4;
+  --dr-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+  --dr-popover-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-color-scheme="light"]):not([data-color-scheme="dark"]) {
+    --dr-surface: #202938;
+    --dr-surface-soft: #283345;
+    --dr-canvas: #19212e;
+    --dr-text: #e8edf5;
+    --dr-muted: #b3c0d1;
+    --dr-border: #414d60;
+    --dr-accent: #a7c7fa;
+    --dr-accent-soft: #293e5d;
+    --dr-on-accent: #132238;
+    --dr-success: #9cddbd;
+    --dr-success-soft: #203d34;
+    --dr-warning: #edc58e;
+    --dr-warning-soft: #423624;
+    --dr-danger: #ffabb4;
+    --dr-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+    --dr-popover-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  }
+}
+.deepread-card-menu {
+  position: fixed; z-index: 2147483002; box-sizing: border-box; width: 232px;
+  padding: 5px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  border: 1px solid var(--dr-border); border-radius: var(--dr-radius);
+  background: var(--dr-surface); color: var(--dr-text); box-shadow: var(--dr-popover-shadow);
+  font: 12px/1.5 var(--dr-font);
+}
+.deepread-card-menu button {
+  display: flex; align-items: center; width: 100%; min-height: 30px; box-sizing: border-box;
+  padding: 5px 9px; border: 0; border-radius: var(--dr-control-radius);
+  font: inherit; text-align: start; color: inherit; background: transparent; cursor: pointer;
+}
+.deepread-card-menu button:hover, .deepread-card-menu button:focus { background: var(--dr-accent-soft); color: var(--dr-accent); }
+.deepread-card-menu button:focus-visible { outline: 2px solid var(--dr-accent); outline-offset: -2px; }
+.deepread-card-menu .dr-danger { color: var(--dr-danger); }
+.deepread-card-menu hr { border: 0; border-top: 1px solid var(--dr-border); margin: 5px; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.deepread-rail, .deepread-toolbar, #deepread-bar, .dr-pane) * { transition: none !important; scroll-behavior: auto !important; }
+}

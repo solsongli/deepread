@@ -12,6 +12,7 @@
     "util.js",
     "prefs.js",
     "l10n.js",
+    "ui.js",
     "services/store.js",
     "services/llm.js",
     "services/updater.js",
@@ -97,20 +98,24 @@
     if (windows.has(win)) return;
     windows.add(win);
     win.MozXULElement.insertFTLIfNeeded("deepread.ftl");
+    DeepRead.UI.install(win.document);
     DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/styles/panes.css", "deepread-panes-css");
     DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/styles/questions.css", "deepread-questions-css");
     DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/lib/katex/katex.min.css", "deepread-katex-css");
   };
 
   DeepRead.onMainWindowUnload = function (win) {
+    DeepRead.UI.uninstall(win.document);
     windows.delete(win);
   };
 
   DeepRead.shutdown = async function () {
     DeepRead.log("shutting down");
     DeepRead.Session.destroyAll();
+    DeepRead.UI.closeAll();
     DeepRead.Toolbar.unregister();
     for (const win of windows) {
+      DeepRead.UI.uninstall(win.document);
       win.document.getElementById("deepread-panes-css")?.remove();
       win.document.getElementById("deepread-questions-css")?.remove();
       win.document.getElementById("deepread-katex-css")?.remove();

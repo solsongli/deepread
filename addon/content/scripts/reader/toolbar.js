@@ -10,57 +10,66 @@
   const HTML_NS = "http://www.w3.org/1999/xhtml";
 
   const CSS = `
-.deepread-toolbar { display: flex; align-items: center; gap: 1px; }
-.deepread-toolbar .dr-run { width: auto; min-width: 28px; padding: 0 8px; gap: 5px; font-size: 12px; font-weight: 600;
-  color: var(--fill-primary, #222); white-space: nowrap; position: relative; overflow: hidden; }
-.deepread-toolbar .dr-run .dr-run-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: #3b82f6; transition: width .3s; }
-.deepread-toolbar .dr-run.dr-ready::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #22c55e; }
-.deepread-toolbar .dr-menu-button { width: auto; padding: 0 7px; gap: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-.deepread-toolbar .dr-focus-button { width: auto; padding: 0 7px; font-size: 12px; white-space: nowrap; }
-.deepread-toolbar .dr-focus-button[aria-pressed="true"] { color: var(--fill-primary, #222); background: var(--fill-quinary, rgba(43,89,195,0.12)); box-shadow: inset 0 -2px #2b59c3; }
-.deepread-toolbar .dr-focus-button[hidden] { display: none; }
-.deepread-toolbar .dr-questions-button { width: auto; padding: 0 7px; font-size: 12px; font-weight: 600; white-space: nowrap; color: #6d28d9; }
-.deepread-toolbar .dr-questions-button[hidden] { display: none; }
-.deepread-toolbar .dr-guide-button { width: auto; padding: 0 7px; font-size: 12px; font-weight: 600; white-space: nowrap; color: #0f766e; }
+.deepread-toolbar { display: flex; align-items: center; gap: 3px; }
+.deepread-toolbar .toolbar-button { border-radius: var(--dr-control-radius, 6px); color: var(--dr-muted, #526075); }
+.deepread-toolbar .toolbar-button:hover { background: var(--dr-surface-soft, #f4f6fa); color: var(--dr-text, #202939); }
+.deepread-toolbar .toolbar-button:focus-visible { outline: 2px solid var(--dr-accent, #2459a9); outline-offset: 1px; }
+.deepread-toolbar .dr-run { width: auto; min-width: 28px; padding: 0 9px; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--dr-accent, #2459a9); background: var(--dr-accent-soft, #eaf1fc); white-space: nowrap; position: relative; overflow: hidden; }
+.deepread-toolbar .dr-run .dr-run-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--dr-accent, #2459a9); transition: width .3s; }
+.deepread-toolbar .dr-run.dr-ready::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--dr-success, #14664c); }
+.deepread-toolbar .dr-menu-button, .deepread-toolbar .dr-focus-button, .deepread-toolbar .dr-questions-button,
+.deepread-toolbar .dr-guide-button { width: auto; padding: 0 8px; gap: 5px; font-size: 12px; white-space: nowrap; }
+.deepread-toolbar .dr-focus-button[aria-pressed="true"], .deepread-toolbar .dr-guide-button[aria-pressed="true"],
+.deepread-toolbar .dr-menu-button[aria-expanded="true"] { color: var(--dr-accent, #2459a9); background: var(--dr-accent-soft, #eaf1fc); }
+.deepread-toolbar .dr-focus-button[hidden], .deepread-toolbar .dr-questions-button[hidden], .deepread-toolbar .dr-guide-button[hidden] { display: none; }
 .deepread-toolbar .dr-guide-button.dr-ready::after { content: " ✓"; }
-.deepread-toolbar .dr-guide-button[aria-pressed="true"] { background: var(--fill-quinary, rgba(0,0,0,0.08)); }
-.deepread-toolbar .dr-guide-button[hidden] { display: none; }
-.deepread-toolbar .dr-menu-button .dr-count { font-weight: 400; opacity: 0.7; font-size: 11px; }
-.deepread-menu { position: fixed; z-index: 2147483001; min-width: 220px; padding: 4px; border-radius: 8px;
-  background: var(--material-toolbar, #fff); color: var(--fill-primary, #222); border: 1px solid rgba(0,0,0,0.12);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.18); font: 12.5px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.deepread-menu button { display: flex; width: 100%; gap: 8px; align-items: center; text-align: start; padding: 5px 8px;
-  border: none; background: transparent; color: inherit; border-radius: 5px; font: inherit; cursor: pointer; }
-.deepread-menu button:hover { background: var(--fill-quinary, rgba(0,0,0,0.06)); }
-.deepread-menu .dr-check { width: 14px; display: inline-block; }
-.deepread-menu hr { border: none; border-top: 1px solid rgba(0,0,0,0.1); margin: 4px 2px; }
-.deepread-menu .dr-menu-row { display: flex; align-items: center; gap: 4px; padding: 3px 8px 3px 30px; }
-.deepread-menu .dr-menu-row .dr-label { flex: 1; }
-.deepread-menu .dr-menu-row button { width: auto; min-width: 26px; padding: 1px 6px; justify-content: center;
-  border: 1px solid rgba(0,0,0,0.15); }
-.deepread-menu .dr-menu-row .dr-value { min-width: 44px; text-align: center; opacity: 0.75; }
-.deepread-menu .dr-menu-row select { min-width: 90px; padding: 3px; font: inherit; color: inherit; background: var(--material-toolbar, #fff); border: 1px solid var(--color-panedivider, #bbb); border-radius: 4px; }
-.deepread-menu.dr-features { width: 300px; padding: 6px; }
-.deepread-menu .dr-menu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 6px; }
-.deepread-menu .dr-menu-head strong { font-size: 13px; }
-.deepread-menu .dr-scope { display: flex; padding: 2px; border-radius: 6px; background: rgba(0,0,0,0.06); }
-.deepread-menu .dr-scope button { width: auto; padding: 3px 8px; border-radius: 5px; font-size: 11.5px; opacity: 0.75; }
-.deepread-menu .dr-scope button[aria-pressed="true"] { background: var(--material-toolbar, #fff); opacity: 1; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
-.deepread-menu .dr-feature { align-items: flex-start; gap: 10px; padding: 6px 8px; }
-.deepread-menu .dr-box { flex-shrink: 0; width: 16px; height: 16px; margin-top: 1px; border-radius: 4px; box-sizing: border-box;
-  border: 1.5px solid #9a9a94; display: grid; place-items: center; color: #fff; font-size: 11px; line-height: 1; }
-.deepread-menu .dr-feature[aria-checked="true"] .dr-box { background: #2b59c3; border-color: #2b59c3; }
-.deepread-menu .dr-feature-text { display: flex; flex-direction: column; gap: 1px; }
-.deepread-menu .dr-feature-text strong { font-weight: 600; }
-.deepread-menu .dr-feature-text small { font-size: 11.5px; opacity: 0.7; }
-.deepread-menu .dr-hl-row input[type="color"] { width: 22px; height: 22px; padding: 0; border: 1px solid rgba(0,0,0,0.2);
-  border-radius: 5px; background: none; cursor: pointer; }
-.deepread-menu .dr-fold-row button[aria-pressed="true"] { background: #e3eafa; border-color: #2b59c3; color: #1e428f; }
-.deepread-toast { position: fixed; right: 16px; bottom: 16px; z-index: 2147483002; max-width: 380px; padding: 9px 12px;
-  border-radius: 8px; background: #1f2328; color: #fff; font: 12.5px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.25); white-space: pre-wrap; }
-.deepread-toast.dr-error { background: #b42318; }
-.deepread-toast.dr-warning { background: #b54708; }
+.deepread-toolbar .dr-menu-button .dr-count { font-weight: 400; color: var(--dr-muted, #526075); font-size: 10.5px; }
+.deepread-menu { position: fixed; z-index: 2147483001; width: 340px; max-width: calc(100vw - 16px); min-width: 0;
+  box-sizing: border-box; padding: 0; border-radius: var(--dr-radius, 10px); overflow: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--dr-muted, #526075) var(--dr-surface-soft, #f4f6fa);
+  background: var(--dr-surface, #fff); color: var(--dr-text, #202939); border: 1px solid var(--dr-border, #d8dee8);
+  box-shadow: var(--dr-popover-shadow, 0 12px 36px rgba(20,35,55,0.16));
+  font: 12.5px/1.45 var(--dr-font, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", sans-serif); }
+.deepread-menu button { display: flex; width: 100%; gap: 8px; align-items: center; text-align: start; padding: 7px 9px;
+  border: none; background: transparent; color: inherit; border-radius: var(--dr-control-radius, 6px); font: inherit; cursor: pointer; }
+.deepread-menu button:hover { background: var(--dr-surface-soft, #f4f6fa); }
+.deepread-menu :is(button,select,input):focus-visible { outline: 2px solid var(--dr-accent, #2459a9); outline-offset: -2px; }
+.deepread-menu button:disabled, .deepread-menu select:disabled { opacity: .45; cursor: default; }
+.deepread-menu .dr-check { display: none; }
+.deepread-menu .dr-menu-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px; padding: 12px 13px; background: var(--dr-surface, #fff); border-bottom: 1px solid var(--dr-border, #d8dee8); }
+.deepread-menu .dr-menu-head strong { font-size: 13px; font-weight: 650; }
+.deepread-menu .dr-menu-section { padding: 9px 8px; }
+.deepread-menu .dr-menu-section + .dr-menu-section { border-top: 1px solid var(--dr-border, #d8dee8); }
+.deepread-menu .dr-section-label { margin: 0 0 4px; padding: 2px 9px 4px; color: var(--dr-muted, #526075); font-size: 11px; font-weight: 600; }
+.deepread-menu .dr-scope { display: flex; padding: 2px; border: 1px solid var(--dr-border, #d8dee8); border-radius: 7px; background: var(--dr-surface-soft, #f4f6fa); }
+.deepread-menu .dr-scope button { width: auto; padding: 3px 8px; border-radius: 4px; font-size: 11px; color: var(--dr-muted, #526075); }
+.deepread-menu .dr-scope button[aria-pressed="true"] { background: var(--dr-surface, #fff); color: var(--dr-accent, #2459a9); box-shadow: 0 1px 3px rgba(20,35,55,.1); }
+.deepread-menu .dr-feature { align-items: flex-start; gap: 10px; padding: 7px 9px; }
+.deepread-menu .dr-box { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; border-radius: 4px; box-sizing: border-box;
+  border: 1px solid var(--dr-muted, #526075); display: grid; place-items: center; color: var(--dr-surface, #fff); font-size: 11px; line-height: 1; }
+.deepread-menu .dr-feature[aria-checked="true"] .dr-box { background: var(--dr-accent, #2459a9); border-color: var(--dr-accent, #2459a9); color: var(--dr-on-accent, #fff); }
+.deepread-menu .dr-feature-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.deepread-menu .dr-feature-text strong { font-weight: 550; }
+.deepread-menu .dr-feature-text small { font-size: 11px; line-height: 1.45; color: var(--dr-muted, #526075); }
+.deepread-menu .dr-menu-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 6px 9px; min-width: 0; }
+.deepread-menu .dr-menu-row .dr-label { flex: 1 1 100px; }
+.deepread-menu .dr-menu-row button { width: auto; min-width: 26px; min-height: 25px; padding: 2px 7px; justify-content: center;
+  border: 1px solid var(--dr-border, #d8dee8); background: var(--dr-surface, #fff); }
+.deepread-menu .dr-menu-row .dr-value { min-width: 42px; text-align: center; color: var(--dr-muted, #526075); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.deepread-menu .dr-menu-row select { min-width: 90px; max-width: 100%; padding: 4px 6px; font: inherit; color: inherit;
+  background: var(--dr-surface, #fff); border: 1px solid var(--dr-border, #d8dee8); border-radius: var(--dr-control-radius, 6px); }
+.deepread-menu .dr-hl-row input[type="color"] { width: 22px; height: 24px; padding: 1px; border: 1px solid var(--dr-border, #d8dee8);
+  border-radius: 5px; background: var(--dr-surface, #fff); cursor: pointer; }
+.deepread-menu .dr-fold-row button[aria-pressed="true"] { background: var(--dr-accent-soft, #eaf1fc); border-color: var(--dr-accent, #2459a9); color: var(--dr-accent, #2459a9); }
+.deepread-menu .dr-menu-actions > button { padding: 8px 9px; }
+.deepread-menu .dr-menu-danger { color: var(--dr-danger, #b4233b); }
+.deepread-toast { position: fixed; right: 16px; bottom: 16px; z-index: 2147483002; max-width: min(380px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 14px;
+  border-radius: var(--dr-radius, 10px); background: #202939; color: #fff; font: 12.5px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  box-shadow: 0 6px 20px rgba(20,35,55,0.2); white-space: pre-wrap; }
+.deepread-toast.dr-error { background: #9f2b27; }
+.deepread-toast.dr-warning { background: #8b5710; }
 `;
 
   function h(doc, tag, props = {}, ...children) {
@@ -76,6 +85,7 @@
   }
 
   function injectCSS(doc) {
+    DeepRead.UI?.install(doc);
     if (doc.getElementById("deepread-toolbar-css")) return;
     const style = doc.createElementNS(HTML_NS, "style");
     style.id = "deepread-toolbar-css";
@@ -164,17 +174,40 @@
   }
 
   let featureScope = "paper"; // 「功能」 menu: apply switches to this paper only, or make them the default
+  const openMenus = new WeakMap(); // document → cleanup, including listeners on its PDF iframe
+  const activeMenus = new Set(); // shutdown may receive another Gecko wrapper for the same document
 
   /** The 「功能」 menu: per-paper module switches, card size, and the paper's actions. */
   function openMenu(session, doc, anchor) {
+    openMenus.get(doc)?.({ restoreFocus: false });
     doc.querySelector(".deepread-menu")?.remove();
-    const close = () => {
+    let layoutTimer = null;
+    const pdfDoc = session.overlay?.pdfDoc;
+    const outerDoc = (session.reader._window || Zotero.getMainWindow())?.document;
+    const close = ({ restoreFocus = true } = {}) => {
       menu.remove();
+      clearTimeout(layoutTimer);
       doc.removeEventListener("pointerdown", outside, true);
+      pdfDoc?.removeEventListener("pointerdown", outside, true);
+      outerDoc?.removeEventListener("pointerdown", onOuterPointer, true);
+      doc.removeEventListener("keydown", onKey, true);
+      doc.defaultView.removeEventListener("resize", onResize);
+      doc.defaultView.removeEventListener("pagehide", onPageHide);
+      if (openMenus.get(doc) === close) openMenus.delete(doc);
+      activeMenus.delete(close);
+      anchor.setAttribute("aria-expanded", "false");
+      if (restoreFocus && anchor.isConnected) anchor.focus();
     };
     const outside = (e) => {
-      if (!menu.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close();
+      if (!menu.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close({ restoreFocus: false });
     };
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault(); e.stopPropagation(); close();
+    };
+    const onResize = () => close({ restoreFocus: menu.contains(doc.activeElement) });
+    const onPageHide = () => close({ restoreFocus: false });
+    const onOuterPointer = () => close({ restoreFocus: false });
     const item = (content, action) => h(doc, "button", {
       onclick: (e) => {
         e.stopPropagation();
@@ -208,7 +241,7 @@
       const hint = module.key === "cards" ? cardsHint() : DeepRead.Modules.hint(module);
       return h(doc, "button", {
         class: "dr-feature",
-        role: "menuitemcheckbox",
+        role: "checkbox", "data-module": module.key,
         "aria-checked": String(on),
         onclick: (e) => {
           e.stopPropagation();
@@ -216,6 +249,7 @@
           density.disabled = !DeepRead.Modules.enabled(session, "highlights");
           if (featureScope === "default") DeepRead.Session.forEachOverlay((overlay) => overlay.session.applyModules());
           rows.replaceChildren(...DeepRead.Modules.LIST.map(featureRow));
+          rows.querySelector(`[data-module="${module.key}"]`)?.focus();
         },
       }, h(doc, "span", { class: "dr-box", "aria-hidden": "true" }, on ? "✓" : ""),
       h(doc, "span", { class: "dr-feature-text" }, h(doc, "strong", {}, DeepRead.Modules.label(module)), hint ? h(doc, "small", {}, hint) : null));
@@ -224,13 +258,14 @@
     // Card placement is a global setting (the rail rebuilds through its pref observer).
     const layoutRow = () => h(doc, "button", {
       class: "dr-feature dr-layout",
-      role: "menuitemcheckbox",
+      role: "checkbox",
       "aria-checked": String(splitLayout()),
       onclick: (e) => {
         e.stopPropagation();
         DeepRead.prefs.set("view.railLayout", splitLayout() ? "right" : "split");
         layout.replaceChildren(layoutRow());
-        doc.defaultView.setTimeout(() => rows.replaceChildren(...DeepRead.Modules.LIST.map(featureRow)), 50);
+        layout.querySelector("button")?.focus();
+        layoutTimer = doc.defaultView.setTimeout(() => rows.replaceChildren(...DeepRead.Modules.LIST.map(featureRow)), 50);
       },
     }, h(doc, "span", { class: "dr-box", "aria-hidden": "true" }, splitLayout() ? "✓" : ""),
     h(doc, "span", { class: "dr-feature-text" }, h(doc, "strong", {}, DeepRead.bilingual("双栏论文两侧放卡片", "Cards on both sides for two columns")),
@@ -241,12 +276,13 @@
       const on = DeepRead.prefs.get("cards.keepOpen") !== false;
       return h(doc, "button", {
         class: "dr-feature dr-keepopen",
-        role: "menuitemcheckbox",
+        role: "checkbox",
         "aria-checked": String(on),
         onclick: (e) => {
           e.stopPropagation();
           DeepRead.prefs.set("cards.keepOpen", !on);
           keepOpen.replaceChildren(keepOpenRow());
+          keepOpen.querySelector("button")?.focus();
         },
       }, h(doc, "span", { class: "dr-box", "aria-hidden": "true" }, on ? "✓" : ""),
       h(doc, "span", { class: "dr-feature-text" }, h(doc, "strong", {}, DeepRead.bilingual("卡片保持展开", "Keep opened cards open")),
@@ -305,10 +341,12 @@
     };
     const fold = h(doc, "div", {}, foldRow());
 
-    const menu = h(doc, "div", { class: "deepread-menu dr-features", role: "menu", "aria-label": DeepRead.bilingual("本文显示的功能", "Features for this paper") },
+    const section = (label, className, ...children) => h(doc, "section", { class: `dr-menu-section ${className}`, "aria-label": label },
+      h(doc, "h3", { class: "dr-section-label" }, label), ...children);
+    const menu = h(doc, "div", { class: "deepread-menu dr-features", role: "dialog", "aria-label": DeepRead.bilingual("阅读显示设置", "Reading display settings") },
       h(doc, "div", { class: "dr-menu-head" }, h(doc, "strong", {}, DeepRead.bilingual("本文显示的功能", "Features")), scopeBox),
-      rows,
-      h(doc, "hr"),
+      section(DeepRead.bilingual("显示功能", "Visible features"), "dr-menu-features", rows),
+      section(DeepRead.bilingual("版面与标记", "Layout and highlights"), "dr-menu-layout",
       sizeRow(doc, DeepRead.bilingual("卡片字号", "Card font"), "view.cardFontSize", 1, DeepRead.Rail.clampFont, (v) => `${v} px`),
       sizeRow(doc, DeepRead.bilingual("卡片宽度", "Card width"), "view.railWidth", 20, DeepRead.Rail.clampWidth, (v) => `${v} px`),
       layout,
@@ -316,8 +354,8 @@
       highlight,
       h(doc, "label", { class: "dr-menu-row", title: DeepRead.bilingual("只改变本文的自动建议，保留手动标记", "Affects this paper's automatic suggestions; keeps manual marks") },
         h(doc, "span", { class: "dr-label" }, DeepRead.bilingual("自动高亮（本文）", "Auto highlights (this paper)")), density),
-      fold,
-      h(doc, "hr"),
+      fold),
+      section(DeepRead.bilingual("论文操作", "Paper actions"), "dr-menu-actions",
       item(plain(session.hasResults ? DeepRead.t("toolbar.rerun") : DeepRead.t("toolbar.run")), () => onRun(session, doc)),
       explainItem(session, doc, item),
       session.rail?.openCount
@@ -333,13 +371,27 @@
         ? item(plain(DeepRead.t("toolbar.clear")), async () => {
           if (confirm(session.reader, DeepRead.t("toolbar.confirmClear"))) await session.clearResults();
         })
-        : null);
+        : null));
+    menu.querySelector(".dr-menu-actions > button:last-child")?.classList.toggle("dr-menu-danger", session.hasResults);
     (doc.body || doc.documentElement).append(menu);
     const r = anchor.getBoundingClientRect();
+    const winHeight = doc.documentElement.clientHeight, winWidth = doc.documentElement.clientWidth;
+    const below = winHeight - r.bottom - 12, above = r.top - 12;
+    const placeAbove = below < 220 && above > below;
+    menu.style.maxHeight = `${Math.max(40, placeAbove ? above : below)}px`;
     const width = menu.offsetWidth;
-    menu.style.left = `${Math.max(4, Math.min(r.left, doc.documentElement.clientWidth - width - 4))}px`;
-    menu.style.top = `${r.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, Math.min(r.right - width, winWidth - width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(placeAbove ? r.top - menu.offsetHeight - 6 : r.bottom + 6, winHeight - menu.offsetHeight - 8))}px`;
+    openMenus.set(doc, close);
+    activeMenus.add(close);
+    anchor.setAttribute("aria-expanded", "true");
     doc.addEventListener("pointerdown", outside, true);
+    pdfDoc?.addEventListener("pointerdown", outside, true);
+    outerDoc?.addEventListener("pointerdown", onOuterPointer, true);
+    doc.addEventListener("keydown", onKey, true);
+    doc.defaultView.addEventListener("resize", onResize);
+    doc.defaultView.addEventListener("pagehide", onPageHide);
+    scopeBox.querySelector("[aria-pressed='true']")?.focus();
   }
 
   function render(event) {
@@ -347,6 +399,7 @@
     const session = DeepRead.Session.forReader(reader);
     if (!session) return;
     injectCSS(doc);
+    openMenus.get(doc)?.({ restoreFocus: false });
     doc.querySelectorAll(".deepread-toolbar").forEach((node) => node.remove());
 
     const progress = h(doc, "div", { class: "dr-run-progress" });
@@ -356,10 +409,10 @@
     const menuButton = h(doc, "button", {
       class: "toolbar-button dr-menu-button",
       title: DeepRead.bilingual("本文显示的功能", "Features for this paper"),
-      "aria-haspopup": "menu",
+      "aria-haspopup": "dialog", "aria-expanded": "false",
       onclick: (e) => {
         if (doc.querySelector(".deepread-menu.dr-features")) {
-          doc.querySelector(".deepread-menu").remove();
+          openMenus.get(doc)?.();
           return;
         }
         openMenu(session, doc, e.currentTarget);
@@ -468,6 +521,7 @@
 
     /** Plugin shutdown: take our buttons out of open readers (Zotero only drops the listener). */
     unregister() {
+      for (const close of [...activeMenus]) close({ restoreFocus: false });
       for (const reader of Zotero.Reader._readers || []) {
         const doc = reader._iframeWindow?.document;
         if (!doc) continue;
@@ -478,6 +532,7 @@
   };
 
   function removeToolbars(doc) {
+    openMenus.get(doc)?.({ restoreFocus: false });
     for (const node of doc.querySelectorAll(".deepread-toolbar")) {
       const section = node.parentNode;
       node.remove();

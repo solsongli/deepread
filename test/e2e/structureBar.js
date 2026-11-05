@@ -102,7 +102,13 @@ E2E.run = async function () {
     Services.prefs.setIntPref("ui.systemUsesDarkTheme", 1);
     doc.documentElement.setAttribute("data-color-scheme", "dark");
     await sleep(200);
-    check("dark controls remain readable", doc.defaultView.getComputedStyle(bar.root.querySelector(".dr-nextkey")).color === "rgb(251, 191, 36)");
+    const controlStyle = doc.defaultView.getComputedStyle(bar.root.querySelector(".dr-nextkey"));
+    const luminance = (color) => {
+      const c = color.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => v / 255).map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+    };
+    const fg = luminance(controlStyle.color), bg = luminance(controlStyle.backgroundColor);
+    check("dark controls remain readable", (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05) >= 4.5);
     await screenshot("structure-dark.png");
 
     reader.setSidebarWidth(590);

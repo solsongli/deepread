@@ -72,7 +72,7 @@ E2E.run = async function () {
   check("second source button targets the second original paragraph", located === 1);
   sourceButtons[1].focus(); s._emit("explanations"); await sleep(100);
   check("refresh retains the correct source button focus", doc.activeElement?.getAttribute("data-dr-action") === "source:0:1");
-  const noteButton = [...card("p_0_0").querySelectorAll(".dr-ractions button")].find((button) => button.textContent === "✎");
+  const noteButton = card("p_0_0").querySelector('.dr-ractions [data-dr-action="note"]');
   noteButton.click(); await sleep(100);
   const area = card("p_0_0").querySelector(".dr-note-editing textarea");
   area.focus(); area.value = "我还需要核对实验中的控制变量。";

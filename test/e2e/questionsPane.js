@@ -104,7 +104,13 @@ E2E.run = async function () {
     Services.prefs.setIntPref("ui.systemUsesDarkTheme", 1);
     await sleep(200);
     check("dark mode test exercises native Zotero theme", win.matchMedia("(prefers-color-scheme: dark)").matches);
-    check("dark mode uses light answer reveal text", win.getComputedStyle(host.querySelector(".dr-q-reveal")).color === "rgb(213, 189, 255)");
+    const revealStyle = win.getComputedStyle(host.querySelector(".dr-q-reveal"));
+    const luminance = (color) => color.match(/[\d.]+/g).slice(0, 3).map((channel) => {
+      const value = Number(channel) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    }).reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const ink = luminance(revealStyle.color), surface = luminance(revealStyle.backgroundColor);
+    check("dark answer control has readable contrast", (Math.max(ink, surface) + 0.05) / (Math.min(ink, surface) + 0.05) >= 4.5);
     await screenshot("questions-dark.png");
     return { checks: E2E.result.steps.length };
   }

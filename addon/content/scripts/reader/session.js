@@ -284,6 +284,7 @@
       this.structureBar?.detach();
       this.rail?.detach();
       this.overlay.detach();
+      DeepRead.UI?.uninstall(this.reader._iframeWindow?.document);
       this._listeners.clear();
     }
 
