@@ -1,6 +1,18 @@
 /* Question-led reading: personal reasoning, AI reference and source evidence.
  * License: AGPL-3.0-or-later */
 .dr-questions-pane { gap: 10px; line-height: 1.65; }
+.dr-review-list { border: 1px solid var(--color-panedivider, #d1d5db); border-radius: 6px; padding: 8px 10px; }
+.dr-review-list > summary { font-weight: 600; cursor: pointer; }
+.dr-review-hint { margin: 7px 0; font-size: 0.9em; }
+.dr-review-items { max-height: 300px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.dr-review-item { padding: 7px 0; overflow-wrap: anywhere; }
+.dr-review-item + .dr-review-item { border-top: 1px solid var(--color-panedivider, #ddd); }
+.dr-review-source { display: block; width: 100%; text-align: start; font: inherit; padding: 3px; border: 0; border-radius: 4px; color: inherit; background: transparent; cursor: pointer; overflow-wrap: anywhere; }
+.dr-review-source:hover { background: var(--fill-quinary, #f3f4f6); }
+.dr-review-location { display: block; color: var(--fill-secondary, #59636e); font-size: 0.85em; }
+.dr-review-note { margin: 5px 3px; white-space: pre-wrap; font-size: 0.95em; border-inline-start: 2px solid #10b981; padding-inline-start: 7px; }
+.dr-review-quote { max-height: 8em; overflow-y: auto; white-space: pre-wrap; margin: 6px 0; }
+.dr-review-list summary:focus-visible { outline: 2px solid var(--accent-blue, #2563eb); outline-offset: 2px; }
 .dr-questions-pane .dr-reading-goal { padding: 10px; margin-bottom: 2px; gap: 8px; }
 .dr-questions-pane .dr-q-section-label { font-size: 0.88em; font-weight: 650; color: var(--fill-secondary, #59636e); line-height: 1.5; }
 .dr-questions-pane .dr-reading-goal > .dr-q-section-label { color: var(--fill-primary, #24292f); font-size: 1em; }

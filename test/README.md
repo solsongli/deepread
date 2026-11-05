@@ -29,6 +29,17 @@ These exercise explicit card folding, per-paper focus mode, source navigation, b
 keyboard/focus behavior, note and question drafts, IME input, failed requests, narrow layouts and dark mode.
 The question pane uses a local session stub inside the real Zotero DOM; the card tests use an isolated PDF reader.
 
+Revisit flags, responsive section navigation and hover lookup:
+
+```bash
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/typography.pdf" scripts/e2e.sh test/e2e/readingIssues.js
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/continuations.pdf" scripts/e2e.sh test/e2e/structureBar.js
+python3 -E test/build-lookup-fixture.py
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/lookup.pdf" scripts/e2e.sh test/e2e/lookupUX.js
+```
+
+These use local source data and fixed results; they do not measure real reader learning outcomes.
+
 ## 1. Legacy demo fixture (git-ignored output in `test/fixtures/demo/`)
 
 ```

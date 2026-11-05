@@ -29,6 +29,24 @@ assert.deepEqual(plain(migrated.pointImportance), {}, "old point ids must not at
 assert.deepEqual(plain(migrated.cardGroups), {}, "old numeric group ids must not merge new paragraphs");
 assert.equal(D.Reading.carryState(migrated, next, next).unmappedNotes.length, 2, "repeat parse must not duplicate unaligned notes");
 
+const flagged = { ...state, readingIssues: {
+  p_0_0: { id: "one", quote: "Exact original paragraph.", summary: "First", createdAt: "2026-11-04" },
+  p_0_1: { id: "two", quote: "Changed by OCR.", summary: "Second" },
+} };
+const carriedFlags = D.Reading.carryState(flagged, previous, next);
+assert.equal(carriedFlags.readingIssues.p_1_7.id, "one", "flags move with the uniquely matched physical source");
+assert.equal(carriedFlags.unmappedReadingIssues[0].quote, "Changed by OCR.", "unmatched flags retain original evidence");
+assert.equal(D.Reading.carryState(carriedFlags, next, next).unmappedReadingIssues.length, 1, "unmatched flags do not multiply on rerun");
+const repeatedOld = [{ pageIndex: 0, paragraphs: [paragraph(0, "Same source"), paragraph(1, "Same source")] }];
+const oneNew = [{ pageIndex: 1, paragraphs: [paragraph(3, "Same source")] }];
+const collision = D.Reading.carryState({ notes: { p_0_0: { text: "A" }, p_0_1: { text: "B" } }, readingIssues: {
+  p_0_0: { id: "A", quote: "Same source" }, p_0_1: { id: "B", quote: "Same source" },
+} }, repeatedOld, oneNew);
+assert.equal(Object.keys(collision.notes).length, 0, "duplicate old text must not overwrite notes on a single new paragraph");
+assert.equal(collision.unmappedNotes.length, 2);
+assert.equal(collision.unmappedReadingIssues.length, 2, "both ambiguous flags survive without guessing");
+assert.equal(D.Reading.carryState(flagged, [], next).unmappedReadingIssues[0].quote, "Exact original paragraph.", "snapshot survives loss of old parse data");
+
 const sections = [{ role: "method", label: "Methods", start: 2.2 }, { role: "experiment", label: "Results", start: 4 }];
 assert.deepEqual(plain(D.Reading.targets("method", sections).map((t) => t.section.label)), ["Methods", "Results"]);
 assert.equal(D.Reading.targets("unknown", sections).length, 0);
@@ -64,4 +82,17 @@ assert.equal(session.userState.readingGoal.kind, "method");
 session.setReadingGoal("invalid", "Keep this text");
 assert.equal(session.userState.readingGoal.kind, "");
 assert.equal(session.userState.readingGoal.text, "Keep this text");
+session.setNeedsReview("p_0_2", true);
+assert.equal(session.needsReview("p_0_2"), true);
+assert.equal(session.userState.readingIssues.p_0_2.quote, pages[0].paragraphs[2].paragraphText);
+session.setNeedsReview("p_0_0", true);
+assert.deepEqual(plain(session.readingIssuesList().map((issue) => issue.key)), ["p_0_0", "p_0_2"], "review queue follows source order");
+assert.equal(session.setNeedsReview("p_99_99", true), false, "nonexistent source cannot be flagged");
+const pointOverrides = JSON.stringify(session.userState.pointImportance);
+session.setNeedsReview("p_0_2", false);
+assert.equal(session.needsReview("p_0_2"), false);
+assert.equal(JSON.stringify(session.userState.pointImportance), pointOverrides, "clearing a doubt is not a highlighter action");
+session.userState.unmappedReadingIssues = [{ id: "saved", quote: "Kept original" }];
+session.removeUnmappedReview("saved");
+assert.equal(session.userState.unmappedReadingIssues.length, 0);
 console.log("readingMethods: safe reparse migration, goal routes, nested highlight densities and manual overrides passed");

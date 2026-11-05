@@ -15,29 +15,30 @@
 (function () {
   const HTML_NS = "http://www.w3.org/1999/xhtml";
   const TOOLBAR = 41;
-  const HEIGHT = 30;
 
-  // [read, unread, text on read, text on unread]
+  // [progress line, label background, label text]
   const COLORS = {
-    front: ["#59647a", "#cdd3de", "#fff", "#3a3f4c"],
-    intro: ["#59647a", "#cdd3de", "#fff", "#3a3f4c"],
-    background: ["#7c8597", "#dce0e7", "#fff", "#3a3f4c"],
-    method: ["#2b59c3", "#c7d3f0", "#fff", "#1e428f"],
-    experiment: ["#0f766e", "#bfe0dc", "#fff", "#0b5550"],
-    discussion: ["#6b6b66", "#dcdcd8", "#fff", "#3a3a36"],
-    references: ["#a9a9a4", "#ececE8", "#1d1d1b", "#5c5c57"],
-    appendix: ["#a9a9a4", "#ececE8", "#1d1d1b", "#5c5c57"],
+    front: ["#59647a", "#cdd3de", "#3a3f4c"],
+    intro: ["#59647a", "#cdd3de", "#3a3f4c"],
+    background: ["#7c8597", "#dce0e7", "#3a3f4c"],
+    method: ["#2b59c3", "#c7d3f0", "#1e428f"],
+    experiment: ["#0f766e", "#bfe0dc", "#0b5550"],
+    discussion: ["#6b6b66", "#dcdcd8", "#3a3a36"],
+    references: ["#a9a9a4", "#ecece8", "#5c5c57"],
+    appendix: ["#a9a9a4", "#ecece8", "#5c5c57"],
   };
 
   const CSS = `
-body.deepread-has-bar #split-view { top: ${TOOLBAR + HEIGHT}px !important; }
-#deepread-bar { position: absolute; top: ${TOOLBAR}px; inset-inline-start: 0; inset-inline-end: 0; height: ${HEIGHT}px; z-index: 3;
-  box-sizing: border-box; padding: 5px 10px; display: flex; align-items: center; gap: 10px;
+body.deepread-has-bar #split-view { top: calc(${TOOLBAR}px + var(--deepread-bar-height, 30px)) !important; }
+#deepread-bar { position: absolute; top: ${TOOLBAR}px; inset-inline-start: 0; inset-inline-end: 0; min-height: 30px; z-index: 3;
+  box-sizing: border-box; padding: 5px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
   background: var(--material-toolbar, #f6f6f4); border-bottom: 1px solid var(--color-panedivider, rgba(0,0,0,0.12));
   font: 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif; }
 body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
+#deepread-bar .dr-map { display: flex; align-items: center; gap: 8px; flex: 1 1 280px; min-width: 0; }
+#deepread-bar .dr-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 #deepread-bar .dr-segs { position: relative; flex: 1; min-width: 0; display: flex; gap: 2px; height: 20px; }
-#deepread-bar .dr-seg { position: relative; min-width: 10px; border: none; margin: 0; padding: 0 6px; overflow: hidden; white-space: nowrap;
+#deepread-bar .dr-seg { position: relative; min-width: 54px; border: none; margin: 0; padding: 0 6px; overflow: hidden; white-space: nowrap;
   text-overflow: ellipsis; text-align: start; font: inherit; font-weight: 500; line-height: 20px; cursor: pointer; }
 #deepread-bar .dr-seg:first-child { border-start-start-radius: 4px; border-end-start-radius: 4px; }
 #deepread-bar .dr-seg:last-child { border-start-end-radius: 4px; border-end-end-radius: 4px; }
@@ -46,26 +47,32 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
 #deepread-bar .dr-here { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-inline-start: -1px; border-radius: 1px;
   background: #1d1d1b; pointer-events: none; transition: inset-inline-start .15s; }
 #deepread-bar .dr-read { flex-shrink: 0; color: var(--fill-secondary, #4a4a46); white-space: nowrap; }
+#deepread-bar .dr-section-picker { flex: 1; min-width: 0; width: 0; }
+#deepread-bar select { height: 22px; padding: 1px 4px; border: 1px solid var(--color-panedivider, #c8c8c8); border-radius: 4px;
+  background: var(--material-background, #fff); color: inherit; font: inherit; }
+#deepread-bar .dr-segs[hidden], #deepread-bar .dr-section-picker[hidden], #deepread-bar .dr-qmark[hidden], #deepread-bar .dr-controls[hidden] { display: none; }
+#deepread-bar :is(button, select):focus-visible { outline: 2px solid var(--accent-blue, #2563eb); outline-offset: 2px; }
 #deepread-bar .dr-spacer { flex: 1; }
 #deepread-bar .dr-depth { flex-shrink: 0; display: flex; padding: 2px; border-radius: 6px; background: rgba(0,0,0,0.06); }
 #deepread-bar .dr-depth button { border: none; margin: 0; padding: 2px 8px; border-radius: 4px; background: transparent; color: inherit;
   font: inherit; cursor: pointer; opacity: 0.7; }
 #deepread-bar .dr-depth button[aria-pressed="true"] { background: var(--material-background, #fff); opacity: 1; font-weight: 600;
   box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
-#deepread-bar .dr-skimtime { flex-shrink: 0; color: var(--fill-secondary, #4a4a46); white-space: nowrap; }
+#deepread-bar .dr-skimtime { color: var(--fill-secondary, #4a4a46); white-space: nowrap; }
 #deepread-bar .dr-nextkey { flex-shrink: 0; border: 1px solid rgba(217,119,6,0.5); border-radius: 5px; padding: 1px 7px; background: #fff7ea;
   color: #92400e; font: inherit; cursor: pointer; white-space: nowrap; }
 #deepread-bar .dr-figures { max-width: 100px; min-width: 60px; font: inherit; color: inherit; }
-@media (max-width: 1000px) { #deepread-bar .dr-skimtime { display: none; } }
+#deepread-bar .dr-question-picker { width: 105px; min-width: 0; }
+#deepread-bar.dr-compact .dr-skimtime { display: none; }
 #deepread-bar .dr-nextkey:hover { background: #fdecc8; }
-#deepread-bar .dr-qmark { position: absolute; top: -5px; height: 12px; min-width: 16px; margin-inline-start: -8px; padding: 0 3px; box-sizing: border-box;
-  border-radius: 6px; border: 1px solid #7c3aed; background: #fff; color: #5b21b6; font-size: 8.5px; font-weight: 700; line-height: 10px;
+#deepread-bar .dr-qmark { position: absolute; top: -4px; height: 15px; min-width: 20px; padding: 0 3px; box-sizing: border-box;
+  border-radius: 5px; border: 1px solid #7c3aed; background: #fff; color: #5b21b6; font-size: 9px; font-weight: 700; line-height: 13px;
   text-align: center; cursor: pointer; z-index: 2; }
 #deepread-bar .dr-qmark.dr-reached { background: #7c3aed; color: #fff; }
 :root[data-color-scheme="dark"] #deepread-bar .dr-depth { background: rgba(255,255,255,0.08); }
 :root[data-color-scheme="dark"] #deepread-bar .dr-nextkey { background: rgba(217,119,6,0.15); color: #fbbf24; }
-:root[data-color-scheme="dark"] #deepread-bar .dr-here { background: #f2f2f2; }
-:root[data-color-scheme="dark"] #deepread-bar .dr-seg.dr-current { box-shadow: inset 0 0 0 1.5px #f2f2f2; }
+:root[data-color-scheme="dark"] #deepread-bar .dr-qmark { background: #2e2445; color: #e5d5ff; border-color: #aa8adb; }
+:root[data-color-scheme="dark"] #deepread-bar .dr-qmark.dr-reached { background: #6d28d9; color: #fff; }
 `;
 
   function el(doc, tag, cls, text) {
@@ -82,6 +89,7 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
       this.sections = [];
       this._cleanup = [];
       this._raf = null;
+      this._buildSignature = null;
     }
 
     get enabled() {
@@ -104,14 +112,7 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
       container?.addEventListener("scroll", onScroll, { passive: true });
       this._cleanup.push(() => container?.removeEventListener("scroll", onScroll));
       // N / Shift+N: next / previous key paragraph (skim layers).
-      const onKey = (event) => {
-        if (event.key !== "n" && event.key !== "N") return;
-        if (event.ctrlKey || event.metaKey || event.altKey || !this.skim) return;
-        const target = event.target;
-        if (target?.isContentEditable || /^(input|textarea|select)$/i.test(target?.tagName || "")) return;
-        event.preventDefault();
-        this.goKey(event.shiftKey ? -1 : 1);
-      };
+      const onKey = (event) => this._onKey(event);
       this.pdfWin.addEventListener("keydown", onKey, true);
       this._cleanup.push(() => this.pdfWin.removeEventListener("keydown", onKey, true));
       const onPages = Components.utils.exportFunction(() => this.schedule(), this.pdfWin);
@@ -145,9 +146,12 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
     }
 
     _remove() {
+      this._resizeObserver?.disconnect();
+      this._resizeObserver = null;
       this.root?.remove();
       this.root = null;
       this.readerDoc?.body?.classList.remove("deepread-has-bar");
+      this.readerDoc?.body?.style.removeProperty("--deepread-bar-height");
     }
 
     /** Rebuild from the session's content list (call after results or module switches change). */
@@ -160,12 +164,21 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
         this._remove();
         return;
       }
-      this._build();
+      // Progress and skim updates should not replace a focused button or an open native selector.
+      const signature = JSON.stringify({ sections: this.sections, skim: this.skim,
+        figures: this.skim ? this.session.figures() : [],
+        questions: DeepRead.Modules.enabled(this.session, "questions")
+          ? (this.session.questions?.items || []).map((q) => [q.id, q.question, q.keys]) : [] });
+      if (!this.root || signature !== this._buildSignature) {
+        this._buildSignature = signature;
+        this._build();
+      }
       this.schedule();
     }
 
     _build() {
       const doc = this.readerDoc;
+      const focusKey = this.root?.contains(doc.activeElement) ? doc.activeElement?.dataset?.focusKey : null;
       if (!doc.getElementById("deepread-bar-css")) {
         const style = el(doc, "style");
         style.id = "deepread-bar-css";
@@ -178,39 +191,85 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
       root.id = "deepread-bar";
       root.setAttribute("role", "navigation");
       root.setAttribute("aria-label", DeepRead.bilingual("全文结构", "Paper structure"));
+      const map = el(doc, "div", "dr-map");
+      const controls = el(doc, "div", "dr-controls");
       const segs = el(doc, "div", this.sections.length ? "dr-segs" : "dr-spacer");
       this.total = Math.max(1, ...this.sections.map((s) => s.end));
       this.segs = this.sections.map((section) => {
         const button = el(doc, "button", "dr-seg", section.label);
+        button.dataset.focusKey = `section:${section.start}`;
         button.style.flex = `${Math.max(0.15, section.end - section.start)} 1 0`;
         const pages = `p.${Math.floor(section.start) + 1}–${Math.max(Math.floor(section.start) + 1, Math.ceil(section.end))}`;
-        button.title = `${section.label} · ${pages}`;
+        button.title = `${section.number ? `${section.number} ` : ""}${section.title} · ${pages}`;
         button.addEventListener("click", () => this._goTo(section));
         segs.append(button);
         return button;
       });
       this.here = el(doc, "span", "dr-here");
       if (this.sections.length) segs.append(this.here);
-      // Reading questions: one marker per question, at its answer, on the section it falls in.
+      const sectionPicker = el(doc, "select", "dr-section-picker");
+      sectionPicker.hidden = true;
+      sectionPicker.dataset.focusKey = "section-picker";
+      sectionPicker.setAttribute("aria-label", DeepRead.bilingual("跳到章节", "Jump to section"));
+      const placeholder = el(doc, "option", "", DeepRead.bilingual("跳到章节…", "Jump to section…"));
+      placeholder.value = "";
+      sectionPicker.append(placeholder);
+      this.sections.forEach((section, i) => {
+        const option = el(doc, "option", "", `${section.number ? `${section.number} ` : ""}${section.title} · p.${Math.floor(section.start) + 1}`);
+        option.value = String(i);
+        sectionPicker.append(option);
+      });
+      sectionPicker.addEventListener("change", () => {
+        if (sectionPicker.value !== "") this._goTo(this.sections[Number(sectionPicker.value)]);
+      });
+      this.sectionPicker = sectionPicker;
+      this.readLabel = el(doc, "span", "dr-read");
+      this.readLabel.title = DeepRead.bilingual("最远浏览到的位置；跳页也会推进此位置", "Furthest position reached; skipping pages also advances this position");
+      map.append(segs, sectionPicker, this.readLabel);
+      root.append(map, controls);
+      this.map = map;
+      this.controls = controls;
+
+      // Keep question locations on a spacious map; an indexed selector remains usable when they overlap.
       this.qmarks = [];
+      this.questionPicker = null;
       if (this.sections.length && DeepRead.Modules.enabled(this.session, "questions")) {
+        const picker = el(doc, "select", "dr-question-picker");
+        picker.dataset.focusKey = "question-picker";
+        picker.setAttribute("aria-label", DeepRead.bilingual("跳到问题的原文出处", "Jump to a question's source"));
+        const hint = el(doc, "option", "", DeepRead.bilingual("问题出处…", "Question sources…"));
+        hint.value = "";
+        picker.append(hint);
         for (const q of this.session.questions?.items || []) {
-          const positions = (q.keys || []).map((k) => this.session.keyPosition(k)).filter((p) => p !== null);
-          if (!positions.length) continue;
-          const mark = el(doc, "span", "dr-qmark", this.session.questionLabel(q));
+          const sources = (q.keys || []).map((key) => ({ key, at: this.session.keyPosition(key) }))
+            .filter((source) => source.at !== null && /^p_\d+_\d+$/.test(source.key)).sort((a, b) => a.at - b.at);
+          if (!sources.length) continue;
+          const source = sources[0];
+          const mark = el(doc, "button", "dr-qmark", this.session.questionLabel(q));
+          mark.dataset.focusKey = `question:${q.id}`;
           mark.title = q.question;
+          mark.setAttribute("aria-label", DeepRead.bilingual(`核对原文：${q.question}`, `Check source: ${q.question}`));
           mark.addEventListener("click", (e) => {
             e.stopPropagation();
-            const [page, para] = String(q.keys[0]).replace(/^p_/, "").split("_").map(Number);
-            this.session.openBlock(page, para);
-            DeepRead.Panes?.reveal(this.session.reader, "questions");
+            this._openQuestion(source.key);
           });
           segs.append(mark);
-          this.qmarks.push({ mark, q, at: Math.min(...positions) });
+          this.qmarks.push({ mark, q, at: source.at });
+          const option = el(doc, "option", "", `${this.session.questionLabel(q)} · p.${Math.floor(source.at) + 1} · ${q.question}`);
+          option.value = source.key;
+          picker.append(option);
+        }
+        picker.addEventListener("change", () => {
+          if (picker.value) this._openQuestion(picker.value);
+          picker.value = "";
+        });
+        if (this.qmarks.length) {
+          hint.textContent = DeepRead.bilingual(`问题出处 (${this.qmarks.length})`, `${this.qmarks.length} questions…`);
+          this.questionPicker = picker;
         }
       }
-      root.append(segs);
       this.depth = null;
+      this.timeLabel = null;
       if (this.skim) {
         const depth = el(doc, "div", "dr-depth");
         depth.setAttribute("role", "group");
@@ -219,6 +278,7 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
         for (const [mode, zh, en] of modes) {
           const button = el(doc, "button", "", DeepRead.bilingual(zh, en));
           button.dataset.mode = mode;
+          button.dataset.focusKey = `depth:${mode}`;
           button.setAttribute("aria-pressed", String(this.session.skimDepth === mode));
           button.title = {
             full: DeepRead.bilingual("正常显示全文", "Show everything"),
@@ -229,14 +289,17 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
           depth.append(button);
         }
         this.timeLabel = el(doc, "span", "dr-skimtime");
+        this.timeLabel.title = DeepRead.bilingual("按文字量粗估，实际用时取决于背景知识和阅读目标", "A rough estimate from text length; actual time depends on prior knowledge and reading goals");
         const next = el(doc, "button", "dr-nextkey", DeepRead.bilingual("下一个重点 ↓", "Next key ↓"));
+        next.dataset.focusKey = "next-key";
         next.title = DeepRead.bilingual("跳到下一个重点段落（快捷键 N，Shift+N 上一个）", "Jump to the next key paragraph (N; Shift+N for the previous one)");
         next.addEventListener("click", () => this.goKey(1));
-        root.append(depth, this.timeLabel, next);
+        controls.append(depth, this.timeLabel, next);
         this.depth = depth;
         const figures = this.session.figures();
         if (figures.length) {
           const select = el(doc, "select", "dr-figures");
+          select.dataset.focusKey = "figures";
           select.setAttribute("aria-label", DeepRead.bilingual("按图表阅读", "Read by figure"));
           select.title = DeepRead.bilingual("先看图注与证据，再返回正文核对解释", "Read captions and evidence, then check the claims in the text");
           const hint = el(doc, "option", "", DeepRead.bilingual("读图…", "Figures…"));
@@ -254,15 +317,61 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
             this.session.reader.navigate(rect ? { position: { pageIndex: figure.pageIndex, rects: [rect] } } : { pageIndex: figure.pageIndex });
             select.value = "";
           });
-          root.append(select);
+          controls.append(select);
         }
       }
-      this.readLabel = el(doc, "span", "dr-read");
-      root.append(this.readLabel);
+      if (this.questionPicker) controls.append(this.questionPicker);
+      controls.hidden = !controls.children.length;
       doc.body.append(root);
       doc.body.classList.add("deepread-has-bar");
       this.root = root;
       this.segBox = segs;
+      this._layout();
+      this._resizeObserver = new this.readerWin.ResizeObserver(() => { this._layout(); this.schedule(); });
+      this._resizeObserver.observe(root);
+      if (focusKey) {
+        const focused = [...root.querySelectorAll("[data-focus-key]")].find((node) => node.dataset.focusKey === focusKey);
+        if (focused?.getClientRects().length) focused.focus({ preventScroll: true });
+        else if (focusKey.startsWith("section:") && !sectionPicker.hidden) sectionPicker.focus({ preventScroll: true });
+      }
+    }
+
+    _openQuestion(key) {
+      const match = /^p_(\d+)_(\d+)$/.exec(key || "");
+      if (!match) return;
+      this.session.openBlock(Number(match[1]), Number(match[2]));
+      DeepRead.Panes?.reveal(this.session.reader, "questions");
+    }
+
+    _layout() {
+      if (!this.root) return;
+      this.root.classList.toggle("dr-compact", this.root.clientWidth < 1100);
+      const available = this.map.clientWidth - this.readLabel.offsetWidth - 8;
+      const picker = this.sections.length > 0 && available < Math.max(240, this.sections.length * 72);
+      const active = this.readerDoc.activeElement;
+      this.segBox.hidden = picker;
+      this.sectionPicker.hidden = !picker;
+      if (picker && this.segBox.contains(active)) {
+        (active?.classList.contains("dr-qmark") ? this.questionPicker : this.sectionPicker)?.focus({ preventScroll: true });
+      }
+      else if (!picker && active === this.sectionPicker) {
+        const current = this.segs.find((node) => node.classList.contains("dr-current")) || this.segs[0];
+        current?.focus({ preventScroll: true });
+      }
+      const height = `${Math.ceil(this.root.getBoundingClientRect().height)}px`;
+      if (this.readerDoc.body.style.getPropertyValue("--deepread-bar-height") !== height) {
+        this.readerDoc.body.style.setProperty("--deepread-bar-height", height);
+      }
+    }
+
+    _onKey(event) {
+      if (event.key !== "n" && event.key !== "N") return;
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat
+          || event.ctrlKey || event.metaKey || event.altKey || !this.skim) return;
+      const target = event.target;
+      if (target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"]')) return;
+      event.preventDefault();
+      this.goKey(event.shiftKey ? -1 : 1);
     }
 
     /** Jump to the section heading itself (sections often start mid-page); reader.navigate would centre it. */
@@ -386,16 +495,17 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
       if (!this.root) return;
       const readUpTo = state.readUpTo || 0;
       this.sections.forEach((section, i) => {
-        const [dark, light, onDark, onLight] = COLORS[section.role] || COLORS.method;
+        const [dark, light, onLight] = COLORS[section.role] || COLORS.method;
         const span = section.end - section.start || 1;
         const read = Math.max(0, Math.min(1, (readUpTo - section.start) / span));
         const pct = Math.round(read * 100);
         const seg = this.segs[i];
-        seg.style.background = `linear-gradient(90deg, ${dark} 0 ${pct}%, ${light} ${pct}% 100%)`;
-        // The label sits at the start of the segment: light text once the read fill covers its middle.
-        const labelMid = Math.min(seg.scrollWidth, seg.offsetWidth) / 2;
-        seg.style.color = read * seg.offsetWidth > labelMid ? onDark : onLight;
+        // Keep one readable label colour; progress lives below the text instead of splitting its background.
+        seg.style.background = `linear-gradient(90deg, ${dark} 0 ${pct}%, transparent ${pct}% 100%) left bottom / 100% 3px no-repeat ${light}`;
+        seg.style.color = onLight;
         seg.classList.toggle("dr-current", now >= section.start && now < section.end);
+        if (now >= section.start && now < section.end) seg.setAttribute("aria-current", "location");
+        else seg.removeAttribute("aria-current");
       });
       // Positions on the strip: inside the section's button (flex sizes are not linear in pages).
       const xOf = (position) => {
@@ -405,11 +515,24 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
         const frac = Math.max(0, Math.min(1, (position - section.start) / (section.end - section.start || 1)));
         return this.segs[i].offsetLeft + frac * this.segs[i].offsetWidth;
       };
+      const markers = [];
       for (const { mark, q, at } of this.qmarks || []) {
         const x = xOf(at);
-        mark.hidden = x === null;
-        if (x !== null) mark.style.insetInlineStart = `${x}px`;
+        mark.hidden = x === null || this.segBox.hidden;
+        if (!mark.hidden) {
+          const width = mark.offsetWidth;
+          const left = Math.max(0, Math.min(this.segBox.clientWidth - width, x - width / 2));
+          mark.style.insetInlineStart = `${left}px`;
+          markers.push({ mark, left, right: left + width });
+        }
         mark.classList.toggle("dr-reached", this.session.questionReached(q));
+      }
+      markers.sort((a, b) => a.left - b.left);
+      if (markers.some((marker, i) => i > 0 && marker.left < markers[i - 1].right + 4)) {
+        for (const { mark } of markers) {
+          if (mark === this.readerDoc.activeElement) this.questionPicker?.focus({ preventScroll: true });
+          mark.hidden = true;
+        }
       }
       if (this.timeLabel) this._updateTime(Math.floor(now));
       const index = this.sections.length ? DeepRead.Structure.sectionAt(this.sections, Math.floor(now), (now % 1) * 1000) : -1;
@@ -421,9 +544,12 @@ body.sidebar-open #deepread-bar { inset-inline-start: var(--sidebar-width); }
         this.here.hidden = false;
       }
       else if (this.here) this.here.hidden = true;
+      // Do not disturb an open selector while the reader is choosing another section.
+      if (this.sectionPicker && this.readerDoc.activeElement !== this.sectionPicker) this.sectionPicker.value = index >= 0 ? String(index) : "";
       const pages = this.app.pdfViewer.pagesCount || this.total;
-      this.readLabel.textContent = DeepRead.bilingual(`已读 ${Math.min(100, Math.round((readUpTo / pages) * 100))}%`,
-        `${Math.min(100, Math.round((readUpTo / pages) * 100))}% read`);
+      this.readLabel.textContent = DeepRead.bilingual(`浏览至 ${Math.min(100, Math.round((readUpTo / pages) * 100))}%`,
+        `${Math.min(100, Math.round((readUpTo / pages) * 100))}% reached`);
+      this._layout();
     }
   };
 })();

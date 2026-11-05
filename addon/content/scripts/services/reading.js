@@ -29,15 +29,24 @@
   // Paragraph IDs can change when a parser changes. Never attach a personal note
   // to a different paragraph just because its numeric ID happens to be the same.
   function carryState(state = {}, oldData, newData) {
-    const next = { ...state, pointImportance: {}, notes: {}, edits: {}, hidden: {}, cardGroups: {}, readUpTo: 0 };
+    const next = { ...state, pointImportance: {}, notes: {}, edits: {}, hidden: {}, cardGroups: {}, readingIssues: {}, readUpTo: 0 };
     const before = new Map(rows(oldData).map((p) => [p.key, p]));
-    const after = rows(newData), mapped = new Map();
+    const after = rows(newData), mapped = new Map(), oldCounts = new Map(), byText = new Map();
+    for (const p of before.values()) {
+      const quote = norm(p.paragraphText);
+      oldCounts.set(quote, (oldCounts.get(quote) || 0) + 1);
+    }
+    for (const p of after) {
+      const quote = norm(p.paragraphText);
+      if (!byText.has(quote)) byText.set(quote, []);
+      byText.get(quote).push(p);
+    }
     for (const [key, p] of before) {
       const quote = norm(p.paragraphText);
       if (!quote) continue;
-      const matches = after.filter((n) => norm(n.paragraphText) === quote);
+      const matches = byText.get(quote) || [];
       // A unique match is safer than reusing coordinates or fuzzy text guesses.
-      if (matches.length === 1) mapped.set(key, matches[0].key);
+      if (oldCounts.get(quote) === 1 && matches.length === 1) mapped.set(key, matches[0].key);
     }
     next.unmappedNotes = [...(state.unmappedNotes || [])];
     for (const [key, note] of Object.entries(state.notes || {})) {
@@ -47,6 +56,17 @@
     }
     for (const field of ["edits", "hidden"]) for (const [key, value] of Object.entries(state[field] || {})) {
       if (mapped.has(key)) next[field][mapped.get(key)] = value;
+    }
+    next.unmappedReadingIssues = [...(state.unmappedReadingIssues || [])];
+    const seen = new Set(next.unmappedReadingIssues.map((issue) => issue.id));
+    for (const [key, issue] of Object.entries(state.readingIssues || {})) {
+      if (!issue || typeof issue !== "object") continue;
+      const snapshot = { ...issue, id: issue.id || `${key}:${issue.createdAt || ""}`,
+        originalKey: issue.originalKey || key, quote: issue.quote || before.get(key)?.paragraphText || "" };
+      const target = mapped.get(key);
+      // Both old and new source text must be unique; a reused numeric ID is not evidence.
+      if (target && norm(snapshot.quote) === norm(before.get(key)?.paragraphText)) next.readingIssues[target] = snapshot;
+      else if (!seen.has(snapshot.id)) { next.unmappedReadingIssues.push(snapshot); seen.add(snapshot.id); }
     }
     // Paper-level goals, evidence notes, self-answers and highlight density survive.
     return next;

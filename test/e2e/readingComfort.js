@@ -62,7 +62,7 @@ E2E.run = async function () {
   s.setFocusReading(false); await sleep(100);
   check("leaving focus preserves global preferences", D.prefs.get("cards.keepOpen") === true && focus.getAttribute("aria-pressed") === "false");
   s.mergeCardWithPrevious("p_0_1"); s.overlay.openParagraph(p1); await sleep(100);
-  let sourceButtons = card("p_0_0").querySelectorAll(".dr-sources button");
+  let sourceButtons = card("p_0_0").querySelectorAll('.dr-sources button[data-dr-action^="source:"]');
   check("merged card exposes each source independently", sourceButtons.length === 2);
   let located;
   const navigate = s.navigateToParagraph;

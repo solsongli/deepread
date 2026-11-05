@@ -1348,6 +1348,42 @@
         DeepRead.Structure.sections(this.data?.contentList), this.figures());
     }
 
+    needsReview(key) { return !!this.userState.readingIssues?.[key]; }
+
+    /** Local, reader-authored flags belong to physical paragraphs, not mutable card groups. */
+    setNeedsReview(key, needed) {
+      const found = this._paragraphByKey(key);
+      if (needed && !found) return false;
+      const issues = { ...(this.userState.readingIssues || {}) };
+      if (needed && !issues[key]) {
+        const at = new Date().toISOString();
+        issues[key] = { id: `${key}:${at}`, originalKey: key, createdAt: at,
+          quote: found.paragraph.paragraphText || "",
+          summary: this.paragraphSummary({ ...found.paragraph, pageIndex: found.page.pageIndex }) };
+      }
+      else if (!needed) delete issues[key];
+      this.userState.readingIssues = issues;
+      this._saveUserStateSoon();
+      this.rail?.refresh();
+      this._emit("review");
+      return true;
+    }
+
+    readingIssuesList() {
+      return Object.entries(this.userState.readingIssues || {}).map(([key, issue]) => {
+        const found = this._paragraphByKey(key);
+        return { ...issue, key, pageIndex: found?.page.pageIndex, paragraphIndex: found?.paragraph.paragraphIndex,
+          summary: found ? this.paragraphSummary({ ...found.paragraph, pageIndex: found.page.pageIndex }) : issue.summary,
+          note: this.paragraphNote(key), missing: !found };
+      }).sort((a, b) => (a.pageIndex ?? Infinity) - (b.pageIndex ?? Infinity) || (a.paragraphIndex ?? Infinity) - (b.paragraphIndex ?? Infinity));
+    }
+
+    removeUnmappedReview(id) {
+      this.userState.unmappedReadingIssues = (this.userState.unmappedReadingIssues || []).filter((issue) => issue.id !== id);
+      this._saveUserStateSoon();
+      this._emit("review");
+    }
+
     openReadingTarget(target) {
       if (target.kind === "section") {
         if (this.structureBar?.app) this.structureBar._goTo(target.section);
@@ -1385,6 +1421,8 @@
       for (const answer of Object.values(this.userState.recallAnswers || {})) if (answer.text) lines.push(`\n## ${answer.question}`, answer.text);
       for (const [key, note] of Object.entries(this.userState.notes || {})) if (note.text) lines.push(`\n## ${this.groupLabel(key)}`, note.text);
       for (const note of this.userState.unmappedNotes || []) lines.push(`\n## ${tr("待重新定位的笔记", "Note awaiting source alignment")}`, note.quote || note.originalKey, note.text);
+      for (const issue of this.readingIssuesList()) lines.push(`\n## ${tr("待弄懂", "To revisit")} · ${issue.missing ? issue.originalKey : `p.${issue.pageIndex + 1} ¶${issue.paragraphIndex + 1}`}`, issue.summary, issue.quote);
+      for (const issue of this.userState.unmappedReadingIssues || []) lines.push(`\n## ${tr("待重新定位的疑点", "Question awaiting source alignment")}`, issue.summary, issue.quote || issue.originalKey);
       return lines.filter((s) => s !== undefined).join("\n\n");
     }
 

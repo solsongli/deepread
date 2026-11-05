@@ -190,6 +190,10 @@
 .deepread-rail :is(button, [role="button"], textarea):focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 3px; }
 .deepread-rail .dr-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0; font-size: 0.9em; }
 .deepread-rail .dr-sources button { font: inherit; padding: 2px 6px; background: transparent; color: inherit; border: 1px solid var(--color-panedivider, #bbb); border-radius: 4px; cursor: pointer; }
+.deepread-rail .dr-source-item { display: inline-flex; flex-wrap: wrap; gap: 2px; }
+.deepread-rail .dr-review-toggle[aria-pressed="true"], .deepread-rail .dr-badge-review { background: #fef3c7; color: #78350f; border: 1px solid #d97706; }
+.deepread-rail .dr-badge-review { font: inherit; font-size: 0.78em; cursor: pointer; }
+:root[data-color-scheme="dark"] .deepread-rail .dr-review-toggle[aria-pressed="true"], :root[data-color-scheme="dark"] .deepread-rail .dr-badge-review { background: #503410; color: #fde68a; }
 .deepread-rail .dr-compact .dr-sources { display: none; }
 .deepread-rail .dr-focus-fold .dr-note { display: none; }
 .deepread-rail .dr-compact .dr-evidence { display: none; }
@@ -858,6 +862,7 @@
       const guided = this.session.guide && DeepRead.Modules.enabled(this.session, "guided") ? this.session.guide.meta?.finishedAt || 1 : "";
       return `p|${keys.join(",")}|${this.session.groupTitle(item.key)}|${this.session.highlightColors().join("")}|${skim}|${questions}|${guided}`
         + `|${this.session.focusReading}`
+        + `|${keys.map((k) => this.session.needsReview(k)).join(",")}`
         + `|${this.isCollapsed(item.key)}`
         + `|${this.overlay.translationsFor(paras).join("\u001f")}`
         + `|${paras.map((p) => this.session.paragraphSummary(p)).join("|")}|${levels}|${this.isOpen(item.key)}|${this.focusKey === item.key}|${this._translationOpen(item.key)}`
@@ -1028,6 +1033,9 @@
       const badges = el(doc, "span", "dr-badges");
 
       if (keys.some((k) => session.paragraphNote(k))) badges.append(el(doc, "span", "dr-badge dr-badge-note", DeepRead.bilingual("理解", "Note")));
+      const reviewCount = keys.filter((k) => session.needsReview(k)).length;
+      if (reviewCount) this._button(badges, DeepRead.bilingual(`待弄懂 ${reviewCount}`, `Revisit ${reviewCount}`),
+        DeepRead.bilingual("查看待弄懂的段落", "Review flagged paragraphs"), () => DeepRead.Panes?.reveal(session.reader, "questions")).classList.add("dr-badge", "dr-badge-review");
       if (badges.childNodes.length) head.append(badges);
 
       const actions = el(doc, "div", "dr-ractions");
@@ -1069,9 +1077,19 @@
       const sources = el(doc, "div", "dr-sources");
       sources.append(el(doc, "span", "dr-muted", DeepRead.bilingual("核对原文", "Check source")));
       for (const source of paras) {
-        this._button(sources, DeepRead.Rail.blockLabel(source), DeepRead.bilingual("定位并标出原文段落", "Locate and highlight the source paragraph"), () => {
+        const sourceItem = el(doc, "span", "dr-source-item");
+        const sourceKey = `p_${source.pageIndex}_${source.paragraphIndex}`;
+        this._button(sourceItem, DeepRead.Rail.blockLabel(source), DeepRead.bilingual("定位并标出原文段落", "Locate and highlight the source paragraph"), () => {
           session.navigateToParagraph(source).catch((error) => session._notify(DeepRead.util.formatError(error), "error"));
         }).setAttribute("data-dr-action", `source:${source.pageIndex}:${source.paragraphIndex}`);
+        const marked = session.needsReview(sourceKey);
+        const review = this._button(sourceItem, DeepRead.bilingual("待弄懂", "Revisit"),
+          `${DeepRead.Rail.blockLabel(source)} · ${DeepRead.bilingual(marked ? "取消待弄懂标记" : "标记待弄懂，不调用 AI", marked ? "Remove revisit flag" : "Flag for later; no AI request")}`,
+          () => session.setNeedsReview(sourceKey, !session.needsReview(sourceKey)));
+        review.classList.add("dr-review-toggle");
+        review.setAttribute("aria-pressed", String(marked));
+        review.setAttribute("data-dr-action", `review:${sourceKey}`);
+        sources.append(sourceItem);
       }
       node.append(sources);
 

@@ -4,7 +4,7 @@
 E2E.run = async function () {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const check = (name, value) => { E2E.result.steps.push({ name, ok: !!value }); if (!value) throw new Error(name); };
-  for (let i = 0; i < 100 && !Zotero.DeepRead; i++) await sleep(100);
+  for (let i = 0; i < 100 && !Zotero.DeepRead?.Panes?.paneIDs?.chat; i++) await sleep(100);
   const D = Zotero.DeepRead;
   D.prefs.set("cards.autoExplain", false);
   const item = await Zotero.Attachments.importFromFile({ file: Zotero.File.pathToFile(E2E.env("DEEPREAD_E2E_PDF")), libraryID: Zotero.Libraries.userLibraryID });

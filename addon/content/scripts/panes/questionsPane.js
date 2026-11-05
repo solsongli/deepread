@@ -47,6 +47,53 @@
     return box;
   }
 
+  function reviewSection(ctx, view) {
+    const { session, h, body } = ctx;
+    const issues = session.readingIssuesList?.() || [];
+    const unmapped = session.userState.unmappedReadingIssues || [];
+    const count = issues.length + unmapped.length;
+    if (!session.hasResults && !count) return null;
+    const section = h("details", { class: "dr-review-list", open: view.reviewsOpen ?? count > 0,
+      ontoggle: (e) => { if (e.currentTarget.isConnected) view.reviewsOpen = e.currentTarget.open; } });
+    section.append(h("summary", { dataset: { focusKey: "reviews-heading" } }, DeepRead.bilingual(`待弄懂 · ${count}`, `To revisit · ${count}`)));
+    section.append(h("p", { class: "dr-muted dr-review-hint" }, count
+      ? DeepRead.bilingual("回到原文核对；具体卡在哪里，可写在卡片的「我的理解」中。", "Revisit the source; use the card's personal note to record what is unclear.")
+      : DeepRead.bilingual("在段落卡片的原文入口旁点「待弄懂」，之后在这里集中回看。", "Mark a paragraph beside its source link to revisit it here.")));
+    const list = h("div", { class: "dr-review-items" });
+    const remove = (action) => {
+      action();
+      // The removed row no longer has a focus target after the synchronous refresh.
+      const target = body.querySelector('[data-focus-key="reviews-heading"]') || body.querySelector(".dr-questions-pane");
+      if (target?.localName !== "summary") target?.setAttribute("tabindex", "-1");
+      target?.focus({ preventScroll: true });
+    };
+    for (const issue of issues) {
+      const row = h("div", { class: "dr-review-item", dataset: { reviewKey: issue.key } });
+      const label = issue.summary || issue.quote || issue.originalKey;
+      if (!issue.missing) row.append(h("button", {
+        class: "dr-review-source", dataset: { focusKey: `review:${issue.key}` },
+        title: issue.quote,
+        onclick: () => session.openBlock(issue.pageIndex, issue.paragraphIndex).catch((error) => DeepRead.Panes.reportError(session, error)),
+      }, h("span", { class: "dr-review-location" }, `p. ${issue.pageIndex + 1} ¶${issue.paragraphIndex + 1}`), label));
+      else row.append(h("div", { class: "dr-review-missing" }, DeepRead.bilingual("原文待定位", "Source to relocate"), h("p", {}, label)));
+      if (issue.note) row.append(h("p", { class: "dr-review-note" }, issue.note));
+      row.append(h("button", { class: "dr-link-button dr-review-remove", dataset: { focusKey: `review-remove:${issue.key}` },
+        onclick: () => remove(() => session.setNeedsReview(issue.key, false)),
+      }, DeepRead.bilingual("取消标记", "Remove flag")));
+      list.append(row);
+    }
+    for (const issue of unmapped) {
+      list.append(h("div", { class: "dr-review-item dr-review-unmapped" },
+        h("div", { class: "dr-muted" }, DeepRead.bilingual("重新解析后待定位", "Source changed after reparsing")),
+        h("div", { class: "dr-review-quote" }, issue.quote || issue.summary || issue.originalKey),
+        h("button", { class: "dr-link-button dr-review-remove", dataset: { focusKey: `unmapped-review:${issue.id}` },
+          onclick: () => remove(() => session.removeUnmappedReview(issue.id)),
+        }, DeepRead.bilingual("取消标记", "Remove flag"))));
+    }
+    section.append(list);
+    return section;
+  }
+
   DeepRead.Panes.renderers.questions = (ctx) => {
     const { body, doc, session, h, event } = ctx;
     if (event === "ask" || String(event).startsWith("chat")) return;
@@ -66,12 +113,18 @@
       return;
     }
     const focus = sameSession ? rememberFocus(body, doc) : null;
+    const reviewScrollTop = sameSession ? body.querySelector(".dr-review-items")?.scrollTop || 0 : 0;
     const root = h("div", { class: "dr-pane dr-questions-pane" });
     if (!DeepRead.Modules.enabled(session, "questions")) {
       view.composing = false;
       view.pending = null;
+      const reviews = reviewSection(ctx, view);
+      if (reviews) root.append(reviews);
       root.append(h("div", { class: "dr-muted" }, DeepRead.bilingual("问题导向已在「功能」菜单中关闭。", "Question-led reading is off in the Features menu.")));
       body.replaceChildren(root);
+      const list = root.querySelector(".dr-review-items");
+      if (list) list.scrollTop = reviewScrollTop;
+      restoreFocus(root, focus);
       return;
     }
     root.addEventListener("compositionstart", () => { view.composing = true; });
@@ -115,6 +168,8 @@
       class: "dr-link-button", onclick: () => session.openReadingTarget(target),
     }, target.kind === "figure" ? DeepRead.bilingual("从图表开始", "Start with figures") : target.section.label))));
     root.append(goalBox);
+    const reviews = reviewSection(ctx, view);
+    if (reviews) root.append(reviews);
 
     const progress = session.questionProgress();
     const head = h("div", { class: "dr-q-head" },
@@ -253,6 +308,8 @@
       h("summary", {}, DeepRead.bilingual("重新解析后待定位的笔记", "Notes to relocate after reparsing")),
       session.userState.unmappedNotes.map((note) => h("div", { class: "dr-note" }, h("blockquote", {}, note.quote || note.originalKey), h("p", {}, note.text)))));
     body.replaceChildren(root);
+    const reviewList = root.querySelector(".dr-review-items");
+    if (reviewList) reviewList.scrollTop = reviewScrollTop;
     restoreFocus(root, focus);
   };
 

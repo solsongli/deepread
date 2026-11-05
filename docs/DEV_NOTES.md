@@ -1,5 +1,7 @@
 # DeepRead — developer notes and module contracts
 
+`userState.readingIssues` maps physical paragraph keys to `{id, originalKey, createdAt, quote, summary}` snapshots, independent of card grouping. `unmappedReadingIssues` retains unmatched snapshots on reparse. `Reading.carryState` requires unique normalized source text on both sides; do not reuse numeric paragraph IDs or collapse ambiguous old notes. Flags do not change notes, highlighting or AI requests. The questions pane keeps the local queue available when its AI module is disabled, preserving scroll and focus across updates. Native regression: `test/e2e/readingIssues.js`.
+
 `userState.focusReading` is a per-paper, local display preference. It folds all non-current paragraph cards without changing `cards.keepOpen` or stored content. Compact cards open explicitly (not on hover); figure cards use `figureExpanded` / `figureCollapsed`. Paragraph headers expose keyboard toggles and each group member has its own source navigation action. Rail cards are height-bounded scroll containers with sticky headers; preserve their scroll position and action focus when rebuilding. Active summary/note/figure editors must not be replaced by background refreshes.
 
 Question-pane drafts and reveal state are session-scoped; focus/selection are restored using stable control keys. IME composition postpones rendering, and a failed submission must not overwrite a newer draft. `questions.css` is loaded/unloaded alongside `panes.css`. Native regressions: `test/e2e/readingComfort.js`, `test/e2e/questionsPane.js`.
