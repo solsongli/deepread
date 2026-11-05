@@ -49,7 +49,7 @@
 .deepread-rail .dr-rsummary { flex: 1; font-weight: 600; cursor: pointer; outline: none; }
 .deepread-rail .dr-rsummary[contenteditable="true"] { cursor: text; background: rgba(59,130,246,0.08); border-radius: 4px; }
 .deepread-rail .dr-ractions { display: none; gap: 1px; flex-shrink: 0; }
-.deepread-rail .dr-rcard:hover .dr-ractions { display: flex; }
+.deepread-rail .dr-rcard:hover .dr-ractions, .deepread-rail .dr-rcard:focus-within .dr-ractions { display: flex; }
 .deepread-rail .dr-ractions button { border: none; background: transparent; color: var(--fill-secondary, #57606a); cursor: pointer;
   font-size: 0.92em; padding: 0 4px; border-radius: 4px; line-height: 1.5; }
 .deepread-rail .dr-ractions button:hover { background: rgba(0,0,0,0.07); color: inherit; }
@@ -120,7 +120,6 @@
 :root[data-color-scheme="dark"] .deepread-rail .dr-rcard.dr-figure[data-kind="table"] { background: #232b2a; border-color: rgba(13,148,136,0.45); border-inline-start-color: #14b8a6; }
 :root[data-color-scheme="dark"] .deepread-rail .dr-figure[data-kind="table"] .dr-fhead { background: rgba(13,148,136,0.12); }
 .deepread-rail .dr-rcard.dr-figure.dr-compact .dr-fbody { display: none; }
-.deepread-rail .dr-rcard.dr-figure.dr-compact:hover .dr-fbody { display: block; }
 :root[data-color-scheme="dark"] .deepread-rail .dr-fhead { background: rgba(255,255,255,0.05); }
 /* Paragraph cards: tinted header by the paragraph's role, white body. Colour only in labels and fine edges. */
 .deepread-rail .dr-rcard.dr-para { padding: 0 0 9px; overflow: hidden; border-radius: 10px; }
@@ -149,7 +148,6 @@
 .deepread-rail .dr-gn-claim .dr-gn-label { background: #ede9fe; color: #5b21b6; }
 .deepread-rail .dr-gn-text { color: var(--fill-secondary, #57606a); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .deepread-rail .dr-rcard.dr-compact .dr-guide-notes { display: none; }
-.deepread-rail .dr-rcard.dr-compact:hover .dr-guide-notes { display: flex; }
 :root[data-color-scheme="dark"] .deepread-rail .dr-gn-label { background: rgba(20,184,166,0.18); color: #99f6e4; }
 .deepread-rail .dr-range { flex-shrink: 0; align-self: flex-start; margin-top: 0.15em; padding: 0 5px; border-radius: 8px;
   font-size: 0.75em; line-height: 1.6; color: var(--fill-secondary, #57606a); border: 1px solid rgba(0,0,0,0.12); }
@@ -164,20 +162,41 @@
 .deepread-rail .dr-para .dr-trtoggle { padding: 1px 8px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; background: #fafaf8; }
 .deepread-rail .dr-rcard.dr-para.dr-compact { padding-bottom: 0; }
 .deepread-rail .dr-rcard.dr-para.dr-compact .dr-phead { padding: 5px 8px; border-bottom: none; margin-bottom: 0; }
-.deepread-rail .dr-rcard.dr-para.dr-compact:hover .dr-phead { border-bottom: 1px solid rgba(0,0,0,0.05); }
-.deepread-rail .dr-rcard.dr-para.dr-compact:hover { padding-bottom: 8px; }
 :root[data-color-scheme="dark"] .deepread-rail .dr-para .dr-phead { background: color-mix(in srgb, var(--dr-role-accent, #475569) 28%, #1f2937) !important; border-color: rgba(255,255,255,0.12); }
 .deepread-rail .dr-rcard.dr-compact { padding-block: 3px; }
 .deepread-rail .dr-rcard.dr-compact .dr-rsummary { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .deepread-rail .dr-rcard.dr-compact .dr-points, .deepread-rail .dr-rcard.dr-compact .dr-explain,
 .deepread-rail .dr-rcard.dr-compact .dr-trwrap { display: none; }
-.deepread-rail .dr-rcard.dr-compact:hover .dr-rsummary { white-space: normal; font-weight: 600; }
-.deepread-rail .dr-rcard.dr-compact:hover .dr-points, .deepread-rail .dr-rcard.dr-compact:hover .dr-explain,
-.deepread-rail .dr-rcard.dr-compact:hover .dr-trwrap { display: block; }
 .deepread-rail .dr-user-collapsed .dr-explain, .deepread-rail .dr-user-collapsed .dr-points, .deepread-rail .dr-user-collapsed .dr-trwrap,
 .deepread-rail .dr-user-collapsed .dr-note, .deepread-rail .dr-user-collapsed .dr-guide-notes,
 .deepread-rail .dr-user-collapsed:hover .dr-explain, .deepread-rail .dr-user-collapsed:hover .dr-points, .deepread-rail .dr-user-collapsed:hover .dr-trwrap { display: none !important; }
 .deepread-rail .dr-user-collapsed:hover .dr-rsummary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Keep compact cards stable under the pointer. Only an explicit action opens details. */
+.deepread-rail .dr-rcard.dr-compact:hover .dr-points,
+.deepread-rail .dr-rcard.dr-compact:hover .dr-explain,
+.deepread-rail .dr-rcard.dr-compact:hover .dr-trwrap,
+.deepread-rail .dr-rcard.dr-compact:hover .dr-guide-notes,
+.deepread-rail .dr-rcard.dr-compact:hover .dr-fbody,
+.deepread-rail .dr-rcard.dr-compact:hover .dr-fthumb { display: none; }
+.deepread-rail .dr-rcard.dr-compact:hover .dr-rsummary { white-space: nowrap; font-weight: 500; }
+.deepread-rail .dr-rcard.dr-para.dr-compact:hover { padding-bottom: 0; }
+.deepread-rail .dr-rcard.dr-para.dr-compact:hover .dr-phead { border-bottom: none; margin-bottom: 0; }
+.deepread-rail .dr-rcard, .deepread-rail .dr-rcard.dr-para, .deepread-rail .dr-rcard.dr-figure { max-height: var(--dr-card-max-height, 80vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.deepread-rail .dr-para .dr-phead { position: sticky; top: 0; z-index: 2; }
+.deepread-rail .dr-rhead { flex-wrap: wrap; }
+.deepread-rail .dr-rsummary { min-width: 4em; overflow-wrap: anywhere; }
+.deepread-rail .dr-ractions { display: flex; width: 100%; justify-content: flex-end; }
+.deepread-rail .dr-compact .dr-ractions, .deepread-rail .dr-compact:hover .dr-ractions { display: none; }
+.deepread-rail :is(button, [role="button"], textarea):focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 3px; }
+.deepread-rail .dr-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0; font-size: 0.9em; }
+.deepread-rail .dr-sources button { font: inherit; padding: 2px 6px; background: transparent; color: inherit; border: 1px solid var(--color-panedivider, #bbb); border-radius: 4px; cursor: pointer; }
+.deepread-rail .dr-compact .dr-sources { display: none; }
+.deepread-rail .dr-focus-fold .dr-note { display: none; }
+.deepread-rail .dr-compact .dr-evidence { display: none; }
+.deepread-rail .dr-compact .dr-fthumb { display: none; }
+.deepread-rail .dr-card-section { color: var(--fill-secondary, #57606a); font: 600 0.85em/1.5 sans-serif; margin-bottom: 3px; }
+.deepread-rail .dr-ftoggle { border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+:root[data-color-scheme="dark"] .deepread-rail :is(button, [role="button"], textarea):focus-visible { outline-color: #93c5fd; }
 .deepread-rail .dr-note { margin-top: 5px; padding: 4px 7px; border-radius: 6px; border-inline-start: 3px solid #10b981;
   background: rgba(16,185,129,0.08); color: var(--fill-primary, #1f2328); cursor: text; }
 .deepread-rail .dr-note-label { font-size: 0.875em; font-weight: 700; color: #047857; }
@@ -258,7 +277,7 @@
     isOpen(key) {
       key = this.session.groupLead(key);
       if (this.isCollapsed(key)) return false;
-      return [...this.expanded].some((k) => this.session.groupLead(k) === key)
+      return (!this.session.focusReading && [...this.expanded].some((k) => this.session.groupLead(k) === key))
         || !!(this.focusKey && this.session.groupLead(this.focusKey) === key);
     }
 
@@ -295,7 +314,7 @@
         return;
       }
       const previous = this.focusKey;
-      if (previous && DeepRead.prefs.get("cards.keepOpen") !== false) this.expanded.add(previous);
+      if (previous && !this.session.focusReading && DeepRead.prefs.get("cards.keepOpen") !== false) this.expanded.add(previous);
       this.focusKey = key;
       if (key && raw !== key) paragraph = this.session._paragraphByKey(key)?.paragraph || paragraph;
       if (key && this.session.isCardHidden?.(key)) this.session.setCardHidden(key, false);
@@ -698,6 +717,7 @@
     _layout() {
       if (!this.root) return;
       const railHeight = this.root.clientHeight;
+      for (const rail of [this.root, this.leftRoot]) rail?.style.setProperty("--dr-card-max-height", `${Math.max(80, railHeight - 16)}px`);
       const visible = this._visiblePages(railHeight);
       const items = this._items().filter((item) => visible.has(item.pageIndex));
       for (const item of items) item.anchor = this._anchorY(item.pageIndex, item.rect);
@@ -725,7 +745,7 @@
       }
       // Lay out each rail page by page so that a crowded page never pushes the next page's
       // cards away from their paragraphs: if a page's cards overflow its box, they switch to
-      // compact mode (summary line only, expand on hover). The reader's own notes stay visible.
+      // compact mode (summary line only, open explicitly). The reader's own notes stay visible.
       for (const side of ["left", "right"]) {
         if (this._collapsed(side) && (side === "right" || this.leftRoot)) continue;
         const sideItems = placed.filter((item) => item.side === side);
@@ -825,6 +845,7 @@
       if (item.kind === "figure") {
         const focus = this.figureFocus?.id === item.data.id ? this.figureFocus.panel || "*" : "";
         return `g|${JSON.stringify(this.session.figureGuide(item.data.id))}|${this.session.explainingFigures}|${focus}`
+          + `|${this.figureExpanded?.has(item.data.id)}|${this.figureCollapsed?.has(item.data.id)}|${this.session.focusReading}`
           + `|${JSON.stringify(this.session.figureNote(item.data.id))}|${this.figureEditing === item.data.id}`
           + `|${this.figureGuideOpen?.has(item.data.id)}`
           + `|${this.compactPages?.has(`${item.side || "right"}:${item.pageIndex}`) ? "c" : ""}`;
@@ -836,6 +857,7 @@
       const questions = (this.session.questionsForKey?.(item.key) || []).map((q) => q.id).join(",");
       const guided = this.session.guide && DeepRead.Modules.enabled(this.session, "guided") ? this.session.guide.meta?.finishedAt || 1 : "";
       return `p|${keys.join(",")}|${this.session.groupTitle(item.key)}|${this.session.highlightColors().join("")}|${skim}|${questions}|${guided}`
+        + `|${this.session.focusReading}`
         + `|${this.isCollapsed(item.key)}`
         + `|${this.overlay.translationsFor(paras).join("\u001f")}`
         + `|${paras.map((p) => this.session.paragraphSummary(p)).join("|")}|${levels}|${this.isOpen(item.key)}|${this.focusKey === item.key}|${this._translationOpen(item.key)}`
@@ -865,12 +887,20 @@
       }
       const editingFigure = item.kind === "figure" && this.figureEditing === item.data.id
         && card.el.contains(this.readerDoc.activeElement) && this.readerDoc.activeElement?.localName === "textarea";
-      if (card.sig !== sig && !editingFigure) {
+      const active = this.readerDoc.activeElement;
+      const editingParagraph = item.kind === "paragraph" && card.el.contains(active)
+        && (active?.isContentEditable || (this.noteEditing === item.key && active?.localName === "textarea"));
+      if (card.sig !== sig && !editingFigure && !editingParagraph) {
+        const focusedAction = card.el.contains(active) ? active?.getAttribute("data-dr-action") : null;
+        const scrollTop = card.el.scrollTop;
         card.el.replaceChildren();
         if (item.kind === "figure") this._fillFigure(card.el, item.data, item);
         else this._fillParagraph(card.el, item.key, item.data, item.members);
         card.sig = sig;
         card.height = 0;
+        card.el.scrollTop = scrollTop;
+        if (focusedAction) [...card.el.querySelectorAll("[data-dr-action]")]
+          .find((control) => control.getAttribute("data-dr-action") === focusedAction)?.focus({ preventScroll: true });
       }
       if (!card.height || card.width !== width || this._remeasure) {
         card.el.hidden = false;
@@ -883,6 +913,8 @@
     _button(container, label, title, onClick) {
       const b = el(this.readerDoc, "button", "", label);
       b.title = title;
+      b.setAttribute("aria-label", title || label);
+      b.setAttribute("data-dr-action", title || label);
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         onClick(e);
@@ -904,8 +936,11 @@
       // Skim layers fold minor cards (every card in "margin only") to their one-line summary.
       const depth = session.skimDepth;
       const skimFold = depth === "margin" || (depth === "key" && session.skimTiers().tier.get(key) === "minor");
+      const focusFold = session.focusReading && !this.isOpen(key) && this.noteEditing !== key;
+      const compact = (focusFold || this.isCollapsed(key) || skimFold || !!this.compactPages?.has(`${side}:${paragraph.pageIndex}`)) && !this.isOpen(key) && this.noteEditing !== key;
+      node.classList.toggle("dr-focus-fold", !!focusFold);
       node.classList.toggle("dr-user-collapsed", this.isCollapsed(key));
-      node.classList.toggle("dr-compact", (this.isCollapsed(key) || skimFold || !!this.compactPages?.has(`${side}:${paragraph.pageIndex}`)) && !this.isOpen(key));
+      node.classList.toggle("dr-compact", compact);
       node.classList.add("dr-para");
       const role = session.paragraphRole?.(key) || "";
       node.dataset.role = role;
@@ -920,47 +955,62 @@
       }
       const title = members ? session.groupTitle(key) || session.paragraphSummary(paragraph) : session.paragraphSummary(paragraph);
       const summary = el(doc, "div", "dr-rsummary", title || "…");
-      summary.title = members ? DeepRead.bilingual("单击展开 / 收起", "Click to open / close")
-        : DeepRead.bilingual("单击展开 / 收起 · 双击编辑", "Click to open / close · double-click to edit");
-      summary.addEventListener("click", () => {
+      summary.tabIndex = 0;
+      summary.setAttribute("role", "button");
+      summary.setAttribute("data-dr-action", "summary");
+      summary.setAttribute("aria-expanded", String(!compact));
+      summary.title = DeepRead.bilingual("单击或按 Enter 展开 / 收起", "Click or press Enter to open / close");
+      const toggleCard = () => {
         if (summary.isContentEditable) return;
-        if (this.isOpen(key)) {
+        if (!node.classList.contains("dr-compact")) {
           this.closeParagraph(key);
         }
         else this.openParagraph(paragraph);
         this.schedule();
-        this.cards.get(key).sig = null;
-      });
-      summary.addEventListener("dblclick", (e) => {
+        if (this.cards.has(key)) this.cards.get(key).sig = null;
+      };
+      summary.addEventListener("click", toggleCard);
+      const editSummary = () => {
         if (members) return; // a merged card's title is the AI's, not a paragraph summary
-        e.preventDefault();
         summary.contentEditable = "true";
+        summary.setAttribute("role", "textbox");
+        summary.removeAttribute("aria-expanded");
+        summary.setAttribute("aria-label", DeepRead.bilingual("编辑摘要", "Edit summary"));
         summary.focus();
         const range = doc.createRange();
         range.selectNodeContents(summary);
         doc.defaultView.getSelection().removeAllRanges();
         doc.defaultView.getSelection().addRange(range);
-      });
+      };
       const finish = (save) => {
         if (summary.contentEditable !== "true") return;
         summary.contentEditable = "false";
+        summary.setAttribute("role", "button");
+        summary.setAttribute("aria-expanded", String(!node.classList.contains("dr-compact")));
+        summary.removeAttribute("aria-label");
         if (save) session.setParagraphSummary(paragraph, summary.textContent.trim());
         else summary.textContent = session.paragraphSummary(paragraph);
         this.cards.get(key) && (this.cards.get(key).sig = null);
         this.schedule(true);
       };
       summary.addEventListener("keydown", (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
+        if (!summary.isContentEditable) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleCard(); }
+          else if (e.key === "F2") { e.preventDefault(); editSummary(); }
+          return;
+        }
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           finish(true);
         }
-        else if (e.key === "Escape") finish(false);
+        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
       });
       summary.addEventListener("blur", () => finish(true));
       head.append(summary);
       // Reading questions this card helps answer.
       for (const q of session.questionsForKey?.(key) || []) {
-        const pill = el(doc, "span", "dr-q", session.questionLabel(q));
+        const pill = el(doc, "button", "dr-q", session.questionLabel(q));
         pill.title = q.question;
         pill.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -977,10 +1027,11 @@
 
       const badges = el(doc, "span", "dr-badges");
 
-      if (session.paragraphNote(key)) badges.append(el(doc, "span", "dr-badge dr-badge-note", DeepRead.bilingual("理解", "Note")));
+      if (keys.some((k) => session.paragraphNote(k))) badges.append(el(doc, "span", "dr-badge dr-badge-note", DeepRead.bilingual("理解", "Note")));
       if (badges.childNodes.length) head.append(badges);
 
       const actions = el(doc, "div", "dr-ractions");
+      if (!members) this._button(actions, "改", DeepRead.bilingual("编辑摘要（F2）", "Edit summary (F2)"), editSummary);
       const translations = this.overlay.translationsFor(paras);
       this._button(actions, "⧉", DeepRead.t("card.copySummary"), () => {
         const lines = paras.flatMap((p) => [session.paragraphSummary(p), ...(p.points || []).map((pt) => `- ${pt.summary}`)]);
@@ -992,6 +1043,7 @@
         });
       }
       this._button(actions, "✎", DeepRead.bilingual("写我的理解", "Add my understanding"), () => {
+        this.openParagraph(paragraph);
         this.noteEditing = key;
         this._invalidate(key);
       });
@@ -1014,10 +1066,20 @@
       headWrap.append(head);
       node.append(headWrap);
 
+      const sources = el(doc, "div", "dr-sources");
+      sources.append(el(doc, "span", "dr-muted", DeepRead.bilingual("核对原文", "Check source")));
+      for (const source of paras) {
+        this._button(sources, DeepRead.Rail.blockLabel(source), DeepRead.bilingual("定位并标出原文段落", "Locate and highlight the source paragraph"), () => {
+          session.navigateToParagraph(source).catch((error) => session._notify(DeepRead.util.formatError(error), "error"));
+        }).setAttribute("data-dr-action", `source:${source.pageIndex}:${source.paragraphIndex}`);
+      }
+      node.append(sources);
+
       // Body: the AI's explanation of the paragraph.
       const explanation = session.explanation(key);
       if (explanation) {
         const body = el(doc, "div", "dr-explain");
+        body.append(el(doc, "div", "dr-card-section", DeepRead.bilingual("AI 讲解", "AI explanation")));
         body.append(DeepRead.Markdown.render(doc, explanation));
         node.append(body);
       }
@@ -1081,7 +1143,9 @@
       if (translations.length) {
         const open = this._translationOpen(key);
         const wrap = el(doc, "div", "dr-trwrap");
-        const toggle = el(doc, "span", "dr-trtoggle", `${open ? "▾" : "▸"} ${DeepRead.bilingual("译文", "Translation")}`);
+        const toggle = el(doc, "button", "dr-trtoggle", `${open ? "▾" : "▸"} ${DeepRead.bilingual("译文", "Translation")}`);
+        toggle.setAttribute("aria-expanded", String(open));
+        toggle.setAttribute("data-dr-action", "translation");
         toggle.addEventListener("click", (e) => {
           e.stopPropagation();
           if (this.trToggled.has(key)) this.trToggled.delete(key);
@@ -1182,13 +1246,22 @@
       const focus = this.figureFocus?.id === figure.id ? this.figureFocus : null;
       node.classList.toggle("dr-linked", !!focus);
       const side = item?.side || this._sideOfKey?.get(`g_${figure.id}`) || "right";
-      const compact = !!this.compactPages?.has(`${side}:${figure.pageIndex}`) && !focus && this.figureEditing !== figure.id;
+      const compact = (this.figureCollapsed?.has(figure.id) || ((session.focusReading || !!this.compactPages?.has(`${side}:${figure.pageIndex}`)) && !this.figureExpanded?.has(figure.id))) && this.figureEditing !== figure.id;
       node.classList.toggle("dr-compact", compact);
       const guide = session.figureGuide(figure.id);
       const head = el(doc, "div", "dr-fhead");
       const label = DeepRead.Rail.figureLabel(figure);
       head.append(el(doc, "span", "dr-flabel", label));
       head.append(el(doc, "span", "dr-ftitle", guide?.title || figure.title || ""));
+      const toggle = this._button(head, compact ? "▸" : "▾", DeepRead.bilingual("展开 / 收起图表卡片", "Open / close figure card"), () => {
+        this.figureExpanded = this.figureExpanded || new Set();
+        this.figureCollapsed = this.figureCollapsed || new Set();
+        if (compact) { this.figureExpanded.add(figure.id); this.figureCollapsed.delete(figure.id); }
+        else { this.figureExpanded.delete(figure.id); this.figureCollapsed.add(figure.id); }
+        this._invalidate(`g_${figure.id}`);
+      });
+      toggle.classList.add("dr-ftoggle");
+      toggle.setAttribute("aria-expanded", String(!compact));
       const count = session.figureMentionCount(figure.id);
       if (count) head.append(el(doc, "span", "dr-fcount", DeepRead.bilingual(`提到 ${count} 次`, `${count} mentions`)));
       node.append(head);

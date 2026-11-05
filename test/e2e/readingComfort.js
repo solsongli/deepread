@@ -1,0 +1,122 @@
+/* Stable card layout, focus reading and source navigation in isolated Zotero.
+ * Uses test/fixtures/reading/typography.pdf; no model calls.
+ * License: AGPL-3.0-or-later */
+E2E.run = async function () {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const check = (name, ok) => { E2E.result.steps.push({ name, ok: !!ok }); if (!ok) throw new Error(name); };
+  for (let i = 0; i < 100 && !Zotero.DeepRead?.Panes?.paneIDs?.chat; i++) await sleep(100);
+  const D = Zotero.DeepRead;
+  D.prefs.set("cards.autoExplain", false);
+  D.prefs.set("cards.keepOpen", true);
+  D.prefs.set("view.railLayout", "right");
+  const item = await Zotero.Attachments.importFromFile({ file: Zotero.File.pathToFile(E2E.env("DEEPREAD_E2E_PDF")), libraryID: Zotero.Libraries.userLibraryID });
+  const reader = await Zotero.Reader.open(item.id); await reader._initPromise;
+  const s = D.Session.forReader(reader); await s.init();
+  const para = (i, text, y) => ({ paragraphIndex: i, paragraphType: "text", paragraphText: text,
+    paragraphSummary: i ? "结果与适用范围" : "方法为什么这样设计", rects: [[50, y - 25, 280, y]],
+    typography: { fontSize: 10 }, points: [{ id: `0_${i}_point_0`, summary: "核对对照条件与实验结论", importance_level: 1,
+      translation: "**对照条件。** 本方法在相同数据划分下进行比较。", rects: [[50, y - 25, 280, y]] }] });
+  s.data = { hierarchicalData: [{ pageIndex: 0, paragraphs: [para(0, "The method uses two representations to capture complementary information.", 700),
+    para(1, "The experiment compares against a baseline under identical conditions.", 580)] }], contentList: [] };
+  s.explanations = { p_0_0: { text: "先明确输入与输出，再核对设计选择。", role: "method" }, p_0_1: { text: "观察结果及其限制。", role: "result" } };
+  s._emit("change"); s.overlay.setData(s.data.hierarchicalData); s.rail.refresh();
+  const rail = s.rail, doc = rail.readerDoc, win = doc.defaultView;
+  Zotero.getMainWindow().resizeTo(1350, 900);
+  await sleep(500);
+  const card = (key) => rail.cards.get(key)?.el;
+  const current = (key) => card(key)?.querySelector(".dr-rsummary");
+  const focus = doc.querySelector(".dr-focus-button");
+  check("focus control is visible without changing the default", focus && !focus.hidden && !s.focusReading);
+  focus.click(); await sleep(100);
+  check("focus folds all unselected cards", [...rail.cards.values()].every((c) => c.el.classList.contains("dr-compact")));
+  const [p0, p1] = s.overlay.pages.get(0);
+  s.overlay.openParagraph(p0); await sleep(100);
+  check("current paragraph opens and others stay compact", !card("p_0_0").classList.contains("dr-compact") && card("p_0_1").classList.contains("dr-compact"));
+  s.overlay.openParagraph(p1); await sleep(100);
+  check("moving focus closes previous details despite keepOpen", card("p_0_0").classList.contains("dr-compact") && !card("p_0_1").classList.contains("dr-compact"));
+  current("p_0_1").focus();
+  current("p_0_1").dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await sleep(100);
+  check("Enter folds card with accurate expanded state", card("p_0_1").classList.contains("dr-compact") && current("p_0_1").getAttribute("aria-expanded") === "false");
+  check("keyboard focus survives card rebuild", doc.activeElement === current("p_0_1"));
+  current("p_0_1").dispatchEvent(new win.KeyboardEvent("keydown", { key: " ", bubbles: true }));
+  await sleep(100);
+  check("Space opens the card", current("p_0_1").getAttribute("aria-expanded") === "true");
+  const rect = current("p_0_0").getBoundingClientRect(), compactHeight = card("p_0_0").offsetHeight;
+  win.windowUtils.sendMouseEvent("mousemove", rect.left + 5, rect.top + 5, 0, 0, 0);
+  await sleep(100);
+  check("hover does not expand a compact card", card("p_0_0").offsetHeight === compactHeight && win.getComputedStyle(card("p_0_0").querySelector(".dr-explain")).display === "none");
+
+  s.explanations.p_0_1.text = "对照实验的解释。\n\n".repeat(100) + "讲解末尾仍然可以阅读。";
+  s._emit("explanations"); await sleep(100);
+  const long = card("p_0_1");
+  check("long card stays within the available height", long.offsetHeight <= rail.root.clientHeight - 14);
+  check("long card has usable internal scrolling", win.getComputedStyle(long).overflowY === "auto" && long.scrollHeight > long.clientHeight);
+  long.scrollTop = long.scrollHeight;
+  check("long explanation remains reachable", long.scrollTop > 100 && long.textContent.includes("讲解末尾"));
+  const head = long.querySelector(".dr-phead").getBoundingClientRect();
+  check("card heading remains visible while reading its end", Math.abs(head.top - long.getBoundingClientRect().top) < 3);
+  long.scrollTop = 0;
+
+  s.explanations.p_0_1.text = "观察结果及其限制。"; s._emit("explanations");
+  s.setFocusReading(false); await sleep(100);
+  check("leaving focus preserves global preferences", D.prefs.get("cards.keepOpen") === true && focus.getAttribute("aria-pressed") === "false");
+  s.mergeCardWithPrevious("p_0_1"); s.overlay.openParagraph(p1); await sleep(100);
+  let sourceButtons = card("p_0_0").querySelectorAll(".dr-sources button");
+  check("merged card exposes each source independently", sourceButtons.length === 2);
+  let located;
+  const navigate = s.navigateToParagraph;
+  s.navigateToParagraph = async (p) => { located = p.paragraphIndex; };
+  sourceButtons[1].click();
+  s.navigateToParagraph = navigate;
+  check("second source button targets the second original paragraph", located === 1);
+  sourceButtons[1].focus(); s._emit("explanations"); await sleep(100);
+  check("refresh retains the correct source button focus", doc.activeElement?.getAttribute("data-dr-action") === "source:0:1");
+  const noteButton = [...card("p_0_0").querySelectorAll(".dr-ractions button")].find((button) => button.textContent === "✎");
+  noteButton.click(); await sleep(100);
+  const area = card("p_0_0").querySelector(".dr-note-editing textarea");
+  area.focus(); area.value = "我还需要核对实验中的控制变量。";
+  area.dispatchEvent(new win.Event("input", { bubbles: true }));
+  s._emit("explanations"); await sleep(100);
+  check("background updates preserve the active note editor", card("p_0_0").querySelector("textarea") === area && doc.activeElement === area && area.value.includes("控制变量"));
+  area.blur(); rail.noteEditing = null; rail._invalidate("p_0_0");
+  s.splitCard("p_0_0"); s.overlay.openParagraph(p0); await sleep(100);
+  current("p_0_0").focus();
+  current("p_0_0").dispatchEvent(new win.KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+  const editable = current("p_0_0");
+  check("summary editing is keyboard accessible", editable.isContentEditable && editable.getAttribute("role") === "textbox");
+  editable.textContent = "输入法确认不应提前保存";
+  editable.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, isComposing: true }));
+  check("IME confirmation does not finish summary editing", editable.isContentEditable);
+  editable.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await sleep(100);
+  check("Escape cancels summary edits", current("p_0_0").textContent === "方法为什么这样设计");
+
+  D.prefs.set("view.railWidth", 200); s.setFocusReading(true); await sleep(100);
+  check("narrow card has no horizontal overflow", card("p_0_0").scrollWidth <= card("p_0_0").clientWidth + 1);
+  const theme = doc.documentElement.getAttribute("data-color-scheme");
+  doc.documentElement.setAttribute("data-color-scheme", "dark");
+  check("source controls remain visible in dark mode", win.getComputedStyle(card("p_0_0").querySelector(".dr-sources button")).color !== win.getComputedStyle(card("p_0_0")).backgroundColor);
+  if (theme === null) doc.documentElement.removeAttribute("data-color-scheme"); else doc.documentElement.setAttribute("data-color-scheme", theme);
+  D.prefs.set("view.railWidth", 290);
+  s.data.contentList = [{ id: 1, type: "image", page_idx: 0, bbox: [82, 267, 458, 558], image_caption: ["Figure 1: Measured performance."] }];
+  const figure = s.figures()[0];
+  rail.refresh(); await sleep(150);
+  const figureKey = `g_${figure.id}`;
+  check("focus starts figure cards compact", card(figureKey).classList.contains("dr-compact") && win.getComputedStyle(card(figureKey).querySelector(".dr-fthumb")).display === "none");
+  const figureHeight = card(figureKey).offsetHeight, figureRect = card(figureKey).getBoundingClientRect();
+  win.windowUtils.sendMouseEvent("mousemove", figureRect.left + 5, figureRect.top + 5, 0, 0, 0); await sleep(100);
+  check("compact figure does not change height on hover", card(figureKey).offsetHeight === figureHeight);
+  card(figureKey).querySelector(".dr-ftoggle").click(); await sleep(100);
+  check("figure details open explicitly", !card(figureKey).classList.contains("dr-compact") && win.getComputedStyle(card(figureKey).querySelector(".dr-evidence")).display !== "none");
+  card(figureKey).querySelector(".dr-ftoggle").click(); await sleep(100);
+  check("figure details close on the same control", card(figureKey).classList.contains("dr-compact"));
+  await sleep(800);
+  const stored = await D.Store.getPaper(s.key);
+  check("focus preference persists per paper", stored.user_state.focusReading === true);
+  const main = Zotero.getMainWindow();
+  const bitmap = await main.browsingContext.currentWindowGlobal.drawSnapshot(null, 1, "white");
+  const canvas = main.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+  canvas.width = bitmap.width; canvas.height = bitmap.height; canvas.getContext("2d").drawImage(bitmap, 0, 0);
+  await IOUtils.write(PathUtils.join(E2E.env("DEEPREAD_E2E_SHOTS"), "focus-reading.png"), Uint8Array.from(atob(canvas.toDataURL("image/png").split(",")[1]), (c) => c.charCodeAt(0)));
+  return { checks: E2E.result.steps.length };
+};

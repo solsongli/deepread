@@ -4,15 +4,38 @@
 
 (function () {
   const revealed = new WeakMap(); // session → Set(question id) answers shown early by the reader
+  const drafts = new WeakMap(); // unsubmitted questions survive pane refreshes, scoped to the paper
+  const views = new WeakMap(); // body → current session and pending IME-safe render
 
-  function blockChip(h, session, key) {
+  function rememberFocus(body, doc) {
+    const node = doc.activeElement;
+    if (!body.contains(node) || !node?.dataset?.focusKey) return null;
+    return { key: node.dataset.focusKey, start: node.selectionStart, end: node.selectionEnd,
+      direction: node.selectionDirection, scrollTop: node.scrollTop };
+  }
+
+  function restoreFocus(root, focus) {
+    if (!focus) return;
+    const node = [...root.querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === focus.key);
+    if (!node) return;
+    node.focus({ preventScroll: true });
+    if (typeof focus.start === "number" && typeof node.setSelectionRange === "function") {
+      node.setSelectionRange(focus.start, focus.end, focus.direction || "none");
+      node.scrollTop = focus.scrollTop;
+    }
+  }
+
+  function blockChip(h, session, key, questionID) {
     const m = /^p_(\d+)_(\d+)$/.exec(key || "");
     if (!m) return null;
     const page = Number(m[1]);
     const para = Number(m[2]);
-    return h("span", {
+    return h("button", {
+      type: "button",
       class: "dr-q-chip dr-clickable",
       title: DeepRead.bilingual("跳到这一段并打开卡片", "Go to the paragraph and open its card"),
+      "aria-label": DeepRead.bilingual(`核对原文：第 ${page + 1} 页，第 ${para + 1} 段`, `Check source: page ${page + 1}, paragraph ${para + 1}`),
+      dataset: { focusKey: `source:${questionID}:${key}` },
       onclick: () => session.openBlock(page, para),
     }, `p. ${page + 1} ¶${para + 1}`);
   }
@@ -20,6 +43,7 @@
   function markdown(doc, text) {
     const box = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
     box.append(DeepRead.Markdown.render(doc, text || ""));
+    DeepRead.Markdown.wireLinks(box);
     return box;
   }
 
@@ -27,17 +51,40 @@
     const { body, doc, session, h, event } = ctx;
     if (event === "ask" || String(event).startsWith("chat")) return;
     if (!session) {
+      views.delete(body);
       body.replaceChildren(DeepRead.Panes.noReader(h));
       return;
     }
-    if (event !== "change" && event !== "modules" && body.contains(doc.activeElement)
-        && doc.activeElement?.matches("textarea, input[type='text']")) return;
+    let view = views.get(body);
+    const sameSession = view?.session === session;
+    if (!sameSession) {
+      view = { session, composing: false, pending: null };
+      views.set(body, view);
+    }
+    if (view.composing && DeepRead.Modules.enabled(session, "questions")) {
+      view.pending = ctx;
+      return;
+    }
+    const focus = sameSession ? rememberFocus(body, doc) : null;
     const root = h("div", { class: "dr-pane dr-questions-pane" });
     if (!DeepRead.Modules.enabled(session, "questions")) {
+      view.composing = false;
+      view.pending = null;
       root.append(h("div", { class: "dr-muted" }, DeepRead.bilingual("问题导向已在「功能」菜单中关闭。", "Question-led reading is off in the Features menu.")));
       body.replaceChildren(root);
       return;
     }
+    root.addEventListener("compositionstart", () => { view.composing = true; });
+    root.addEventListener("compositionend", () => {
+      view.composing = false;
+      // The final input event follows compositionend; let it save the committed text first.
+      setTimeout(() => {
+        if (views.get(body) !== view || !view.pending || !body.isConnected) return;
+        const pending = view.pending;
+        view.pending = null;
+        DeepRead.Panes.renderers.questions(pending);
+      }, 0);
+    });
     const items = session.questions?.items || [];
     const hide = DeepRead.prefs.get("questions.hideAnswers") === true;
     const recall = session.userState.recallMode === true;
@@ -45,13 +92,16 @@
     revealed.set(session, shown);
 
     const goal = session.userState.readingGoal || {};
-    const goalBox = h("div", { class: "dr-reading-goal" });
+    const goalBox = h("div", { class: "dr-reading-goal" },
+      h("div", { class: "dr-q-section-label" }, DeepRead.bilingual("这次想读懂什么", "What I want to understand")));
     const select = h("select", { class: "dr-goal-kind", "aria-label": DeepRead.bilingual("阅读目标", "Reading goal"),
+      dataset: { focusKey: "goal-kind" },
       onchange: (e) => session.setReadingGoal(e.target.value) });
     select.append(h("option", { value: "" }, DeepRead.bilingual("选择阅读目标（可选）", "Choose a reading goal (optional)")));
     for (const g of DeepRead.Reading.GOALS) select.append(h("option", { value: g.key }, DeepRead.bilingual(g.zh, g.en)));
     select.value = goal.kind || "";
     const goalText = h("input", { type: "text", class: "dr-goal-text", maxlength: 1000,
+      dataset: { focusKey: "goal-text" },
       "aria-label": DeepRead.bilingual("这次想弄清的问题", "What I want to find out"),
       placeholder: DeepRead.bilingual("这次读完，我想弄清……", "By the end, I want to understand…"),
       oninput: (e) => session.setReadingGoal(session.userState.readingGoal?.kind, e.target.value, { notify: false }),
@@ -69,21 +119,23 @@
     const progress = session.questionProgress();
     const head = h("div", { class: "dr-q-head" },
       h("span", { class: "dr-muted" }, items.length
-        ? DeepRead.bilingual(`已读到 ${progress.reached} / ${progress.total} 个答案`, `Answers reached: ${progress.reached} / ${progress.total}`)
+        ? DeepRead.bilingual(`已浏览到 ${progress.reached} / ${progress.total} 组答案出处`, `Source locations reached: ${progress.reached} / ${progress.total}`)
         : DeepRead.bilingual("带着问题读：精读后 AI 给出 5 个问题和答案出处", "Read with questions: after the deep read the AI answers five questions and points to the paragraphs")),
       h("label", { class: "dr-q-hide" },
         h("input", {
           type: "checkbox",
+          dataset: { focusKey: "hide-answers" },
           checked: hide || null,
           onchange: (e) => {
             DeepRead.prefs.set("questions.hideAnswers", !!e.target.checked);
             session._emit("questions");
           },
         }),
-        DeepRead.bilingual("先自己想，读到时再揭晓", "Hide answers until I get there")));
+        DeepRead.bilingual("到达出处后再显示答案", "Show answers when I reach their sources")));
     root.append(head);
     root.append(h("label", { class: "dr-q-hide" }, h("input", {
       type: "checkbox", checked: recall || null,
+      dataset: { focusKey: "recall-mode" },
       onchange: (e) => {
         session.userState.recallMode = !!e.target.checked;
         shown.clear();
@@ -111,15 +163,16 @@
       item.append(h("div", { class: "dr-q-title" },
         h("span", { class: "dr-q-label" }, session.questionLabel(q)),
         h("span", { class: "dr-q-text" }, q.question),
-        reached ? h("span", { class: "dr-q-state", title: DeepRead.bilingual("已读到答案所在的段落", "You have read the answer's paragraphs") }, "✓") : null,
+        reached ? h("span", { class: "dr-q-state", title: DeepRead.bilingual("已浏览到答案出处；不代表已经理解", "Source location reached; this does not assess understanding") }, DeepRead.bilingual("已到达", "Reached")) : null,
         q.custom
-          ? h("button", { class: "dr-q-remove", title: DeepRead.bilingual("删除这个问题", "Remove"), onclick: () => session.removeQuestion(q.id) }, "×")
+          ? h("button", { class: "dr-q-remove", title: DeepRead.bilingual("删除这个问题", "Remove"), "aria-label": DeepRead.bilingual("删除这个问题", "Remove this question"), onclick: () => session.removeQuestion(q.id) }, "×")
           : null));
       if (recall && !q.pending) {
         const saved = session.userState.recallAnswers?.[q.id];
         const draft = saved?.question === q.question ? saved.text : "";
         const input = h("textarea", {
           class: "dr-q-recall", rows: 2,
+          dataset: { focusKey: `recall:${q.id}:${q.question}` },
           placeholder: DeepRead.bilingual("用自己的话解释：为什么？依据在哪里？（可跳过）", "Explain in your own words: why, and what is the evidence? (optional)"),
           "aria-label": DeepRead.bilingual("我的回答", "My answer"),
           oninput: (e) => {
@@ -128,7 +181,8 @@
           },
         });
         input.value = draft || "";
-        item.append(input);
+        item.append(h("label", { class: "dr-q-own" },
+          h("span", { class: "dr-q-section-label" }, DeepRead.bilingual("我的解释", "My explanation")), input));
       }
       if (q.pending) {
         item.append(h("div", { class: "dr-muted" }, DeepRead.bilingual("AI 正在全文中找答案…", "Looking for the answer…")));
@@ -137,20 +191,24 @@
         const first = q.keys?.length ? session._paragraphByKey(q.keys[0]) : null;
         item.append(h("button", {
           class: "dr-q-reveal",
+          dataset: { focusKey: `reveal:${q.id}` },
           onclick: () => {
             shown.add(q.id);
             session._emit("questions");
           },
         }, recall ? DeepRead.bilingual("查看 AI 答案并核对原文", "Compare with AI answer and source") : first
-          ? DeepRead.bilingual(`读到第 ${first.page.pageIndex + 1} 页时揭晓 · 现在看`, `Revealed at p. ${first.page.pageIndex + 1} · show now`)
+          ? DeepRead.bilingual(`到达第 ${first.page.pageIndex + 1} 页出处时显示 · 现在看`, `Revealed at the source on p. ${first.page.pageIndex + 1} · show now`)
           : DeepRead.bilingual("显示答案", "Show the answer")));
       }
       else if (q.answer) {
-        item.append(h("div", { class: "dr-q-answer" }, markdown(doc, q.answer)));
-        if (recall) item.append(h("button", { class: "dr-q-reveal", onclick: () => { shown.delete(q.id); session._emit("questions"); } }, DeepRead.bilingual("收起答案，再回忆一次", "Hide answer and recall again")));
+        item.append(h("div", { class: "dr-q-answer" },
+          h("div", { class: "dr-q-section-label" }, DeepRead.bilingual("AI 参考答案", "AI reference answer")), markdown(doc, q.answer)));
+        if (recall) item.append(h("button", { class: "dr-q-reveal", dataset: { focusKey: `reveal:${q.id}` }, onclick: () => { shown.delete(q.id); session._emit("questions"); } }, DeepRead.bilingual("收起答案，再回忆一次", "Hide answer and recall again")));
       }
-      if (q.keys?.length && (recall || !hide || reached || shown.has(q.id))) {
-        item.append(h("div", { class: "dr-q-chips" }, q.keys.map((k) => blockChip(h, session, k))));
+      if (q.keys?.length) {
+        item.append(h("div", { class: "dr-q-sources" },
+          h("div", { class: "dr-q-section-label" }, DeepRead.bilingual("核对原文", "Check the source")),
+          h("div", { class: "dr-q-chips" }, [...new Set(q.keys)].map((k) => blockChip(h, session, k, q.id)))));
       }
       list.append(item);
     }
@@ -160,16 +218,26 @@
       const input = h("input", {
         type: "text",
         class: "dr-q-input",
+        dataset: { focusKey: "question-draft" },
+        "aria-label": DeepRead.bilingual("添加我的阅读问题", "Add my reading question"),
         placeholder: DeepRead.bilingual("添加我的问题，AI 在全文中找答案…", "Add a question of your own…"),
+        oninput: (e) => drafts.set(session, e.target.value),
       });
+      input.value = drafts.get(session) || "";
       const submit = () => {
         const text = input.value.trim();
-        if (!text) return;
+        if (!text || view.composing) return;
         input.value = "";
-        session.askQuestion(text).catch((e) => DeepRead.Panes.reportError(session, e));
+        drafts.set(session, "");
+        session.askQuestion(text).catch((e) => {
+          // Do not replace another question the reader has started while the request was pending.
+          if (!drafts.get(session)) drafts.set(session, text);
+          session._emit("questions");
+          DeepRead.Panes.reportError(session, e);
+        });
       };
       input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") submit();
+        if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submit(); }
       });
       root.append(h("div", { class: "dr-q-add" }, input, h("button", { class: "dr-primary-button", onclick: submit }, DeepRead.bilingual("提问", "Ask"))));
     }
@@ -185,6 +253,7 @@
       h("summary", {}, DeepRead.bilingual("重新解析后待定位的笔记", "Notes to relocate after reparsing")),
       session.userState.unmappedNotes.map((note) => h("div", { class: "dr-note" }, h("blockquote", {}, note.quote || note.originalKey), h("p", {}, note.text)))));
     body.replaceChildren(root);
+    restoreFocus(root, focus);
   };
 
 })();

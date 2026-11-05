@@ -70,6 +70,45 @@ E2E.run = async function () {
   check("each paragraph has its own first-line indent", [...box.querySelectorAll(".dr-layout-paragraph")].every((p) => parseFloat(overlay.pdfWin.getComputedStyle(p).textIndent) > 5));
   check("body translation is not the flat point translation", !box.textContent.includes("旧版"));
   await shot("translation-paragraphs.png");
+
+  // A long caption in a short viewport remains fully scrollable, and keyboard
+  // focus must survive pointer departure until the reader explicitly dismisses it.
+  const viewport = overlay.pdfDoc.getElementById("viewerContainer");
+  const previousHeight = viewport.style.height;
+  viewport.style.height = "180px";
+  overlay.trPara = ps[1]; overlay.hoverPara = ps[1]; overlay._drawHover(ps[1]);
+  box = overlay.pdfDoc.querySelector(".dr-translation");
+  const ordinaryBounds = box.getBoundingClientRect(), shortView = viewport.getBoundingClientRect();
+  check("ordinary paragraph popup also stays in the visible window", ordinaryBounds.top >= shortView.top - 1 && ordinaryBounds.bottom <= shortView.bottom + 1);
+  const previousColumns = overlay.isTwoColumn;
+  overlay.isTwoColumn = () => false;
+  const caption = { ...ps[0], paragraphType: "image", translationLayout: null,
+    points: [{ translation: "图中比较了三组实验的结果，需要结合横轴、纵轴和误差范围理解其证据。".repeat(40) }] };
+  overlay.trPara = caption; overlay.hoverPara = caption; overlay._drawHover(caption);
+  box = overlay.pdfDoc.querySelector(".dr-translation");
+  const viewBounds = viewport.getBoundingClientRect(), popupBounds = box.getBoundingClientRect();
+  check("long caption stays inside the visible reader", popupBounds.top >= viewBounds.top - 1 && popupBounds.bottom <= viewBounds.bottom + 1);
+  check("long caption remains complete and scrollable", box.dataset.overflow === "true" && box.textContent.trim().endsWith("理解其证据。") && box.scrollHeight > box.clientHeight);
+  check("overflow popup is keyboard accessible", box.tabIndex === 0 && box.getAttribute("role") === "region" && !!box.getAttribute("aria-label"));
+  box.focus();
+  check("overflow popup receives keyboard focus", overlay.pdfDoc.activeElement === box);
+  overlay._scheduleHide(); await sleep(350);
+  check("focused translation stays open after pointer departure", box.isConnected && overlay.trPara === caption);
+  box.scrollTop = box.scrollHeight;
+  check("long caption can scroll to its end", box.scrollTop > 0 && box.scrollTop + box.clientHeight >= box.scrollHeight - 2);
+  let prevented = false;
+  overlay._onKey({ type: "keydown", key: "Escape", preventDefault() { prevented = true; }, stopPropagation() {} });
+  check("Escape dismisses the focused translation", prevented && !overlay.pdfDoc.querySelector(".dr-translation") && overlay.trPara === null);
+  check("dismissed paragraph waits for pointer departure", !overlay._translationAllowed(caption));
+  viewport.style.height = previousHeight;
+  overlay.isTwoColumn = previousColumns;
+  overlay._suppressPara = null;
+  overlay.trPara = ps[1]; overlay.hoverPara = ps[1]; overlay._drawHover(ps[1]);
+  box = overlay.pdfDoc.querySelector(".dr-translation");
+  const pdfTheme = overlay.pdfDoc.documentElement.getAttribute("data-color-scheme");
+  overlay.pdfDoc.documentElement.setAttribute("data-color-scheme", "dark");
+  check("translation follows the dark reader theme", overlay.pdfWin.getComputedStyle(box).backgroundColor === "rgb(34, 37, 42)" && overlay.pdfWin.getComputedStyle(box).color === "rgb(230, 230, 230)");
+  if (pdfTheme === null) overlay.pdfDoc.documentElement.removeAttribute("data-color-scheme"); else overlay.pdfDoc.documentElement.setAttribute("data-color-scheme", pdfTheme);
   overlay._setHover(null);
 
   const oldHit = overlay._hitTest;

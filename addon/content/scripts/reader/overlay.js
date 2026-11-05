@@ -50,8 +50,11 @@
 .deepread-layer .dr-translation.dr-title { font-weight: 700; text-align: start; }
 .deepread-layer .dr-translation p { margin: 0; }
 .deepread-layer .dr-translation .katex { font-size: 1em; }
+.deepread-layer .dr-translation:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.deepread-layer .dr-translation[data-overflow="true"] { scrollbar-color: #a78b42 transparent; }
 :root[data-color-scheme="dark"] .deepread-layer .dr-rect { mix-blend-mode: screen; }
 :root[data-color-scheme="dark"] .deepread-layer .dr-translation { background: #22252a; color: #e6e6e6; }
+:root[data-color-scheme="dark"] .deepread-layer .dr-translation:focus-visible { outline-color: #93c5fd; }
 ${STRUCTURE_CSS}
 `;
 
@@ -198,7 +201,10 @@ ${STRUCTURE_CSS}
       const onPointerMove = (event) => this._onPointerMove(event);
       const onPointerLeave = () => this._scheduleHide();
       const onKey = (event) => this._onKey(event);
-      const onScroll = () => this._hideCard(true);
+      const onScroll = () => {
+        this._setHover(null);
+        this._hideCard(true);
+      };
       const onPointerDown = (event) => this._onPointerDown(event);
       const onPointerUp = (event) => this._onPointerUp(event);
       this.pdfDoc.addEventListener("pointermove", onPointerMove, { passive: true });
@@ -658,6 +664,8 @@ ${STRUCTURE_CSS}
       const gapPct = (4 / pageH) * 100;
       const title = paragraph.paragraphType === "title";
       const box = el(this.pdfDoc, "div", title ? "dr-translation dr-title" : "dr-translation");
+      box.setAttribute("role", "region");
+      box.setAttribute("aria-label", DeepRead.bilingual("段落译文，按 Esc 收起", "Paragraph translation; Escape to close"));
       box.style.width = `${pct.width}%`;
       box.style.textIndent = `${metrics.indent}px`;
       box.append(this._translationContent(paragraph, text));
@@ -670,8 +678,16 @@ ${STRUCTURE_CSS}
       const sources = this._continuationParagraphs(paragraph);
       const pageRect = geom.div.getBoundingClientRect();
       const viewport = this.pdfDoc.getElementById("viewerContainer")?.getBoundingClientRect();
-      const visibleTop = viewport ? Math.max(0, viewport.top - pageRect.top) : 0;
-      const visibleBottom = viewport ? Math.min(pageH, viewport.bottom - pageRect.top) : pageH;
+      const visibleTop = viewport ? Math.max(0, viewport.top - pageRect.top + 4) : 0;
+      const visibleBottom = viewport ? Math.min(pageH, viewport.bottom - pageRect.top - 4) : pageH;
+      const visibleHeight = Math.max(1, visibleBottom - visibleTop);
+      // Bound every popup to the actual visible reader area, including ordinary
+      // paragraphs and long captions. A page may be much taller than the window.
+      box.style.maxHeight = `${visibleHeight}px`;
+      const pageW = geom.div.clientWidth || geom.w;
+      const visibleLeft = viewport ? Math.max(0, viewport.left - pageRect.left + 4) : 0;
+      const visibleRight = viewport ? Math.min(pageW, viewport.right - pageRect.left - 4) : pageW;
+      box.style.maxWidth = `${Math.max(1, visibleRight - visibleLeft)}px`;
       // Match the total text height, excluding the picture and the page-break gap.
       const rawHeight = sources.length > 1 ? sources.reduce((sum, p) => {
         const local = this._geometry(p.pageIndex);
@@ -680,7 +696,7 @@ ${STRUCTURE_CSS}
       }, 0) : (pct.height / 100) * pageH;
       // One-line boxes need space for the border; multiline prose follows its source
       // height. Unmapped legacy figure boxes must never dictate a caption's height.
-      const target = Math.max(metrics.lineHeight + 6, sources.length > 1 ? Math.min(rawHeight, Math.max(0, visibleBottom - visibleTop) * 0.5) : rawHeight);
+      const target = Math.min(visibleHeight, Math.max(metrics.lineHeight + 6, sources.length > 1 ? Math.min(rawHeight, visibleHeight * 0.5) : rawHeight));
       const units = [...box.querySelectorAll(".dr-layout-unit")];
       if (units.length) {
         box.style.textIndent = "0";
@@ -716,19 +732,18 @@ ${STRUCTURE_CSS}
         box.dataset.scale = scale.toFixed(2);
       }
       else box.dataset.scale = "1.00";
-      box.dataset.overflow = String(box.scrollHeight > box.clientHeight + 1);
       if (sources.length > 1) {
         box.dataset.continuationCount = String(sources.length);
         box.title = DeepRead.bilingual(`已合并 ${sources.length} 处续段的完整译文`, `Complete translation of ${sources.length} interrupted fragments`);
-      }
-      if (box.dataset.overflow === "true") {
-        box.tabIndex = 0;
-        box.title = [box.title, DeepRead.bilingual("译文较长，可在框内滚动查看全文", "Scroll inside to read the full translation")].filter(Boolean).join(" · ");
       }
       box.addEventListener("wheel", (event) => { event.stopPropagation(); }, { passive: true });
       box.addEventListener("pointerdown", (event) => event.stopPropagation());
       box.addEventListener("pointerup", (event) => event.stopPropagation());
       box.addEventListener("pointerenter", () => clearTimeout(this._timers.hide));
+      box.addEventListener("focusin", () => clearTimeout(this._timers.hide));
+      box.addEventListener("focusout", (event) => {
+        if (!box.contains(event.relatedTarget)) this._scheduleHide();
+      });
 
       let side;
       if (!visual && pct.width <= 60 && this.isTwoColumn(paragraph.pageIndex)) {
@@ -740,8 +755,12 @@ ${STRUCTURE_CSS}
       else {
         box.style.left = `${pct.left}%`;
         const height = box.offsetHeight;
-        const spaceBelow = (sources.length > 1 ? visibleBottom : pageH) - pageH * (pct.top + pct.height + gapPct) / 100;
-        const spaceAbove = pageH * ((pct.top - gapPct) / 100) - (sources.length > 1 ? visibleTop : 0);
+        const spaceBelow = visibleBottom - pageH * (pct.top + pct.height + gapPct) / 100;
+        const spaceAbove = pageH * ((pct.top - gapPct) / 100) - visibleTop;
+        // Prefer a space next to the source. If neither side can hold even one
+        // line, use the viewport and let Escape expose the original immediately.
+        const sideSpace = Math.max(spaceBelow, spaceAbove);
+        if (sideSpace >= metrics.lineHeight + 6) box.style.maxHeight = `${Math.min(visibleHeight, sideSpace)}px`;
         if (height > spaceBelow && spaceAbove > spaceBelow) {
           side = "above";
           box.style.top = "";
@@ -753,10 +772,17 @@ ${STRUCTURE_CSS}
         }
       }
       box.dataset.side = side;
-      if (sources.length > 1) {
-        const top = box.offsetTop;
-        box.style.bottom = "";
-        box.style.top = `${Math.max(visibleTop, Math.min(top, visibleBottom - box.offsetHeight))}px`;
+      const top = box.offsetTop;
+      box.style.bottom = "";
+      box.style.top = `${Math.max(visibleTop, Math.min(top, visibleBottom - box.offsetHeight))}px`;
+      if (viewport) {
+        box.style.left = `${Math.max(visibleLeft, Math.min(box.offsetLeft, visibleRight - box.offsetWidth))}px`;
+      }
+      box.dataset.overflow = String(box.scrollHeight > box.clientHeight + 1 || box.scrollWidth > box.clientWidth + 1);
+      box.title = [box.title, DeepRead.bilingual("按 Esc 收起译文", "Escape to close")].filter(Boolean).join(" · ");
+      if (box.dataset.overflow === "true") {
+        box.tabIndex = 0;
+        box.title += " · " + DeepRead.bilingual("译文较长，可在框内滚动查看全文", "Scroll inside to read the full translation");
       }
       box.dataset.fontSize = parseFloat(box.style.fontSize).toFixed(2);
       box.style.visibility = "";
@@ -774,6 +800,16 @@ ${STRUCTURE_CSS}
     /* ---------- hover handling ---------- */
 
     _onKey(event) {
+      if (event.type === "keydown" && event.key === "Escape" && this.trPara) {
+        this._suppressPara = this.trPara;
+        this.trPara = null;
+        clearTimeout(this._timers.translation);
+        clearTimeout(this._timers.show);
+        this._clearTransient();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const alt = event.type === "blur" ? false : !!event.altKey;
       if (alt === this.altDown) return;
       this.altDown = alt;
@@ -843,7 +879,7 @@ ${STRUCTURE_CSS}
     _scheduleHide() {
       clearTimeout(this._timers.hide);
       this._timers.hide = setTimeout(() => {
-        if (this._cardHovered) return;
+        if (this._cardHovered || this.pdfDoc?.activeElement?.closest?.(".dr-translation")) return;
         this.hoverPara = null;
         this.trPara = null;
         this._clearTransient();

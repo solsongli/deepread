@@ -16,6 +16,9 @@
 .deepread-toolbar .dr-run .dr-run-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: #3b82f6; transition: width .3s; }
 .deepread-toolbar .dr-run.dr-ready::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #22c55e; }
 .deepread-toolbar .dr-menu-button { width: auto; padding: 0 7px; gap: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.deepread-toolbar .dr-focus-button { width: auto; padding: 0 7px; font-size: 12px; white-space: nowrap; }
+.deepread-toolbar .dr-focus-button[aria-pressed="true"] { color: var(--fill-primary, #222); background: var(--fill-quinary, rgba(43,89,195,0.12)); box-shadow: inset 0 -2px #2b59c3; }
+.deepread-toolbar .dr-focus-button[hidden] { display: none; }
 .deepread-toolbar .dr-questions-button { width: auto; padding: 0 7px; font-size: 12px; font-weight: 600; white-space: nowrap; color: #6d28d9; }
 .deepread-toolbar .dr-questions-button[hidden] { display: none; }
 .deepread-toolbar .dr-guide-button { width: auto; padding: 0 7px; font-size: 12px; font-weight: 600; white-space: nowrap; color: #0f766e; }
@@ -369,7 +372,7 @@
     // Question-led reading: how many answers the reader has reached; opens the questions section.
     const questionsButton = h(doc, "button", {
       class: "toolbar-button dr-questions-button",
-      title: DeepRead.bilingual("阅读问题：已读到答案的问题数", "Reading questions: answers reached"),
+      title: DeepRead.bilingual("阅读问题：已浏览到出处的数量", "Reading questions: source locations reached"),
       onclick: () => DeepRead.Panes?.reveal(reader, "questions"),
     });
     const updateQuestions = () => {
@@ -397,7 +400,16 @@
       guideButton.classList.toggle("dr-ready", status === "ready");
       guideButton.setAttribute("aria-pressed", String(!!session.guidePanel?.isOpen));
     };
-    const container = h(doc, "div", { class: "deepread-toolbar" }, runButton, questionsButton, guideButton, menuButton);
+    const focusButton = h(doc, "button", {
+      class: "toolbar-button dr-focus-button",
+      title: DeepRead.bilingual("只展开当前段落；其他卡片保留摘要（仅本文）", "Open only the current paragraph; keep other cards as summaries (this paper)"),
+      onclick: () => session.setFocusReading(!session.focusReading),
+    }, DeepRead.bilingual("专注", "Focus"));
+    const updateFocus = () => {
+      focusButton.hidden = !session.hasResults || !DeepRead.Modules.enabled(session, "cards");
+      focusButton.setAttribute("aria-pressed", String(session.focusReading));
+    };
+    const container = h(doc, "div", { class: "deepread-toolbar" }, runButton, focusButton, questionsButton, guideButton, menuButton);
 
     const update = () => {
       const running = session.status === "running";
@@ -421,11 +433,13 @@
       }
       if (type === "change" || type === "progress") update();
       if (type === "modules" || type === "change") updateCount();
+      if (type === "modules" || type === "change" || type === "reading-view") updateFocus();
       if (type === "modules" || type === "change" || type === "questions") updateQuestions();
       if (type === "modules" || type === "change" || type === "guide" || type === "guidePanel") updateGuide();
     });
     update();
     updateCount();
+    updateFocus();
     updateQuestions();
     updateGuide();
     append(container);

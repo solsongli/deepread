@@ -81,6 +81,8 @@ E2E.run = async function () {
   win.resizeTo(1450, 1000);
   await reader.navigate({ pageIndex: 0 });
   await sleep(500);
+  check("scroll navigation dismisses the old translation", overlay.trPara === null && !overlay.pdfDoc.querySelector(".dr-translation"));
+  overlay.trPara = last; overlay.hoverPara = last;
   overlay._drawHover(last);
   const visibleBox = overlay.pdfDoc.querySelector(".dr-translation").getBoundingClientRect();
   const viewport = overlay.pdfDoc.getElementById("viewerContainer").getBoundingClientRect();

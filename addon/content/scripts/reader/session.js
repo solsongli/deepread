@@ -775,6 +775,17 @@
       return ["full", "key", "margin"].includes(depth) ? depth : "full";
     }
 
+    get focusReading() {
+      return this.userState.focusReading === true;
+    }
+
+    setFocusReading(enabled) {
+      this.userState.focusReading = !!enabled;
+      this._saveUserStateSoon();
+      this.rail?.refresh();
+      this._emit("reading-view");
+    }
+
     setSkimDepth(depth) {
       this.userState.skimDepth = depth;
       this._saveUserStateSoon();

@@ -98,6 +98,7 @@
     windows.add(win);
     win.MozXULElement.insertFTLIfNeeded("deepread.ftl");
     DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/styles/panes.css", "deepread-panes-css");
+    DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/styles/questions.css", "deepread-questions-css");
     DeepRead.util.injectStylesheet(win.document, "chrome://deepread/content/lib/katex/katex.min.css", "deepread-katex-css");
   };
 
@@ -111,6 +112,7 @@
     DeepRead.Toolbar.unregister();
     for (const win of windows) {
       win.document.getElementById("deepread-panes-css")?.remove();
+      win.document.getElementById("deepread-questions-css")?.remove();
       win.document.getElementById("deepread-katex-css")?.remove();
       win.document.querySelector('link[href="deepread.ftl"]')?.remove();
     }

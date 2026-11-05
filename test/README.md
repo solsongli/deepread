@@ -18,6 +18,17 @@ These fixtures do not require a downloaded demo dataset. End-to-end tests use is
 `.test-profile/`; run them sequentially. The historical full-pipeline fixture remains available below for
 reference comparisons.
 
+Reading comfort and question-pane regressions (no external service calls):
+
+```bash
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/typography.pdf" scripts/e2e.sh test/e2e/readingComfort.js
+E2E_SKIP_SERVICES=1 scripts/e2e.sh test/e2e/questionsPane.js
+```
+
+These exercise explicit card folding, per-paper focus mode, source navigation, bounded card scrolling,
+keyboard/focus behavior, note and question drafts, IME input, failed requests, narrow layouts and dark mode.
+The question pane uses a local session stub inside the real Zotero DOM; the card tests use an isolated PDF reader.
+
 ## 1. Legacy demo fixture (git-ignored output in `test/fixtures/demo/`)
 
 ```

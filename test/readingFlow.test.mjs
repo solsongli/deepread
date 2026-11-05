@@ -59,6 +59,17 @@ session._cardGroups = null;
 rail.openParagraph({ ...p1, pageIndex: 0 }, { toggle: true });
 assert.equal(rail.isOpen("p_0_0"), false, "clicking a follower toggles the same merged card");
 
+rail.openParagraph(block);
+rail.openParagraph({ ...p2, pageIndex: 0 });
+session.setFocusReading(true);
+assert.equal(rail.isOpen("p_0_0"), false, "focus mode folds earlier kept-open cards");
+assert.equal(rail.isOpen("p_0_2"), true, "focus mode retains the current card");
+rail.openParagraph(block);
+assert.equal(rail.isOpen("p_0_2"), false, "moving focus folds the previous card even with keepOpen enabled");
+assert.equal(rail.isOpen("p_0_0"), true);
+session.setFocusReading(false);
+assert.equal(prefs.get("cards.keepOpen"), true, "per-paper focus does not change the global keep-open preference");
+
 const defaults = D.Highlights.defaults(pages, (key) => key === "p_0_2" ? "result" : "background");
 assert.deepEqual([...defaults], ["0_2_point_0"], "legacy fallback is sparse and prefers evidence");
 assert.equal(session.pointLevel(p0.points[0]), 2, "old results show a suggestion without rerunning AI");
