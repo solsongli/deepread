@@ -12,8 +12,8 @@ DeepRead.Store = {
   SCHEMA_VERSION: 1,
   db: null,
 
-  JSON_FIELDS: ["hierarchical_data", "article_summary", "block_mapping", "sections", "user_state", "content_list", "explanations", "figure_guides", "questions", "glossary", "guide"],
-  TEXT_FIELDS: ["result_dir", "language", "markdown", "github_url"],
+  JSON_FIELDS: ["hierarchical_data", "article_summary", "block_mapping", "sections", "user_state", "content_list", "explanations", "figure_guides", "questions"],
+  TEXT_FIELDS: ["result_dir", "language", "markdown"],
 
   async init() {
     this.db = new Zotero.DBConnection("deepread");
@@ -38,18 +38,15 @@ DeepRead.Store = {
       block_mapping TEXT,
       sections TEXT,
       markdown TEXT,
-      github_url TEXT,
       user_state TEXT,
       explanations TEXT,
       figure_guides TEXT,
       questions TEXT,
-      glossary TEXT,
-      guide TEXT,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
     )`);
     // Migrate databases created before these columns existed.
-    for (const column of ["explanations", "figure_guides", "questions", "glossary", "guide"]) {
+    for (const column of ["explanations", "figure_guides", "questions"]) {
       const has = await this.db.valueQueryAsync(`SELECT COUNT(*) FROM pragma_table_info('papers') WHERE name = '${column}'`);
       if (!Number(has)) await this.db.queryAsync(`ALTER TABLE papers ADD COLUMN ${column} TEXT`);
     }
@@ -57,6 +54,10 @@ DeepRead.Store = {
       attachment_key TEXT PRIMARY KEY,
       messages TEXT,
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    )`);
+    await this.db.queryAsync(`CREATE TABLE IF NOT EXISTS comparison_cache (
+      attachment_key TEXT NOT NULL, slot TEXT NOT NULL, fingerprint TEXT NOT NULL, payload TEXT NOT NULL,
+      PRIMARY KEY (attachment_key, slot)
     )`);
     await this.db.queryAsync(
       "INSERT OR REPLACE INTO version (schema, version) VALUES ('deepread', ?)",
@@ -110,7 +111,8 @@ DeepRead.Store = {
   },
 
   async getPaper(attachmentKey) {
-    const rows = await this.db.queryAsync("SELECT * FROM papers WHERE attachment_key = ?", [attachmentKey]);
+    const fields = ["attachment_key", "item_id", "updated_at", ...this.TEXT_FIELDS, ...this.JSON_FIELDS];
+    const rows = await this.db.queryAsync(`SELECT ${fields.join(", ")} FROM papers WHERE attachment_key = ?`, [attachmentKey]);
     return rows && rows.length ? this._decodeRow(rows[0]) : null;
   },
 
@@ -147,6 +149,7 @@ DeepRead.Store = {
   },
 
   async deletePaper(attachmentKey) {
+    await this.deleteComparisonData(attachmentKey);
     await this.db.queryAsync("DELETE FROM papers WHERE attachment_key = ?", [attachmentKey]);
     await this.db.queryAsync("DELETE FROM chats WHERE attachment_key = ?", [attachmentKey]);
     const dir = PathUtils.join(this.resultRoot(), attachmentKey);
@@ -156,6 +159,25 @@ DeepRead.Store = {
     catch (e) {
       DeepRead.log("failed to remove result dir", dir, String(e));
     }
+  },
+
+  async hasComparisonData(key) {
+    return !!(await this.db.valueQueryAsync("SELECT 1 FROM comparison_cache WHERE attachment_key=? LIMIT 1", [key]));
+  },
+
+  async deleteComparisonData(key) {
+    await this.db.queryAsync("DELETE FROM comparison_cache WHERE attachment_key=?", [key]);
+  },
+
+  async comparisonData(key, fingerprint, slot) {
+    if (!fingerprint) return null;
+    const raw = await this.db.valueQueryAsync("SELECT payload FROM comparison_cache WHERE attachment_key=? AND fingerprint=? AND slot=?", [key, fingerprint, slot]);
+    return raw ? JSON.parse(raw) : null;
+  },
+
+  async saveComparisonData(key, fingerprint, slot, data) {
+    if (fingerprint) await this.db.queryAsync("INSERT OR REPLACE INTO comparison_cache (attachment_key, fingerprint, slot, payload) VALUES (?, ?, ?, ?)",
+      [key, fingerprint, slot, JSON.stringify(data)]);
   },
 
   async getChat(attachmentKey) {

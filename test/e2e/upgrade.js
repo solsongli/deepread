@@ -25,7 +25,7 @@ E2E.run = async function () {
     buttons: [...doc.querySelectorAll(".deepread-toolbar button")].map((b) => b.textContent.trim()),
   });
 
-  const OLD = await waitFor(() => Zotero.DeepRead, 15000, "plugin");
+  const OLD = await waitFor(() => Zotero.DeepRead?.Panes?.paneIDs?.chat && Zotero.DeepRead, 15000, "plugin");
   let item = (await Zotero.Items.getAll(Zotero.Libraries.userLibraryID)).find((i) => i.isPDFAttachment() && !i.deleted && i.attachmentFilename === "demo-paper.pdf");
   if (!item) item = await Zotero.Attachments.importFromFile({ file: Zotero.File.pathToFile(E2E.env("DEEPREAD_E2E_PDF")), libraryID: Zotero.Libraries.userLibraryID });
   await Zotero.Reader.open(item.id);
@@ -35,6 +35,10 @@ E2E.run = async function () {
   await waitFor(() => doc.querySelector(".deepread-toolbar"), 10000, "toolbar before upgrade");
   doc.querySelector(".deepread-toolbar").dataset.e2e = "old";
   step("before", { version: OLD.version, ...describe(doc) });
+  const attachmentKey = OLD.util.attachmentKey(item);
+  const legacy = OLD.Store.JSON_FIELDS.includes("guide");
+  if (legacy) await OLD.Store.savePaper(attachmentKey, item.id, { guide: { markdown: { card: "old export" } },
+    user_state: { modules: { guided: true }, notes: { p_0_0: { text: "My original note" } } } });
 
   const errors = [];
   const listener = { observe: (m) => { if (/deepread/i.test(String(m.message || m))) errors.push(String(m.message || m).slice(0, 300)); } };
@@ -52,9 +56,17 @@ E2E.run = async function () {
     await sleep(300);
     const m = doc.querySelector(".deepread-menu");
     menu = m ? [...m.querySelectorAll("button")].map((b) => b.textContent) : null;
-    m?.remove();
+    button.click();
   }
   const replaced = !doc.querySelector('.deepread-toolbar[data-e2e="old"]');
+  if (after.toolbars !== 1 || !replaced || !menu) throw new Error("Reader toolbar was not replaced on upgrade");
+  if (legacy && NEW.ParallelPage) {
+    const saved = await NEW.Store.getPaper(attachmentKey);
+    const archived = await NEW.Store.db.valueQueryAsync("SELECT guide FROM papers WHERE attachment_key=?", [attachmentKey]);
+    if (saved?.user_state?.notes?.p_0_0?.text !== "My original note" || JSON.parse(archived)?.markdown?.card !== "old export"
+        || NEW.AgentRunner || doc.querySelector('.dr-guide-button') || !doc.querySelector('.dr-parallel-button')) throw new Error("Guide retirement or data preservation failed");
+    step("reader and notes migrated", true);
+  }
   step("after", { version: NEW.version, started: !!NEW.prefPaneID, ...after, replaced, menu, errors: errors.filter((e) => !/DEBUG/.test(e)).slice(0, 8) });
   return { ok: after.toolbars === 1 && replaced };
 };

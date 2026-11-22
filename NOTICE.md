@@ -37,6 +37,10 @@ These parts are MIT-licensed, Copyright (c) 2026 RetainPDF contributors. The ful
 [`addon/content/lib/retainpdf/LICENSE`](addon/content/lib/retainpdf/LICENSE).
 DeepRead's fixed translation-unit protocol and Zotero DOM renderer are implemented in this plugin.
 
+The facing-page view also ships three unmodified JavaScript files from the [RetainPDF v2026.11.22 release](https://github.com/wxyhgk/retain-pdf/releases/tag/v2026.11.22), commit `8bc2f61ebd900d091779405bb5746f8d681cc981`. Its [rendering-engine manifest](https://github.com/wxyhgk/retain-pdf/blob/8bc2f61ebd900d091779405bb5746f8d681cc981/backend/rendering-engine/UPSTREAM) pins `retain-pdf-rendering` to `f7f2f2edd48cf93902c4f6f11fd86ad6665067c9`. The files `src/text/linebreak.js`, `src/text/uax14-data.js` and `src/fit-model/rects.js` are packaged in `addon/content/lib/retainpdf/rendering/`. Copyright (c) 2026 SRT117, [MIT license](addon/content/lib/retainpdf/rendering/LICENSE). The line-breaking code and data use linebreak 1.1.0, Copyright (c) 2014-present Devon Govett, [MIT license](addon/content/lib/retainpdf/rendering/LICENSE-linebreak).
+
+DeepRead supplies PDF.js page geometry, local font measurements, translated source units, protected graphics and the Zotero reading interface. Formula markup is rendered with the existing KaTeX library.
+
 ## Vendored third-party libraries
 
 Copies of these files are shipped inside the add-on under `addon/content/lib/`.

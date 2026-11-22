@@ -1,0 +1,43 @@
+// Source frame ownership, protected graphics and reuse of physical translations.
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const scope = vm.createContext({ DeepRead: { bilingual: (zh) => zh } });
+const load = (file) => vm.runInContext(readFileSync(new URL('../addon/content/' + file, import.meta.url), 'utf8'), scope);
+load('lib/retainpdf/rendering/rects.js');
+for (const name of ['services/typography','services/translationLayout','services/continuations','reader/overlay','services/parallelPage']) load('scripts/' + name + '.js');
+const D = scope.DeepRead;
+D.ParallelTypeset = { engine: () => scope.RetainPdfRendering };
+const view = [20, 30, 220, 230];
+const frame = { id: 4, type:'text', page_idx:0, text:'Measured on a small sample.', bbox:[100,100,900,150] };
+const opts = { view, items:[frame], chars:[] };
+const scan = D.ParallelPage.plan(opts);
+assert.deepEqual(Array.from(scan[0].rect), [40,200,200,210]);
+assert.equal(scan[0].placed,true,'OCR geometry accounts for a non-zero crop origin');
+const conflict = D.ParallelPage.plan({...opts,items:[frame,{id:5,type:'equation',bbox:[120,110,160,145]}]});
+assert.equal(conflict[0].placed,false,'text cannot obscure a formula');
+const mismatch = D.ParallelPage.plan({...opts,chars:[{u:'Z',rect:[50,199,57,210],fontSize:10}]});
+assert.equal(mismatch[0].placed,false,'an OCR box covering different PDF text stays unpainted');
+const fig={id:7,page_idx:0,type:'image',image_caption:['Fig. 1. Example.'],bbox:[80,120,400,750]};
+assert.equal(D.ParallelPage.plan({...opts,items:[fig]})[0].placed,false,'never erase a whole image to replace an unlocatable caption');
+const old={pageIndex:0,paragraphIndex:5,paragraphText:frame.text,paragraphType:'text',bbox:frame.bbox,points:[{translation:'物理段译文。'}]};
+const combined={keys:['p_0_5','p_1_0'],translation:'首段接下页。',fragments:[{key:'p_0_5',text:'首段'},{key:'p_1_0',text:'接下页。'}]};
+const plan=(extra={})=>D.ParallelPage.plan({view,paragraphs:[old],chars:[],...extra});
+assert.equal(plan({continuationFor:()=>combined})[0].translation,'首段');
+assert.equal(plan({continuationFor:()=>({...combined,fragments:undefined})})[0].translation,'物理段译文。','legacy joined text is not duplicated into both columns/pages');
+assert.equal(plan({reuse:false,continuationFor:()=>combined})[0].translation,'','do not reuse a different target language');
+const context = D.ParallelPage.interruptedContext([{...frame,text:'The measurement depends on the',bbox:[100,790,480,880]},
+  {...frame,page_idx:1,text:'sampling interval of the instrument.',bbox:[100,100,480,210]}],0);
+assert.equal(context.get('themeasurementdependsonthe')[1], 'sampling interval of the instrument.', 'supply context across an interrupted sentence');
+scan[0].translation='测量小样本。';
+const saved=D.ParallelPage.records(scan);const updated=D.ParallelPage.plan({...opts,items:[{...frame,text:'A different source.'}]});
+D.ParallelPage.hydrate(updated,saved);assert.equal(updated[0].translation,'','numeric IDs alone cannot recover a translation');
+const units=D.ParallelPage.plan(opts);D.ParallelPage.hydrate(units,saved);assert.equal(units[0].translation,'测量小样本。');
+const pending = Array.from({length:6},(_,i)=>({source:`Paragraph ${i}`,styled:`Paragraph ${i}`,translation:''}));
+let calls=0;
+await assert.rejects(D.ParallelPage.translate(pending,{language:'zh',signal:new AbortController().signal,request:async (args)=>{
+  const list=JSON.parse(args.messages[0].content.split('\n').slice(1).join('\n'));calls++;
+  return {content:JSON.stringify({translations:calls===2?[]:list.map(row=>({id:row.id,translation:'译文'}))})};
+}}));
+assert.equal(calls,2);assert.ok(pending.every(u=>u.translation===''),'a failed page cannot claim completion after a successful first batch');
+console.log('parallelPage: crop, graphic protection, physical continuation mapping, cache and atomic retries passed');

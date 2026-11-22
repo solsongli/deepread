@@ -28,7 +28,7 @@ E2E.run = async function () {
     step("screenshot", path);
   }
 
-  const DR = await waitFor(() => Zotero.DeepRead, 15000, "plugin");
+  const DR = await waitFor(() => Zotero.DeepRead?.prefPaneID && Zotero.DeepRead, 15000, "plugin preferences");
   const main = Zotero.getMainWindow();
   main.resizeTo(1600, 1000);
 
@@ -136,18 +136,15 @@ E2E.run = async function () {
     await sleep(300);
     if (profs().length !== 1 || Zotero.Prefs.get("deepread.llm.model") !== firstModel) throw new Error("delete/restore failed");
     if (!ok) throw new Error("profile switching failed");
-    // Parser + agent cards
+    // Parser cards and upgrade to the simplified settings pane
     doc.querySelector('#deepread-pref-parser-cards .deepread-card[data-value="selfhost"]').click();
     await sleep(200);
     const prov = Zotero.Prefs.get("deepread.parser.provider");
     doc.querySelector('#deepread-pref-parser-cards .deepread-card[data-value="builtin"]').click();
-    doc.querySelector('#deepread-pref-agent-cards .deepread-card[data-value="codex"]').click();
-    await sleep(200);
-    click("deepread-pref-agent-detect");
-    await sleep(1500);
-    step("prefs-cards", { provider: prov, agentKind: Zotero.Prefs.get("deepread.agent.kind"), detect: doc.getElementById("deepread-pref-agent-status").value });
+    const agentRemoved = !doc.getElementById("deepread-pref-agent-cards") && !doc.getElementById("deepread-pref-mod-guided");
+    step("prefs-cards", { provider: prov, agentRemoved });
+    if (!agentRemoved) throw new Error("obsolete agent controls are still present");
     if (prov !== "selfhost") throw new Error("parser card did not set provider");
-    doc.querySelector('#deepread-pref-agent-cards .deepread-card[data-value="none"]').click();
     await sleep(200);
   }
   const llmTest = root.querySelector("[id*='llm'][id*='test']");

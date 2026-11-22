@@ -94,7 +94,7 @@
       })) }));
       try {
         const response = await complete({
-          system: `Determine whether neighboring text fragments form ONE original paragraph interrupted by a page break or a floating figure/table. Geometry only nominates candidates; it is NOT evidence of semantic continuity. Join only when the second fragment completes the first sentence or clearly continues the same original paragraph. A common topic alone is not sufficient. Never merge new sections, independent paragraphs, captions, lists or references. When uncertain, leave separate. For every confirmed group, translate ALL source fragments together into ${language}, producing one coherent complete paragraph. Resolve line-end hyphenation by meaning; preserve terms, numbers, qualifiers and source **bold**/*italic*. Use concise language without omissions. Do not concatenate separately translated fragments. Return JSON only: {"groups":[{"keys":["p_0_1","p_1_0"],"translation":"complete jointly translated paragraph"}]}. Keys must be a contiguous subsequence of 2 or more parts of ONE candidate, in source order, and occur in only one group. Return {"groups":[]} if none qualify.`,
+          system: `Determine whether neighboring text fragments form ONE original paragraph interrupted by a page break or a floating figure/table. Geometry only nominates candidates; it is NOT evidence of semantic continuity. Join only when the second fragment completes the first sentence or clearly continues the same original paragraph. A common topic alone is not sufficient. Never merge new sections, independent paragraphs, captions, lists or references. When uncertain, leave separate. For every confirmed group, translate ALL source fragments together into ${language}, producing one coherent complete paragraph. Resolve line-end hyphenation by meaning; preserve terms, numbers, qualifiers and source **bold**/*italic*. Use concise language without omissions. Do not concatenate separately translated fragments. Return JSON only: {"groups":[{"keys":["p_0_1","p_1_0"],"translation":"complete jointly translated paragraph","fragments":[{"key":"p_0_1","text":"first part of that translation"},{"key":"p_1_0","text":"remaining part"}]}]}. Split that same translation at source-aligned semantic boundaries for the facing-page view. Each fragment must carry its own emphasis markers. Together the parts must reproduce the entire translation, without repeating any text. Keys must be a contiguous subsequence of 2 or more parts of ONE candidate, in source order, and occur in only one group. Return {"groups":[]} if none qualify.`,
           messages: [{ role: "user", content: `Interrupted paragraph candidates (JSON):\n${JSON.stringify(payload)}` }],
           responseFormat: { type: "json_object" }, temperature: 0.1, maxTokens: 8192, signal,
         });
@@ -109,6 +109,13 @@
           if (!unit) continue;
           const lead = keys[0];
           byKey.get(lead).continuation = { lead, keys: [...keys], translation, version: 1 };
+          const fragments = group.fragments;
+          const wording = (text) => text.replace(/\s/gu, "");
+          if (Array.isArray(fragments) && fragments.length === keys.length
+              && fragments.every((part, i) => part?.key === keys[i] && typeof part.text === "string" && part.text.trim())
+              && wording(fragments.map((p) => p.text).join("")) === wording(translation)) {
+            byKey.get(lead).continuation.fragments = fragments.map((part) => ({ key: part.key, text: part.text.trim() }));
+          }
           for (const key of keys.slice(1)) byKey.get(key).continuation = { lead, version: 1 };
           for (const key of keys) used.add(key);
           count++;

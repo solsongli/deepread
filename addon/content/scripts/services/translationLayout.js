@@ -109,7 +109,7 @@
     return layout.units.map((u) => `${u.kind === "list-item" ? `${u.marker} ` : ""}${u.translation}`).join("\n\n");
   }
 
-  async function complete(paragraphs, { request, targetLang = "zh", signal } = {}) {
+  async function complete(paragraphs, { request, targetLang = "zh", signal, strict = false, contextFor } = {}) {
     const result = paragraphs.map((p) => ({ ...p, translationLayout: p.translationLayout }));
     const missing = [];
     result.forEach((p, i) => {
@@ -125,8 +125,11 @@
         id: `${i}:${u.id}`, kind: u.kind, source_text: u.styledText || u.sourceText,
       })));
       try {
+        const messages = [{ role: "user", content: `Source layout units (JSON):\n${JSON.stringify(items)}` }];
+        const context = contextFor?.(indices);
+        if (context?.length) messages.push({ role: "user", content: `Neighbouring source fragments in reading order (JSON):\n${JSON.stringify(context)}\nIf the fragments form a sentence interrupted by a page break or figure, translate it in context. Return only the part belonging to each requested unit ID.` });
         const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Each unit is an original paragraph or list item. Return exactly one translation per id. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers. Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. JSON only: {"translations":[{"id":"0:u0","translation":"..."}]}.`,
-          messages: [{ role: "user", content: `Source layout units (JSON):\n${JSON.stringify(items)}` }], responseFormat: { type: "json_object" }, temperature: 0.1, signal });
+          messages, responseFormat: { type: "json_object" }, temperature: 0.1, signal });
         if (signal?.aborted) { const e = new Error("Aborted"); e.name = "AbortError"; throw e; }
         const text = String(response?.content || "").replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "").replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
         const translations = JSON.parse(text).translations;
@@ -135,10 +138,11 @@
           const candidate = translations.filter((t) => typeof t.id === "string" && t.id.startsWith(`${i}:`)).map((t) => ({ unit_id: t.id.slice(String(i).length + 1), translation: t.translation }));
           const accepted = accept(result[i].translationLayout, candidate);
           if (accepted) result[i].translationLayout = accepted;
+          else if (strict) throw new Error(DeepRead.bilingual("模型未按段落返回完整译文", "Model returned incomplete translation units"));
         }
       }
       catch (error) {
-        if (error?.name === "AbortError" || signal?.aborted) throw error;
+        if (strict || error?.name === "AbortError" || signal?.aborted) throw error;
         DeepRead.log?.("layout translation unavailable; retaining original text", String(error));
       }
     }

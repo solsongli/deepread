@@ -18,11 +18,6 @@
 
 
 
-  /** Which 带读 step a card note belongs to. */
-  function note0Step(note) {
-    return { component: 3, hedge: 4, claim: 4, move: 2 }[note?.kind] || 1;
-  }
-
   function el(doc, tag, cls, text) {
     const node = doc.createElementNS(HTML_NS, tag);
     if (cls) node.className = cls;
@@ -647,8 +642,7 @@
       const levels = paras.flatMap((p) => p.points || []).map((pt) => this.session.pointLevel(pt)).join("");
       const skim = this.session.skimDepth === "full" ? "" : `${this.session.skimDepth}:${this.session.skimTiers().tier.get(item.key) || ""}`;
       const questions = (this.session.questionsForKey?.(item.key) || []).map((q) => q.id).join(",");
-      const guided = this.session.guide && DeepRead.Modules.enabled(this.session, "guided") ? this.session.guide.meta?.finishedAt || 1 : "";
-      return `p|${keys.join(",")}|${this.session.groupTitle(item.key)}|${this.session.highlightColors().join("")}|${skim}|${questions}|${guided}`
+      return `p|${keys.join(",")}|${this.session.groupTitle(item.key)}|${this.session.highlightColors().join("")}|${skim}|${questions}`
         + `|${this.session.focusReading}`
         + `|${keys.map((k) => this.session.needsReview(k)).join(",")}`
         + `|${this.isCollapsed(item.key)}`
@@ -919,24 +913,6 @@
         node.append(missing);
       }
 
-      // Guided reading's judgements on these paragraphs (load-bearing, hedging, claim status).
-      const guideNotes = session.guideNotesForKey?.(key) || [];
-      if (guideNotes.length) {
-        const box = el(doc, "div", "dr-guide-notes");
-        for (const note of guideNotes.slice(0, 4)) {
-          const row = el(doc, "div", `dr-guide-note dr-gn-${note.kind}`);
-          row.append(el(doc, "span", "dr-gn-label", note.label));
-          if (note.text) row.append(el(doc, "span", "dr-gn-text", note.text));
-          box.append(row);
-        }
-        box.title = DeepRead.bilingual("来自带读 · 点击打开带读", "From the guided reading · click to open it");
-        box.addEventListener("click", (e) => {
-          e.stopPropagation();
-          session.guidePanel?.open(note0Step(guideNotes[0]));
-        });
-        node.append(box);
-      }
-
       const points = paras.flatMap((p) => (p.points || []).map((point) => ({ point, owner: p })));
       if (points.length) {
         const list = el(doc, "ul", "dr-points");
@@ -1050,7 +1026,7 @@
         else if (e.key === "Escape") onCancel();
       });
       area.addEventListener("input", () => this.schedule(true));
-      const buttons = el(doc, "div", "dr-fc-buttons");
+      const buttons = el(doc, "div", "dr-note-buttons");
       this._button(buttons, DeepRead.bilingual("保存", "Save"), "", () => onSave(area.value)).classList.add("dr-primary");
       this._button(buttons, DeepRead.bilingual("取消", "Cancel"), "", () => onCancel());
       wrap.append(area, buttons);

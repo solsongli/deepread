@@ -4,6 +4,13 @@ Run the whole DeepRead pipeline inside Zotero without real MinerU / LLM services
 
 ## Self-contained reading fixtures
 
+The original-layout reader has a three-page fixture covering two columns, lists, a protected figure and equation, a rotated crop box and an OCR-only page. Run its native end-to-end checks with:
+
+```bash
+python3 -E test/build-parallel-fixture.py
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/parallel.pdf" scripts/e2e.sh test/e2e/parallelTranslation.js
+```
+
 Current layout and reading-flow regressions generate their own small PDFs locally:
 
 ```bash

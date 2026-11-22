@@ -22,10 +22,7 @@ function lastUserText(messages) {
 }
 
 function detect(t) {
-  if (/Guide source \(Markdown\):/.test(t)) return 'guide';
-  if (/Paper \(Markdown\):/.test(t)) return 'guideApi';
   if (/Figures to explain \(JSON\):/.test(t)) return 'figures';
-  if (/Paper blocks for the glossary \(JSON\):/.test(t)) return 'glossary';
   if (/Question to answer:/.test(t) && /Paper blocks \(JSON\):/.test(t)) return 'ask';
   if (/Paper blocks \(JSON\):/.test(t)) return 'questions';
   if (/Paragraphs to explain \(JSON\):/.test(t)) return 'explain';
@@ -190,9 +187,9 @@ function buildExplain(t) {
   return { obj: { explanations }, info: `items=${items.length}` };
 }
 
-// ---- question-led reading, free questions, glossary ----
+// ---- question-led reading, free questions ----
 function requestBlocks(t) {
-  const m = /Paper blocks(?: for the glossary)? \(JSON\):\s*(\{.*\})/.exec(t);
+  const m = /Paper blocks \(JSON\):\s*(\{.*\})/.exec(t);
   try { return JSON.parse(m[1]).blocks || []; } catch { return []; }
 }
 
@@ -211,94 +208,6 @@ function buildQuestions(t) {
 function buildAsk(t) {
   const keys = requestBlocks(t).map((b) => String(b.key));
   return { obj: { answer: '（fake）论文在相关段落中回答了这个问题：核心思路是用注意力替代循环结构。', keys: keys.slice(0, 2) }, info: `blocks=${keys.length}` };
-}
-
-function buildGlossary(t) {
-  const keys = requestBlocks(t).map((b) => String(b.key));
-  const k = (i) => keys[Math.min(i, keys.length - 1)] || '';
-  return {
-    obj: {
-      symbols: [
-        { symbol: 'd_k', forms: ['dk', 'd_k'], meaning: '键向量的维度，用于缩放点积。', key: k(0) },
-        { symbol: 'QK^T', forms: ['QKT', 'QK^T'], meaning: '查询与键的点积矩阵。', key: k(1) },
-      ],
-      terms: [
-        { term: 'self-attention', aliases: ['intra-attention'], definition: '序列内每个位置都与其他位置计算相关性的注意力机制。', key: k(0) },
-        { term: 'Transformer', aliases: [], definition: '完全基于注意力的序列转换模型架构。', key: k(1) },
-        { term: 'multi-head attention', aliases: [], definition: '并行运行多组注意力并拼接结果。', key: k(2) },
-      ],
-    },
-    info: `blocks=${keys.length}`,
-  };
-}
-
-// ---- guided reading (带读): Stage A via API, Stage B structure ----
-function buildGuideApi(t) {
-  const card = ['基本信息', '一句话总结', '研究问题', '背景与脉络', '核心痛点', '核心想法', '方法概览', '模块拆解', '关键公式', '证据链', '结论的正确读法', '作者自述局限', '批判性分析', '我学到了什么', '与已有知识的联系', '研究想法']
-    .map((n, i) => `## ${String(i + 1).padStart(2, '0')} ${n}\n\n（fake）${n}：见 [p. 1 ¶${(i % 3) + 1}]。`).join('\n\n');
-  const xray = '# （fake）论文 X 光\n\n## 研究路径\n\n作者认为循环结构限制了并行 [p. 1 ¶2]，因此改用注意力 [p. 1 ¶3]。\n\n## 证据边界\n\n实验只覆盖机器翻译，可能 (likely) 不能推广 [p. 1 ¶1]。';
-  return { obj: { xray, card }, info: `chars=${t.length}` };
-}
-
-function buildGuide(t) {
-  const keys = requestBlocks(t).map((b) => String(b.key));
-  const k = (i) => (keys.length ? [keys[Math.min(i, keys.length - 1)]] : []);
-  const obj = {
-    type: 'algorithmic',
-    position: {
-      claim: '（fake）作者主张用注意力取代循环结构，在翻译任务上更好且更易并行。',
-      path: [
-        { step: '什么失效了', text: '循环结构难以并行。', basis: 'source', keys: k(0) },
-        { step: '作者押了什么', text: '只用注意力建模依赖。', basis: 'source', keys: k(1) },
-        { step: '押注靠什么撑住', text: '翻译实验与消融。', basis: 'inference', keys: k(2) },
-      ],
-      focus: ['消融是否公平', '训练预算'],
-      order: [{ text: '方法部分', minutes: 10, keys: k(1) }, { text: '实验部分', minutes: 15, keys: k(2) }],
-      questions: ['为什么注意力足够？', '消融证明了什么？', '能否推广到其他任务？'],
-    },
-    skeleton: {
-      moves: [
-        { role: 'gap', text: '循环模型难以并行。', keys: k(0), status: 'proven' },
-        { role: 'contribution', text: '提出 Transformer。', keys: k(1), status: 'proven' },
-        { role: 'claim', text: '效果更好且训练更快。', keys: k(2), status: 'partial' },
-        { role: 'limitation', text: '仅在翻译上验证。', keys: [], status: 'unproven' },
-      ],
-      terms: [{ term: 'self-attention', translation: '自注意力', variants: ['intra-attention'] }],
-    },
-    method: {
-      components: [
-        { name: '自注意力', verdict: 'load-bearing', basis: '消融中去掉后明显下降。', keys: k(1) },
-        { name: '多头', verdict: 'contributing', basis: '头数消融有小幅增益。', keys: k(2) },
-        { name: '位置编码形式', verdict: 'decorative', basis: '两种形式结果接近。', keys: k(0) },
-      ],
-      insight: { surface: '用注意力替代循环', core: '任意两位置直接交互', transferable: '可用于其他序列任务' },
-      formulas: [{
-        latex: '\\mathrm{softmax}(QK^T/\\sqrt{d_k})V',
-        purpose: '缩放点积注意力',
-        symbols: [{ symbol: 'd_k', shape: 'scalar', meaning: '键维度' }],
-        example: '取 $d_k=4$，得分 $[2,0]$，缩放后 $[1,0]$，softmax 约为 $[0.73,0.27]$。',
-        keys: k(1),
-      }],
-    },
-    evidence: {
-      chain: [
-        { claim: '效果更好', evidence: 'WMT BLEU 提升', supports: '翻译任务', notSupports: '其他任务', status: 'proven', keys: k(2) },
-        { claim: '训练更快', evidence: '只报告了训练成本', supports: '同等硬件', notSupports: '一般结论', status: 'partial', keys: k(2) },
-        { claim: '可推广', evidence: '无', supports: '', notSupports: '', status: 'unproven', keys: [] },
-      ],
-      checks: [{ text: '基线预算是否一致？', effect: 'weakens', state: 'open' }],
-      hedges: [{ quote: 'likely', strength: 'speculative', note: '作者对原因的推测。', keys: k(0) }],
-    },
-    takeaway: {
-      summary: '（fake）注意力足以替代循环结构，但证据仅限翻译。',
-      learned: ['并行性是关键', '消融要看预算'],
-      ideas: [
-        { title: '换任务验证', basis: '证据边界', hypothesis: '在其他任务上同样成立', test: '跑一个新任务', risk: '可能不成立' },
-        { title: '简化位置编码', basis: '装饰性组件', hypothesis: '可以去掉', test: '消融', risk: '长序列退化' },
-      ],
-    },
-  };
-  return { obj, info: `blocks=${keys.length}` };
 }
 
 // ---- author filter: keep everything ----
@@ -343,7 +252,7 @@ http.createServer(async (req, res) => {
       content = JSON.stringify({ question: '这段话为什么重要？(fake)', answer: '因为它提出了 **注意力** 机制，复杂度为 $O(n^2)$。(fake)' });
     }
     else {
-      const r = { page: buildPage, article_summary: buildArticle, outline: buildOutline, filter: buildFilter, explain: buildExplain, figures: buildFigures, questions: buildQuestions, ask: buildAsk, glossary: buildGlossary, guideApi: buildGuideApi, guide: buildGuide }[kind](text);
+      const r = { page: buildPage, article_summary: buildArticle, outline: buildOutline, filter: buildFilter, explain: buildExplain, figures: buildFigures, questions: buildQuestions, ask: buildAsk }[kind](text);
       content = JSON.stringify(r.obj);
       info = r.info;
     }

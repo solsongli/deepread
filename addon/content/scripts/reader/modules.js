@@ -15,7 +15,6 @@ DeepRead.Modules = {
     { key: "figureCards", pref: "view.figureCards", zh: "图表卡片", en: "Figure cards", hintZh: "图表成卡，附读图步骤", hintEn: "Figures as cards with reading steps" },
     { key: "skim", pref: "view.skim", zh: "速读分层", en: "Skim layers", hintZh: "阅读深度：全文 / 重点 / 只看边注", hintEn: "Reading depth: full / key / margin only" },
     { key: "lookup", pref: "view.lookup", zh: "悬停查证", en: "Hover lookup", hintZh: "引用和图表引用", hintEn: "Citations and figure references" },
-    { key: "guided", pref: "view.guided", zh: "带读", en: "Guided reading", hintZh: "Agent 带读：定位 → 骨架 → 方法 → 证据 → 带走", hintEn: "Agent-guided: position → skeleton → method → evidence → takeaway" },
     { key: "questions", pref: "view.questions", zh: "问题导向", en: "Question-led reading", hintZh: "5 个阅读问题，答案挂到卡片和结构条", hintEn: "Five reading questions, answers on cards and the section bar" },
   ],
 

@@ -149,8 +149,6 @@
       this.structureBar = DeepRead.StructureBar ? new DeepRead.StructureBar(this) : null;
       this.figureGuides = {}; // figure id → { title, steps: [{ text, panel }] }
       this.questions = null; // { items: [{ id, question, answer, keys, custom?, at }], at } — question-led reading
-      this.guide = null; // 带读: { position, skeleton, method, evidence, takeaway, markdown: { xray, card }, meta }
-      this.guideRun = null; // { status: "running" | "structuring" | "error", startedAt, log, error }
       // paragraph key → { text, role, at, members?, title? }: the "AI 讲解" shown as the card body. A card that
       // covers several consecutive paragraphs is stored on its first (lead) key with `members`; the other
       // members only hold { lead, role, at }.
@@ -226,6 +224,7 @@
       this.view = view;
 
       const stored = await DeepRead.Store.getPaper(this.key);
+      this.hasComparisonCache = await DeepRead.Store.hasComparisonData(this.key);
       this.userState = { pointImportance: {}, ...(stored?.user_state || {}) };
       if (stored?.hierarchical_data) {
         this.data = {
@@ -241,7 +240,6 @@
         this.explanations = stored.explanations || {};
         this.figureGuides = stored.figure_guides || {};
         this.questions = stored.questions || null;
-        this.guide = stored.guide || null;
         this.status = "ready";
       }
       else {
@@ -254,8 +252,6 @@
       this.structureBar?.attach(view);
       this.lookup = DeepRead.Lookup ? new DeepRead.Lookup(this) : null;
       this.lookup?.attach(view);
-      this.guidePanel = DeepRead.GuidePanel ? new DeepRead.GuidePanel(this) : null;
-      this.guidePanel?.attach(view);
       // Papers read before v0.9: write the questions once, in the background.
       if (this.data) this._autoGenerate();
       // Highlighter colours change the PDF highlights and the cards' key points.
@@ -270,10 +266,9 @@
     }
 
     destroy() {
+      this.comparison?.close(false);
       this._layoutAbort?.abort();
       this._continuationAbort?.abort();
-      this._guideAbort?.abort();
-      this.guidePanel?.detach();
       this._questionsAbort?.abort();
       this.lookup?.detach();
       for (const id of this._prefObservers || []) Zotero.Prefs.unregisterObserver(id);
@@ -339,6 +334,7 @@
     /* ---------- main flow ---------- */
 
     async run() {
+      this.comparison?.close(false);
       this._layoutAbort?.abort();
       this._continuationAbort?.abort();
       if (this.status === "running") {
@@ -506,11 +502,10 @@
     }
 
     async clearResults() {
+      this.comparison?.close(false);
+      this.comparison = null;
       this._layoutAbort?.abort();
       this._continuationAbort?.abort();
-      this._guideAbort?.abort();
-      this.guide = null;
-      this.guideRun = null;
       this.cancel();
       this._explainAbort?.abort();
       this._figureAbort?.abort();
@@ -524,6 +519,7 @@
       this.explanations = {};
       this.explaining.clear();
       await DeepRead.Store.deletePaper(this.key);
+      this.hasComparisonCache = false;
       this.data = null;
       this.chat = null;
       this.userState = { pointImportance: {} };
@@ -801,221 +797,6 @@
         });
       }
       return this._skim;
-    }
-
-    /* ---------- 带读 (guided reading, ③ Agent channel) ---------- */
-
-    get guideStatus() {
-      return this.guideRun?.status || (this.guide ? "ready" : "empty");
-    }
-
-    /** Is the ③ Agent channel set up for a run (import needs no setup)? */
-    agentConfigured() {
-      const kind = DeepRead.prefs.get("agent.kind") || "none";
-      if (kind === "api") return !!DeepRead.prefs.agentApiConfig().baseURL;
-      return ["codex", "claude", "import"].includes(kind);
-    }
-
-    _guideLog(text) {
-      if (!this.guideRun) return;
-      this.guideRun.log = `${this.guideRun.log || ""}${text}`.slice(-6000);
-      const now = Date.now();
-      if (now - (this._guideLogEmitted || 0) > 500) {
-        this._guideLogEmitted = now;
-        this._emit("guide");
-      }
-    }
-
-    _guideBlocks() {
-      return this.blocks().map((b) => ({ key: b.key, label: b.label, summary: b.summary }));
-    }
-
-    /** Run the guided reading with the configured agent (kind "import" opens the file picker instead). */
-    async runGuide() {
-      if (!this.hasResults) throw new Error(DeepRead.t("error.noParseData"));
-      if (this.guideRun && this.guideRun.status !== "error") return null;
-      const kind = DeepRead.prefs.get("agent.kind") || "none";
-      if (kind === "import") return this.pickGuideFile();
-      if (!this.agentConfigured()) {
-        throw Object.assign(new Error(DeepRead.bilingual("先在 设置 → ③ Agent 里选择带读用的 Agent", "Choose an agent in Settings → ③ Agent first")), { configError: true });
-      }
-      const controller = new AbortController();
-      this._guideAbort = controller;
-      const startedAt = Date.now();
-      this.guideRun = { status: "running", startedAt, log: "" };
-      this._emit("guide");
-      try {
-        let markdown;
-        let skills = [];
-        let model = "";
-        if (kind === "api") {
-          const config = DeepRead.prefs.agentApiConfig();
-          model = config.model;
-          const found = await DeepRead.AgentRunner.findSkills(this._agentSkillNames());
-          skills = found.map((s) => s.name);
-          let skillsText = "";
-          for (const s of found) skillsText += `\n\n# ${s.name}\n${await IOUtils.readUTF8(s.path).catch(() => "")}`;
-          this._guideLog(DeepRead.bilingual(`远程 API · ${model || "?"}：正在写精读长文和精读卡…\n`, `Remote API · ${model || "?"}: writing the long-read and paper card…\n`));
-          markdown = await DeepRead.Guide.writeWithApi({
-            hierarchicalData: this.data.hierarchicalData,
-            title: this.parentItem?.getField?.("title") || "",
-            paperContext: this.paperContext(),
-            targetLang: DeepRead.prefs.language(),
-            config,
-            signal: controller.signal,
-            skillsText,
-          });
-        }
-        else {
-          const result = await this._runLocalAgent(kind, controller.signal);
-          markdown = result.markdown;
-          skills = result.skills;
-        }
-        if (!markdown.xray && !markdown.card) throw new Error(DeepRead.bilingual("Agent 没有给出结果", "The agent returned nothing"));
-        await this._structureGuide(markdown, { kind, skills, model, startedAt, source: kind }, controller.signal);
-        return this.guide;
-      }
-      catch (e) {
-        if (controller.signal.aborted || e?.name === "AbortError") this.guideRun = null;
-        else this.guideRun = { ...(this.guideRun || {}), status: "error", error: DeepRead.util.formatError(e) };
-        throw e;
-      }
-      finally {
-        if (this.guideRun?.status === "running" || this.guideRun?.status === "structuring") this.guideRun = null;
-        this._emit("guide");
-      }
-    }
-
-    _agentSkillNames() {
-      return String(DeepRead.prefs.get("agent.skills") || "").split(",").map((s) => s.trim()).filter(Boolean);
-    }
-
-    /** Codex / Claude Code in a work directory under the data directory; returns its Markdown. */
-    async _runLocalAgent(kind, signal) {
-      const R = DeepRead.AgentRunner;
-      const skills = await R.findSkills(this._agentSkillNames());
-      const baseDir = PathUtils.join(Zotero.DataDirectory.dir, "deepread", "agent", this.key);
-      const workdir = await R.prepareWorkdir({
-        baseDir,
-        files: { "paper.md": DeepRead.Guide.paperMarkdown(this.data.hierarchicalData, { title: this.parentItem?.getField?.("title") || "" }) },
-      });
-      const prompt = DeepRead.Guide.agentPrompt({
-        workdir,
-        pdfPath: (await this.item.getFilePathAsync?.()) || this.item.getFilePath?.() || "",
-        skills,
-        targetLang: DeepRead.prefs.language(),
-      });
-      const skillsDir = skills.length ? PathUtils.parent(PathUtils.parent(skills[0].path)) : "";
-      const argv = R.buildArgv({ kind, command: String(DeepRead.prefs.get("agent.command") || "").trim(), prompt, workdir, skillsDir });
-      if (!PathUtils.isAbsolute?.(argv.file) && !argv.file.startsWith("/")) {
-        const exe = await R.findExecutable(argv.file);
-        if (!exe) throw new Error(DeepRead.bilingual(`找不到命令 ${argv.file}（可在 设置 → ③ Agent 里填完整路径）`, `Command not found: ${argv.file} (set the full path in Settings → ③ Agent)`));
-        argv.file = exe;
-      }
-      this._guideLog(`$ ${argv.file} … (${workdir})\n`);
-      const timeoutMs = Math.max(1, DeepRead.prefs.number("agent.timeoutMin", 10)) * 60000;
-      const result = await R.run({ argv, workdir, timeoutMs, signal, onOutput: (chunk) => this._guideLog(chunk) });
-      if (result.aborted || signal.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
-      const collected = await R.collect(workdir);
-      if (!collected.xray && !collected.card) {
-        const why = result.timedOut ? DeepRead.bilingual("超时", "timed out") : DeepRead.bilingual(`退出码 ${result.exitCode}`, `exit code ${result.exitCode}`);
-        throw new Error(DeepRead.bilingual(`Agent 没有写出 xray.md / paper-card.md（${why}）`, `The agent wrote neither xray.md nor paper-card.md (${why})`));
-      }
-      return { markdown: { xray: collected.xray, card: collected.card }, skills: skills.map((s) => s.name), workdir };
-    }
-
-    /** Stage B: the reading API turns the agent's Markdown into the five steps, linked to the paragraphs. */
-    async _structureGuide(markdown, meta, signal) {
-      this.guideRun = { ...(this.guideRun || { startedAt: Date.now(), log: "" }), status: "structuring" };
-      this._guideLog(DeepRead.bilingual("整理成带读五步…\n", "Organising into the five steps…\n"));
-      this._emit("guide");
-      const guide = await DeepRead.Guide.structure({
-        markdown,
-        blocks: this._guideBlocks(),
-        paperContext: this.paperContext(),
-        targetLang: DeepRead.prefs.language(),
-        signal,
-      });
-      this.guide = { ...guide, markdown, meta: { ...meta, finishedAt: Date.now() } };
-      this.guideRun = null;
-      this._saveSoon("guide");
-      this._emit("guide");
-      return this.guide;
-    }
-
-    /** Import an agent result produced elsewhere (Markdown or our guide JSON). */
-    async importGuide(path) {
-      if (!this.hasResults) throw new Error(DeepRead.t("error.noParseData"));
-      const text = await IOUtils.readUTF8(path);
-      const parsed = DeepRead.Guide.parseImported(text, this._guideBlocks().map((b) => b.key));
-      const meta = { kind: "import", skills: [], model: "", startedAt: Date.now(), source: PathUtils.filename(path) };
-      if (parsed.guide) {
-        this.guide = { ...parsed.guide, markdown: parsed.markdown, meta: { ...meta, finishedAt: Date.now() } };
-        this._saveSoon("guide");
-        this._emit("guide");
-        return this.guide;
-      }
-      const controller = new AbortController();
-      this._guideAbort = controller;
-      this.guideRun = { status: "structuring", startedAt: Date.now(), log: "" };
-      try {
-        return await this._structureGuide(parsed.markdown, meta, controller.signal);
-      }
-      catch (e) {
-        this.guideRun = controller.signal.aborted ? null : { status: "error", error: DeepRead.util.formatError(e), log: this.guideRun?.log || "" };
-        throw e;
-      }
-      finally {
-        this._emit("guide");
-      }
-    }
-
-    async pickGuideFile() {
-      const { FilePicker } = ChromeUtils.importESModule("chrome://zotero/content/modules/filePicker.mjs");
-      const fp = new FilePicker();
-      fp.init(Zotero.getMainWindow(), DeepRead.bilingual("导入带读结果", "Import a guided-reading result"), fp.modeOpen);
-      fp.appendFilter("Markdown / JSON", "*.md; *.markdown; *.json; *.txt");
-      fp.appendFilters(fp.filterAll);
-      if (await fp.show() !== fp.returnOK) return null;
-      return this.importGuide(fp.file);
-    }
-
-    cancelGuide() {
-      this._guideAbort?.abort();
-    }
-
-    /** Save the guided reading (five steps + paper card) as a child note of the paper. */
-    async saveGuideNote() {
-      if (!this.guide) return null;
-      const parent = this.parentItem;
-      const note = new Zotero.Item("note");
-      note.libraryID = this.item.libraryID;
-      if (parent && parent.id !== this.item.id) note.parentID = parent.id;
-      note.setNote(DeepRead.Guide.toNoteHTML(this.guide, this.guide.markdown || {}, { title: parent?.getField?.("title") || "" }));
-      await note.saveTx();
-      return note;
-    }
-
-    guideMarkdown() {
-      const md = this.guide?.markdown || {};
-      return [md.xray, md.card].filter(Boolean).join("\n\n---\n\n");
-    }
-
-    /** Guided-reading notes for a card (load-bearing judgement, hedging, claim status). */
-    guideNotesForKey(key) {
-      if (!this.guide || !DeepRead.Guide || !DeepRead.Modules.enabled(this, "guided")) return [];
-      const out = [];
-      const seen = new Set();
-      for (const k of this.groupMembers(key)) {
-        for (const note of DeepRead.Guide.notesForKey(this.guide, k)) {
-          const id = `${note.kind}|${note.label}|${note.text}`;
-          if (!seen.has(id)) {
-            seen.add(id);
-            out.push(note);
-          }
-        }
-      }
-      return out;
     }
 
     /* ---------- AI explanations (card bodies) ---------- */

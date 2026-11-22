@@ -55,11 +55,6 @@
 .deepread-rail .dr-trtoggle:hover { color: var(--dr-text, #202939); }
 .deepread-rail .dr-trbody { margin-top: 2px; padding: 3px 7px; border-inline-start: 3px solid #93c5fd; border-radius: 4px;
   background: rgba(59,130,246,0.06); font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", serif; }
-.deepread-rail .dr-rcard.dr-flash { background: #fffbea; border-color: rgba(234,179,8,0.45); cursor: pointer; }
-.deepread-rail .dr-fc-label { font-size: 0.875em; font-weight: 700; color: #a16207; letter-spacing: .02em; }
-.deepread-rail .dr-fc-q { font-weight: 600; }
-.deepread-rail .dr-fc-a { margin-top: 3px; padding-top: 3px; border-top: 1px dashed rgba(161,98,7,0.35); }
-.deepread-rail .dr-fc-a p { margin: 0.2em 0; }
 .deepread-rail .dr-muted { color: var(--dr-muted, #526075); }
 .deepread-rail .dr-rcard:hover { z-index: 5; }
 .deepread-rail .dr-rcard.dr-open { z-index: 6; border-color: var(--dr-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dr-accent) 16%, transparent), var(--dr-shadow); }
@@ -123,21 +118,12 @@
   font-weight: 700; line-height: 1.6; background: #ede9fe; color: #5b21b6; cursor: pointer; }
 .deepread-rail .dr-q:hover { background: #ddd6fe; }
 :root[data-color-scheme="dark"] .deepread-rail .dr-q { background: rgba(139,92,246,0.25); color: #ddd6fe; }
-.deepread-rail .dr-guide-notes { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
-.deepread-rail .dr-guide-note { display: flex; gap: 6px; align-items: baseline; font-size: 0.88em; line-height: 1.45; }
-.deepread-rail .dr-gn-label { flex-shrink: 0; padding: 0 5px; border-radius: 4px; font-weight: 700; font-size: 0.9em; background: #e6f4f1; color: #0f5f58; }
-.deepread-rail .dr-gn-hedge .dr-gn-label { background: #fdf2e3; color: #92400e; }
-.deepread-rail .dr-gn-claim .dr-gn-label { background: #ede9fe; color: #5b21b6; }
-.deepread-rail .dr-gn-text { color: var(--dr-muted, #526075); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.deepread-rail .dr-rcard.dr-compact .dr-guide-notes { display: none; }
-:root[data-color-scheme="dark"] .deepread-rail .dr-gn-label { background: rgba(20,184,166,0.18); color: #99f6e4; }
 .deepread-rail .dr-range { flex-shrink: 0; align-self: flex-start; margin-top: 0.15em; padding: 0 5px; border-radius: 8px;
   font-size: 0.75em; line-height: 1.6; color: var(--dr-muted, #526075); border: 1px solid rgba(0,0,0,0.12); }
 .deepread-rail .dr-trbody > .dr-trpart + .dr-trpart { margin-top: 0.45em; }
 .deepread-rail .dr-badges { display: none; flex-shrink: 0; gap: 3px; }
 .deepread-rail .dr-rcard.dr-compact .dr-badges { display: flex; }
 .deepread-rail .dr-badge { padding: 0 5px; border-radius: 8px; font-size: 0.78em; line-height: 1.55; font-weight: 600; }
-.deepread-rail .dr-badge-fc { background: #fbf4e4; color: #7a5300; }
 .deepread-rail .dr-badge-note { background: #eaf5ee; color: #1f6b3a; }
 .deepread-rail .dr-para .dr-explain { font-family: inherit; line-height: 1.75; margin-top: 10px; }
 .deepread-rail .dr-para .dr-points { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--dr-border); }
@@ -150,14 +136,13 @@
 .deepread-rail .dr-rcard.dr-compact .dr-points, .deepread-rail .dr-rcard.dr-compact .dr-explain,
 .deepread-rail .dr-rcard.dr-compact .dr-trwrap { display: none; }
 .deepread-rail .dr-user-collapsed .dr-explain, .deepread-rail .dr-user-collapsed .dr-points, .deepread-rail .dr-user-collapsed .dr-trwrap,
-.deepread-rail .dr-user-collapsed .dr-note, .deepread-rail .dr-user-collapsed .dr-guide-notes,
+.deepread-rail .dr-user-collapsed .dr-note,
 .deepread-rail .dr-user-collapsed:hover .dr-explain, .deepread-rail .dr-user-collapsed:hover .dr-points, .deepread-rail .dr-user-collapsed:hover .dr-trwrap { display: none !important; }
 .deepread-rail .dr-user-collapsed:hover .dr-rsummary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Keep compact cards stable under the pointer. Only an explicit action opens details. */
 .deepread-rail .dr-rcard.dr-compact:hover .dr-points,
 .deepread-rail .dr-rcard.dr-compact:hover .dr-explain,
 .deepread-rail .dr-rcard.dr-compact:hover .dr-trwrap,
-.deepread-rail .dr-rcard.dr-compact:hover .dr-guide-notes,
 .deepread-rail .dr-rcard.dr-compact:hover .dr-fbody,
 .deepread-rail .dr-rcard.dr-compact:hover .dr-fthumb { display: none; }
 .deepread-rail .dr-rcard.dr-compact:hover .dr-rsummary { white-space: nowrap; font-weight: 500; }
@@ -189,26 +174,19 @@
 .deepread-rail .dr-note-label { font-size: 0.875em; font-weight: 700; color: var(--dr-success); }
 .deepread-rail .dr-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .deepread-rail .dr-note-editing textarea { margin-top: 2px; }
-.deepread-rail .dr-attached { margin-top: 5px; display: flex; flex-direction: column; gap: 4px; }
-.deepread-rail .dr-fc-attached { padding: 4px 7px; border-radius: 6px; background: #fffbea; border: 1px solid rgba(234,179,8,0.4); cursor: pointer; }
-.deepread-rail .dr-fc-attached:hover .dr-ractions { display: flex; }
-.deepread-rail .dr-fc-reveal { font-size: 0.92em; }
-.deepread-rail .dr-fc .dr-note { cursor: default; }
 :root[data-color-scheme="dark"] .deepread-rail .dr-note { background: var(--dr-success-soft); color: var(--dr-text); }
 :root[data-color-scheme="dark"] .deepread-rail .dr-note-label { color: var(--dr-success); }
-:root[data-color-scheme="dark"] .deepread-rail .dr-fc-attached { background: #3a3320; border-color: rgba(234,179,8,0.35); }
 .deepread-rail textarea { width: 100%; box-sizing: border-box; font: inherit; resize: vertical; margin: 2px 0;
   border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); padding: 6px 8px; background: var(--dr-surface, #fff); color: inherit; }
-.deepread-rail .dr-fc-buttons { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
-.deepread-rail .dr-fc-buttons button { font: inherit; font-size: 0.92em; padding: 1px 7px; border-radius: 4px; cursor: pointer;
+.deepread-rail .dr-note-buttons { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.deepread-rail .dr-note-buttons button { font: inherit; font-size: 0.92em; padding: 1px 7px; border-radius: 4px; cursor: pointer;
   border: 1px solid rgba(0,0,0,0.15); background: transparent; color: inherit; }
-.deepread-rail .dr-fc-buttons button.dr-primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.deepread-rail .dr-note-buttons button.dr-primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
 :root[data-color-scheme="dark"] .deepread-rail { background: var(--dr-canvas); color: var(--dr-text); }
 :root[data-color-scheme="dark"] .deepread-rail .dr-rcard { background: var(--dr-surface); border-color: var(--dr-border); }
 :root[data-color-scheme="dark"] .deepread-rail li { color: var(--dr-muted); }
 :root[data-color-scheme="dark"] .deepread-rail .dr-trbody { background: rgba(59,130,246,0.12); }
 :root[data-color-scheme="dark"] .deepread-rail .dr-explain { color: var(--dr-text); }
-:root[data-color-scheme="dark"] .deepread-rail .dr-rcard.dr-flash { background: #3a3320; border-color: rgba(234,179,8,0.35); }
 
 .deepread-rail .dr-ractions button[aria-expanded="true"] { background: var(--dr-accent-soft); color: var(--dr-accent); border-color: var(--dr-accent); }
 .deepread-rail .dr-sources > .dr-muted { flex: 0 0 auto; font-weight: 600; }
@@ -232,5 +210,5 @@
 .deepread-rail .dr-badge-note { background: var(--dr-success-soft); color: var(--dr-success); }
 :root[data-color-scheme="dark"] .deepread-rail .dr-rcard.dr-open { border-color: var(--dr-accent); }
 .deepread-rail .dr-rcard.dr-para[data-role]:not([data-role=""]) { border-inline-start-color: var(--dr-role-accent); }
-.deepread-rail .dr-fc-buttons button, .deepread-rail .dr-evidence button { min-height: 28px; padding: 4px 8px; border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); background: var(--dr-surface); color: var(--dr-text); }
-.deepread-rail .dr-fc-buttons button.dr-primary, .deepread-rail .dr-evidence .dr-evidence-save { background: var(--dr-accent); border-color: var(--dr-accent); color: var(--dr-on-accent); }
+.deepread-rail .dr-note-buttons button, .deepread-rail .dr-evidence button { min-height: 28px; padding: 4px 8px; border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); background: var(--dr-surface); color: var(--dr-text); }
+.deepread-rail .dr-note-buttons button.dr-primary, .deepread-rail .dr-evidence .dr-evidence-save { background: var(--dr-accent); border-color: var(--dr-accent); color: var(--dr-on-accent); }

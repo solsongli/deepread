@@ -190,77 +190,6 @@
 			</hbox>
 		</groupbox>
 
-		<!-- Channel 3: agent -->
-		<groupbox aria-labelledby="deepread-pref-agent-title">
-			<label><html:h2 id="deepread-pref-agent-title" data-l10n-id="deepread-pref-agent-title"/></label>
-			<html:div class="deepread-pref-hint" data-l10n-id="deepread-pref-agent-hint"/>
-			<html:div id="deepread-pref-agent-cards" class="deepread-cards" role="radiogroup">
-				<html:div class="deepread-card" role="radio" tabindex="0" data-value="none">
-					<html:span class="deepread-card-title" data-l10n-id="deepread-pref-card-agent-none-title"/>
-					<html:span class="deepread-card-desc" data-l10n-id="deepread-pref-card-agent-none-desc"/>
-					<html:span class="deepread-card-badge" data-l10n-id="deepread-pref-current"/>
-				</html:div>
-				<html:div class="deepread-card" role="radio" tabindex="0" data-value="codex">
-					<html:span class="deepread-card-title" data-l10n-id="deepread-pref-card-agent-codex-title"/>
-					<html:span class="deepread-card-desc" data-l10n-id="deepread-pref-card-agent-codex-desc"/>
-					<html:span class="deepread-card-badge" data-l10n-id="deepread-pref-current"/>
-				</html:div>
-				<html:div class="deepread-card" role="radio" tabindex="0" data-value="claude">
-					<html:span class="deepread-card-title" data-l10n-id="deepread-pref-card-agent-claude-title"/>
-					<html:span class="deepread-card-desc" data-l10n-id="deepread-pref-card-agent-claude-desc"/>
-					<html:span class="deepread-card-badge" data-l10n-id="deepread-pref-current"/>
-				</html:div>
-				<html:div class="deepread-card" role="radio" tabindex="0" data-value="api">
-					<html:span class="deepread-card-title" data-l10n-id="deepread-pref-card-agent-api-title"/>
-					<html:span class="deepread-card-desc" data-l10n-id="deepread-pref-card-agent-api-desc"/>
-					<html:span class="deepread-card-badge" data-l10n-id="deepread-pref-current"/>
-				</html:div>
-				<html:div class="deepread-card" role="radio" tabindex="0" data-value="import">
-					<html:span class="deepread-card-title" data-l10n-id="deepread-pref-card-agent-import-title"/>
-					<html:span class="deepread-card-desc" data-l10n-id="deepread-pref-card-agent-import-desc"/>
-					<html:span class="deepread-card-badge" data-l10n-id="deepread-pref-current"/>
-				</html:div>
-			</html:div>
-			<vbox id="deepread-pref-agent-command-block">
-				<hbox align="center" class="deepread-pref-row">
-					<label data-l10n-id="deepread-pref-agent-command" control="deepread-pref-agent-command"/>
-					<html:input id="deepread-pref-agent-command" type="text" class="deepread-pref-input" placeholder="codex exec" preference="extensions.zotero.deepread.agent.command"/>
-				</hbox>
-			</vbox>
-			<vbox id="deepread-pref-agent-api-block">
-				<hbox align="center" class="deepread-pref-row">
-					<label data-l10n-id="deepread-pref-agent-api-baseurl" control="deepread-pref-agent-api-baseurl"/>
-					<html:input id="deepread-pref-agent-api-baseurl" type="text" class="deepread-pref-input" placeholder="https://api.anthropic.com" preference="extensions.zotero.deepread.agent.api.baseURL"/>
-				</hbox>
-				<hbox align="center" class="deepread-pref-row">
-					<label data-l10n-id="deepread-pref-agent-api-apikey" control="deepread-pref-agent-api-apikey"/>
-					<html:input id="deepread-pref-agent-api-apikey" type="password" class="deepread-pref-input" autocomplete="off" preference="extensions.zotero.deepread.agent.api.apiKey"/>
-				</hbox>
-				<hbox align="center" class="deepread-pref-row">
-					<label data-l10n-id="deepread-pref-agent-api-model" control="deepread-pref-agent-api-model"/>
-					<html:input id="deepread-pref-agent-api-model" type="text" class="deepread-pref-input" preference="extensions.zotero.deepread.agent.api.model"/>
-				</hbox>
-			</vbox>
-			<vbox id="deepread-pref-agent-skills-block">
-				<hbox align="center" class="deepread-pref-row">
-					<label data-l10n-id="deepread-pref-agent-skills"/>
-					<checkbox id="deepread-pref-agent-skill-xray" data-skill="nature-paper-xray" label="nature-paper-xray"/>
-					<checkbox id="deepread-pref-agent-skill-card" data-skill="nature-paper-card" label="nature-paper-card"/>
-				</hbox>
-				<hbox align="center" class="deepread-pref-row">
-					<label data-l10n-id="deepread-pref-agent-timeout" control="deepread-pref-agent-timeout"/>
-					<html:input id="deepread-pref-agent-timeout" type="number" min="1" max="240" step="1" size="6" preference="extensions.zotero.deepread.agent.timeoutMin"/>
-				</hbox>
-			</vbox>
-			<vbox id="deepread-pref-agent-import-block">
-				<html:div class="deepread-pref-hint" data-l10n-id="deepread-pref-agent-import-hint"/>
-			</vbox>
-			<hbox id="deepread-pref-agent-detect-row" align="center" class="deepread-pref-row">
-				<button id="deepread-pref-agent-detect" data-l10n-id="deepread-pref-agent-detect"/>
-				<label id="deepread-pref-agent-status" class="deepread-pref-status" value=""/>
-			</hbox>
-		</groupbox>
-
 		<!-- Feature modules -->
 		<groupbox aria-labelledby="deepread-pref-modules-title">
 			<label><html:h2 id="deepread-pref-modules-title" data-l10n-id="deepread-pref-modules-title"/></label>
@@ -276,8 +205,6 @@
 			<html:div class="deepread-pref-hint deepread-pref-indent" data-l10n-id="deepread-pref-mod-lookup-hint"/>
 			<checkbox id="deepread-pref-mod-questions" data-l10n-id="deepread-pref-mod-questions" preference="extensions.zotero.deepread.view.questions"/>
 			<html:div class="deepread-pref-hint deepread-pref-indent" data-l10n-id="deepread-pref-mod-questions-hint"/>
-			<checkbox id="deepread-pref-mod-guided" data-l10n-id="deepread-pref-mod-guided" preference="extensions.zotero.deepread.view.guided"/>
-			<html:div class="deepread-pref-hint deepread-pref-indent" data-l10n-id="deepread-pref-mod-guided-hint"/>
 			<label class="deepread-pref-subtitle"><html:h3 data-l10n-id="deepread-pref-reading-title"/></label>
 			<hbox align="center" class="deepread-pref-row">
 				<label data-l10n-id="deepread-pref-language" control="deepread-pref-language"/>
@@ -342,7 +269,6 @@
 		<groupbox aria-labelledby="deepread-pref-privacy-title">
 			<label><html:h2 id="deepread-pref-privacy-title" data-l10n-id="deepread-pref-privacy-title"/></label>
 			<description data-l10n-id="deepread-pref-privacy-note"/>
-			<description data-l10n-id="deepread-pref-privacy-agent"/>
 		</groupbox>
 	</vbox>
 </vbox>

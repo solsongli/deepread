@@ -34,10 +34,16 @@ const joined = await C.reconcile([top, fig, bottom], { complete: async (args) =>
   assert.equal(payload[0].parts.length, 2);
   assert.ok(args.messages[0].content.includes(top.paragraph_text) && args.messages[0].content.includes(bottom.paragraph_text));
   assert.ok(!args.messages[0].content.includes("this caption must stay separate"));
-  return { content: JSON.stringify({ groups: [{ keys: ["p_0_0", "p_0_2"], translation: "网络融合两种特征表示，以提升对未见样本的预测准确率。" }] }) };
+  return { content: JSON.stringify({ groups: [{ keys: ["p_0_0", "p_0_2"], translation: "网络融合两种特征表示，以提升对未见样本的预测准确率。",
+    fragments: [{ key: "p_0_0", text: "网络融合两种特征表示，" }, { key: "p_0_2", text: "以提升对未见样本的预测准确率。" }] }] }) };
 } });
 assert.equal(calls, 1);
 assert.equal(joined.count, 1);
+assert.equal(joined.paragraphs[0].continuation.fragments[1].text, "以提升对未见样本的预测准确率。", "joint wording is available per physical frame");
+const inconsistent = await C.reconcile([top, fig, bottom], { complete: async () => ({ content: JSON.stringify({ groups: [{ keys: ["p_0_0", "p_0_2"],
+  translation: "x*y", fragments: [{ key: "p_0_0", text: "x" }, { key: "p_0_2", text: "y" }] }] }) }) });
+assert.equal(inconsistent.paragraphs[0].continuation.translation, "x*y");
+assert.equal(inconsistent.paragraphs[0].continuation.fragments, undefined, "never position incomplete or altered joint text");
 assert.deepEqual(plain(joined.paragraphs[0].bbox), top.bbox);
 assert.deepEqual(plain(joined.paragraphs[2].bbox), bottom.bbox);
 assert.equal(joined.paragraphs[1].continuation, undefined);

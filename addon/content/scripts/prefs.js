@@ -17,16 +17,6 @@ DeepRead.prefs = {
     return Number.isFinite(n) ? n : fallback;
   },
 
-  /** The ③ Agent channel's remote API (kind "api"), on top of the reading API's other settings. */
-  agentApiConfig() {
-    return {
-      ...this.llmConfig(),
-      baseURL: String(this.get("agent.api.baseURL") || "").trim().replace(/\/+$/, ""),
-      apiKey: String(this.get("agent.api.apiKey") || "").trim(),
-      model: String(this.get("agent.api.model") || "").trim(),
-    };
-  },
-
   llmConfig({ chat = false } = {}) {
     const model = chat ? (this.get("llm.chatModel") || this.get("llm.model")) : this.get("llm.model");
     let extraHeaders = {};

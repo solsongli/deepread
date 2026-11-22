@@ -1,0 +1,37 @@
+/* Physical page coordinates are in PDF viewport units. The same outer scale
+ * is applied to the original raster and the translated sheet. AGPL-3.0-or-later */
+.deepread-parallel[open] { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 0;
+  box-sizing: border-box; width: 100%; max-width: none; height: 100%; max-height: none; padding: 0; margin: 0;
+  color: var(--dr-text); background: var(--dr-canvas); border: 0; font: 13px/1.45 var(--dr-font, sans-serif); }
+.deepread-parallel [hidden] { display: none !important; }
+.dr-parallel-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 7px 12px; background: var(--dr-surface); }
+.dr-parallel-bar strong { margin-inline-end: auto; }
+.dr-parallel-nav { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+.deepread-parallel button, .dr-parallel-page-number { font: inherit; color: var(--dr-text); background: var(--dr-surface); padding: 3px 8px;
+  border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); min-height: 26px; box-sizing: border-box; }
+.deepread-parallel button { cursor: pointer; }
+.deepread-parallel button:disabled { opacity: 0.5; cursor: default; }
+.deepread-parallel button:not(:disabled):hover, .deepread-parallel .dr-parallel-translate { background: var(--dr-accent-soft); color: var(--dr-accent); }
+.dr-parallel-page-number { width: 4.6em; }
+.dr-parallel-status { background: var(--dr-surface); border-bottom: 1px solid var(--dr-border); padding: 0 12px 5px; color: var(--dr-muted); }
+.dr-parallel-scroll { flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.dr-parallel-sheets { box-sizing: border-box; display: flex; gap: 12px; justify-content: center; width: max-content; min-width: 100%; padding: 12px; align-items: flex-start; }
+.dr-parallel-sheet { position: relative; flex: none; overflow: hidden; background: white; box-shadow: 0 1px 5px #0003; }
+.dr-parallel-label { font-weight: 600; color: var(--dr-muted); margin-bottom: 5px; }
+.dr-parallel-stage { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; }
+.dr-parallel-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dr-parallel-text { position: absolute; box-sizing: border-box; margin: 0; padding: 0; overflow: hidden;
+  color: #171717; font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  overflow-wrap: anywhere; user-select: text; -moz-user-select: text; }
+.dr-parallel-text .dr-parallel-line { white-space: pre; box-sizing: border-box; }
+.dr-parallel-text.dr-parallel-title { font-weight: bold; }
+.dr-parallel-text[data-overflow="true"] { overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
+.dr-parallel-text p { margin: 0; }
+.deepread-parallel :is(button,input,summary,[tabindex]):focus-visible { outline: 2px solid var(--dr-accent); outline-offset: -2px; }
+.deepread-parallel.dr-single:not(.dr-show-source) .dr-parallel-column:first-child,
+.deepread-parallel.dr-single.dr-show-source .dr-parallel-column:last-child { visibility: hidden; position: absolute; left: -100000px; }
+.dr-parallel-extra { margin: 0 12px 12px; max-width: 70em; }
+.dr-parallel-unplaced { padding: 6px 12px; background: var(--dr-surface); border-radius: var(--dr-control-radius); }
+.dr-parallel-unplaced summary { cursor: pointer; }
+.dr-parallel-passage { padding-block: 8px; overflow-wrap: anywhere; }
+.dr-parallel-passage > div:first-child { color: var(--dr-muted); }

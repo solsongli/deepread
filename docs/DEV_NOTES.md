@@ -1,5 +1,7 @@
 # DeepRead — developer notes and module contracts
 
+The independent 1:1 page reader uses `DeepRead.ParallelPage`, `ParallelTypeset`, and `ParallelReader`. The RetainPDF line breaker and fit primitives load on demand. Each rendered sheet shares one PDF.js viewport and raster. A canceled request cannot mark a partially translated page as complete. The `comparison_cache` table is keyed per attachment and slot, checked against the PDF fingerprint. The guided-reading agent was removed in v1.5.0. Existing SQLite columns and exported Zotero notes are not dropped during upgrades.
+
 Shared interface tokens live in `styles/theme.css`; `ui.js` installs them independently in each document context. Rail styles live in `styles/rail.css`. Card action menus are reader-document portals with owner lifecycle cleanup and stable action IDs (`note`, `ask`, `more`); keep them out of the scrollable card DOM. Menu focus returns to the trigger on Escape, transfers to the summary for editing, and survives background owner rebuilds. Runtime shutdown removes themes and menus. See `docs/VISUAL_DESIGN.md` and `test/e2e/visualDesign.js`.
 
 `userState.readingIssues` maps physical paragraph keys to `{id, originalKey, createdAt, quote, summary}` snapshots, independent of card grouping. `unmappedReadingIssues` retains unmatched snapshots on reparse. `Reading.carryState` requires unique normalized source text on both sides; do not reuse numeric paragraph IDs or collapse ambiguous old notes. Flags do not change notes, highlighting or AI requests. The questions pane keeps the local queue available when its AI module is disabled, preserving scroll and focus across updates. Native regression: `test/e2e/readingIssues.js`.
@@ -306,14 +308,10 @@ v0.4–v0.5 (ReadFlow client, built-in full-document translation, translated-PDF
   the step for the mentioned panel.
 - **Parser fallback.** For any provider other than builtin, a non-abort failure reports status "fallback" and
   reruns with the built-in text layer (`{ …result, fallback: true }`).
-- **Settings: three channels.** ① 精读 API — provider profiles in the CC Switch style: `llm.profiles` (JSON list of
+- **Settings.** ① 精读 API — provider profiles in the CC Switch style: `llm.profiles` (JSON list of
   `{ id, name, preset, baseURL, apiKey, model, chatModel, jsonMode, temperature, concurrency, extraHeaders }`) and
   `llm.activeProfile`; the active profile is mirrored into the flat `llm.*` prefs, which the runtime keeps reading
   (`prefs.profiles()` / `activeProfile()` are read-only helpers). ② 文档解析 — radio cards over `parser.provider`.
-  ③ Agent (preparation for v1.0, nothing runs yet): `agent.kind` none / codex / claude / api / import,
-  `agent.command`, `agent.skills` (default `nature-paper-xray,nature-paper-card`), `agent.timeoutMin`,
-  `agent.api.*`. 「检测」 only looks for the executable on PATH and the skills' `SKILL.md`
-  (`~/agents/codex/skills`, `~/.codex/skills`, `~/.claude/skills`); it never executes anything.
 - e2e: `test/e2e/v08.js` (fallback, roles, bar + jump, figure card, refreshed cards, 功能 menu scopes).
 
 ## v0.8.1: reading feedback
@@ -381,31 +379,3 @@ Three more entries in `DeepRead.Modules.LIST` (prefs `view.skim`, `view.lookup`,
   every deep read (flags reset by `run()` / `clearResults()`); `blocks()` is the shared prompt input.
 - Store: columns `questions`, `glossary` (migration loop in `Store.init`).
 - e2e: `test/e2e/v09.js` (`E2E_PARSER=builtin`, so the demo paper's references are parsed from the PDF).
-
-## v1.0: guided reading (带读) through the ③ Agent channel
-
-Module `guided` (pref `view.guided`). Contract (JSON shape, enums, labels): `docs/GUIDE_SCHEMA.md`.
-
-- **Stage A — the agent writes Markdown.** `session.runGuide()` by `agent.kind`:
-  - codex / claude: `_runLocalAgent` → `AgentRunner.findSkills(agent.skills)` (SKILL.md under `~/agents/codex/skills`,
-    `~/.codex/skills`, `~/.claude/skills`, `~/.agents/skills`), `prepareWorkdir` under `<data dir>/deepread/agent/<key>/<time>/`
-    with `paper.md` (`Guide.paperMarkdown`: paragraphs prefixed `[p. 3 ¶2]`), prompt `Guide.agentPrompt` (skill paths, PDF
-    path, write `xray.md` + `paper-card.md`, print `DEEPREAD_DONE`), argv from `AgentRunner.buildArgv` (default templates;
-    `agent.command` may carry `{prompt}` `{workdir}` `{skills}` or just the program words — missing template groups are
-    appended), program resolved with `findExecutable` (PATH, ~/.local/bin, nvm, …). `AgentRunner.run` uses Gecko
-    `Subprocess.call` without a shell, closes stdin, streams stdout+stderr into `guideRun.log`, kills on timeout
-    (`agent.timeoutMin`) or cancel. `collect(workdir)` reads the two files.
-  - api: `Guide.writeWithApi` with `prefs.agentApiConfig()` (agent.api.*, rest from the reading API) and the SKILL.md texts.
-  - import: `pickGuideFile()` → `importGuide(path)` → `Guide.parseImported` (our JSON → used as is; Markdown → card / xray).
-- **Stage B — structure.** `Guide.structure({ markdown, blocks })` with the reading API → guide JSON normalized against the
-  paragraph keys (labels in text become keys). Stored as `papers.guide` = `{ …guide, markdown: { xray, card }, meta: { kind,
-  skills, model, startedAt, finishedAt, source } }`. `guideRun` = `{ status: running | structuring | error, startedAt, log,
-  error }` (not stored); a failed or cancelled run keeps the previous guide.
-- **UI.** `DeepRead.GuidePanel` (per session) puts `.deepread-guide` (440 px) into `#primary-view`; while open
-  `#primary-view.deepread-guide-open` hides the right rail. `DeepRead.GuideView.render(doc, host, state, actions)` draws the
-  header, five tabs and the step body (pure view; `stepCounts`, label helpers). Toolbar `.dr-guide-button`. Cards get
-  `.dr-guide-notes` from `session.guideNotesForKey(key)` (`Guide.notesForKey`: components, hedges, chain claims, key moves).
-  `saveGuideNote()` → child note via `Guide.toNoteHTML`.
-- Tests: `test/guide.test.mjs`, `test/agentRunner.test.mjs`, `test/guideView.test.mjs`; e2e `test/e2e/v10.js` runs
-  `test/fake-agent.mjs` through the real Subprocess path (agent.command = `"<node>" "<repo>/test/fake-agent.mjs" --cd
-  {workdir} {prompt}`), plus api / import / cancel / failure.

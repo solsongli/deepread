@@ -18,12 +18,10 @@
   color: var(--dr-accent, #2459a9); background: var(--dr-accent-soft, #eaf1fc); white-space: nowrap; position: relative; overflow: hidden; }
 .deepread-toolbar .dr-run .dr-run-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--dr-accent, #2459a9); transition: width .3s; }
 .deepread-toolbar .dr-run.dr-ready::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--dr-success, #14664c); }
-.deepread-toolbar .dr-menu-button, .deepread-toolbar .dr-focus-button, .deepread-toolbar .dr-questions-button,
-.deepread-toolbar .dr-guide-button { width: auto; padding: 0 8px; gap: 5px; font-size: 12px; white-space: nowrap; }
-.deepread-toolbar .dr-focus-button[aria-pressed="true"], .deepread-toolbar .dr-guide-button[aria-pressed="true"],
+.deepread-toolbar .dr-menu-button, .deepread-toolbar .dr-parallel-button, .deepread-toolbar .dr-focus-button, .deepread-toolbar .dr-questions-button { width: auto; padding: 0 8px; gap: 5px; font-size: 12px; white-space: nowrap; }
+.deepread-toolbar .dr-focus-button[aria-pressed="true"],
 .deepread-toolbar .dr-menu-button[aria-expanded="true"] { color: var(--dr-accent, #2459a9); background: var(--dr-accent-soft, #eaf1fc); }
-.deepread-toolbar .dr-focus-button[hidden], .deepread-toolbar .dr-questions-button[hidden], .deepread-toolbar .dr-guide-button[hidden] { display: none; }
-.deepread-toolbar .dr-guide-button.dr-ready::after { content: " ✓"; }
+.deepread-toolbar .dr-focus-button[hidden], .deepread-toolbar .dr-questions-button[hidden] { display: none; }
 .deepread-toolbar .dr-menu-button .dr-count { font-weight: 400; color: var(--dr-muted, #526075); font-size: 10.5px; }
 .deepread-menu { position: fixed; z-index: 2147483001; width: 340px; max-width: calc(100vw - 16px); min-width: 0;
   box-sizing: border-box; padding: 0; border-radius: var(--dr-radius, 10px); overflow: auto; overscroll-behavior: contain;
@@ -367,6 +365,14 @@
           () => session.showHiddenCards())
         : null,
       item(plain(DeepRead.bilingual("DeepRead 设置…", "DeepRead settings…")), () => DeepRead.openPreferences()),
+      session.hasComparisonCache ? item(plain(DeepRead.bilingual("清除本文对照译文缓存", "Clear cached parallel translation")), async () => {
+        if (confirm(session.reader, DeepRead.bilingual("清除本文单独生成的对照译文和解析缓存？", "Clear the separately cached translation and layout for this attachment?"))) {
+          session.comparison?.close(false);
+          session.comparison = null;
+          await DeepRead.Store.deleteComparisonData(session.key);
+          session.hasComparisonCache = false;
+        }
+      }) : null,
       session.hasResults
         ? item(plain(DeepRead.t("toolbar.clear")), async () => {
           if (confirm(session.reader, DeepRead.t("toolbar.confirmClear"))) await session.clearResults();
@@ -437,22 +443,6 @@
         ? DeepRead.bilingual("问题…", "Questions…")
         : `${DeepRead.bilingual("问题", "Questions")} ${reached}/${total || 5}`;
     };
-    // 带读: opens the guided-reading panel; shows when the agent is working.
-    const guideButton = h(doc, "button", {
-      class: "toolbar-button dr-guide-button",
-      title: DeepRead.bilingual("带读：定位 → 骨架 → 方法 → 证据 → 带走", "Guided reading: position → skeleton → method → evidence → takeaway"),
-      onclick: () => session.guidePanel?.toggle(),
-    });
-    const updateGuide = () => {
-      const on = DeepRead.Modules.enabled(session, "guided") && session.hasResults;
-      guideButton.hidden = !on;
-      if (!on) return;
-      const status = session.guideStatus;
-      guideButton.textContent = status === "running" || status === "structuring" ? DeepRead.bilingual("带读…", "Guide…")
-        : DeepRead.bilingual("带读", "Guide");
-      guideButton.classList.toggle("dr-ready", status === "ready");
-      guideButton.setAttribute("aria-pressed", String(!!session.guidePanel?.isOpen));
-    };
     const focusButton = h(doc, "button", {
       class: "toolbar-button dr-focus-button",
       title: DeepRead.bilingual("只展开当前段落；其他卡片保留摘要（仅本文）", "Open only the current paragraph; keep other cards as summaries (this paper)"),
@@ -462,10 +452,20 @@
       focusButton.hidden = !session.hasResults || !DeepRead.Modules.enabled(session, "cards");
       focusButton.setAttribute("aria-pressed", String(session.focusReading));
     };
-    const container = h(doc, "div", { class: "deepread-toolbar" }, runButton, focusButton, questionsButton, guideButton, menuButton);
+    const parallelButton = h(doc, "button", {
+      class: "toolbar-button dr-parallel-button", "aria-haspopup": "dialog",
+      title: DeepRead.bilingual("原文与译文按原页版式对照", "Read the original and translated pages in the same layout"),
+      onclick: () => {
+        session.comparison ||= new DeepRead.ParallelReader(session);
+        session.comparison.open(parallelButton).catch((error) => DeepRead.Toast.show(doc, DeepRead.util.formatError(error), "error"));
+      },
+    }, DeepRead.bilingual("1:1 对照", "1:1 view"));
+    const container = h(doc, "div", { class: "deepread-toolbar" }, runButton, parallelButton, focusButton, questionsButton, menuButton);
 
     const update = () => {
       const running = session.status === "running";
+      parallelButton.disabled = running || session.status === "loading";
+      parallelButton.setAttribute("aria-expanded", String(!!session.comparison?.root));
       label.textContent = running
         ? `${DeepRead.bilingual("精读", "Reading")} ${Math.round(session.progress.percent || 0)}%`
         : DeepRead.t("toolbar.run");
@@ -484,17 +484,15 @@
         DeepRead.Toast.show(doc, payload.message, payload.type);
         return;
       }
-      if (type === "change" || type === "progress") update();
+      if (type === "change" || type === "progress" || type === "comparison") update();
       if (type === "modules" || type === "change") updateCount();
       if (type === "modules" || type === "change" || type === "reading-view") updateFocus();
       if (type === "modules" || type === "change" || type === "questions") updateQuestions();
-      if (type === "modules" || type === "change" || type === "guide" || type === "guidePanel") updateGuide();
     });
     update();
     updateCount();
     updateFocus();
     updateQuestions();
-    updateGuide();
     append(container);
     session.init().then(update);
   }
