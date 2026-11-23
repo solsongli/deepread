@@ -37,7 +37,7 @@ E2E.run = async function () {
     if (text.includes('Closed-loop')) return '**闭环动作。** 保留*局部反馈*，观察预测如何变化。';
     if (text.includes('Visual inputs')) return '**视觉输入。** 编码不同视角，让图像留在原处。';
     if (text.includes('separate control')) return '两组实验在相同条件下比较。'.repeat(24) + '完整的结尾。';
-    if (text.includes('Figure')) return '图 1：两次试验的比较。';
+    if (text.includes('Figure')) return '图 ⟦D0⟧：两次试验的比较。';
     if (text.includes('depends')) return '估计还取决于';
     if (text.includes('sampling interval')) return '实验所用的采样间隔。';
     if (text.includes('Errors')) return '分别报告误差。';
@@ -79,6 +79,13 @@ E2E.run = async function () {
     check('two list items occupy distinct original frames', list.length === 2 && parseFloat(list[1].style.top) > parseFloat(list[0].style.top) + 25);
     check('renderer preserves strong and italic runs in engine lines', !!list[0].querySelector('.dr-parallel-line strong') && !!list[0].querySelector('.dr-parallel-line em'));
     check('long translation is complete and keyboard-scrollable', actions.some((box) => box.textContent.includes('完整的结尾') && box.scrollHeight > box.clientHeight && box.tabIndex === 0));
+    const long=actions.find(box=>box.textContent.includes('完整的结尾'));
+    const baselines=[...long.querySelectorAll('.dr-parallel-baseline')].map(probe=>probe.getBoundingClientRect().top);
+    const steps=baselines.slice(1).map((y,i)=>y-baselines[i]);
+    check('baselines remain evenly spaced throughout a long paragraph',steps.length>2 && Math.max(...steps)-Math.min(...steps)<.15);
+    const hit=c.source.stage.querySelector('.dr-parallel-hit');
+    hit.focus();
+    check('focusing the original highlights its corresponding translation',hit.classList.contains('dr-paired') && actions[0].classList.contains('dr-paired'));
     const dims = () => [c.source.element.getBoundingClientRect(), c.target.element.getBoundingClientRect()];
     const [original, target] = dims();
     check('paired pages have equal dimensions at the same Y', Math.abs(original.width-target.width)<0.1 && Math.abs(original.height-target.height)<0.1 && Math.abs(original.y-target.y)<0.1);
@@ -89,6 +96,12 @@ E2E.run = async function () {
     check('original graph rectangle and its interior labels are pixel-identical on the translated sheet', sameRegion(c.source.canvas,c.target.canvas,Math.round(44*k),Math.round((792-540)*k),Math.round(216*k),Math.round(158*k)));
     check('display equation is preserved pixel-for-pixel', sameRegion(c.source.canvas,c.target.canvas,Math.round(326*k),Math.round((792-456)*k),Math.round(92*k),Math.round(27*k)));
     check('only the caption is translated under the figure', actions.some((box) => box.textContent.includes('两次试验') && parseFloat(box.style.height)<20));
+    const targetFile=PathUtils.join(E2E.env('DEEPREAD_E2E_SHOTS'),'translated-book.pdf');
+    const beforeExport=calls;
+    await IOUtils.writeUTF8(targetFile,'previous export');
+    let incomplete=false;
+    try { await c.savePDF('all',targetFile); } catch { incomplete=true; }
+    check('untranslated pages leave the previous export and reading position intact',incomplete && (await IOUtils.readUTF8(targetFile))==='previous export' && c.pageIndex===0 && calls===beforeExport);
     c.changeZoom(0.25);
     check('zoom changes both sheets together', dims()[0].width > original.width && Math.abs(dims()[0].width-dims()[1].width)<0.1);
     c.fit.click(); await sleep(80); await shot('parallel-layout.png');
@@ -108,9 +121,13 @@ E2E.run = async function () {
     check('OCR-only text keeps its known physical rectangle', c.target.stage.textContent.includes('扫描页正文'));
     check('uncertain mixed figure/text is preserved and translation is provided below', c.extra.textContent.includes('与图像重叠') && !c.target.stage.textContent.includes('与图像重叠'));
     check('scan graphic keeps its original colour', rgb(c.source.canvas,220,660) === rgb(c.target.canvas,220,660));
+    const beforeBookSave=calls;
+    const written=await c.savePDF('all',targetFile);
+    const bytes=await IOUtils.read(targetFile);
+    check('whole-document export writes a PDF, reuses translations and restores the current page',written && bytes[0]===37 && bytes[1]===80 && bytes.length>5000 && c.pageIndex===2 && calls===beforeBookSave);
     c.close(false);
     s.data = { language:'zh', contentList:source, hierarchicalData:[{ pageIndex:0, paragraphs:[{ paragraphIndex:1, minerUid:2, paragraphType:'list', paragraphText:first+' '+second, bbox:source[1].bbox,
-      translationLayout:{ units:[{id:'u0',kind:'list-item',marker:'•',sourceText:first,translation:'**缓存的闭环动作。**'},{id:'u1',kind:'list-item',marker:'•',sourceText:second,translation:'**缓存的视觉条件。**'}] }, points:[] }] }] };
+      translationLayout:{ units:[{id:'u0',kind:'list-item',marker:'•',sourceText:first,translation:'**缓存的闭环动作。** 保留*局部反馈*。'},{id:'u1',kind:'list-item',marker:'•',sourceText:second,translation:'**缓存的视觉条件。** 单独编码观测。'}] }, points:[] }] }] };
     c.parsed = null; await c.open(button); await c.showPage(0);
     check('older MinerU deep-read units with no unit coordinates are placed using PDF glyphs', c.target.stage.textContent.includes('缓存的闭环动作') && c.target.stage.textContent.includes('缓存的视觉条件'));
     const narrow = c.scroll.parentNode; narrow.style.maxWidth='500px'; await until(()=>c.root.classList.contains('dr-single'));

@@ -1,115 +1,295 @@
-/* Zotero adapter for RetainPDF's UAX #14 line breaker and collision-constrained font search.
- * Upstream versions and MIT notices are in NOTICE.md and content/lib/retainpdf/rendering/.
- * License (adapter): AGPL-3.0-or-later */
+/* Zotero typesetting adapter for the RetainPDF line breaker and bounded font search.
+ * Upstream versions and MIT notices are in NOTICE.md. Adapter: AGPL-3.0-or-later. */
 (function () {
   let rendering;
   function engine() {
     if (!rendering) {
       const scope = {};
-      for (const file of ["uax14-data.js", "linebreak.js", "rects.js"]) {
+      for (const file of ["uax14-data.js", "linebreak.js", "rects.js"])
         Services.scriptloader.loadSubScript(`${DeepRead.rootURI}content/lib/retainpdf/rendering/${file}`, scope);
-      }
       rendering = scope.RetainPdfRendering;
     }
     return rendering;
   }
   const h = (doc, tag) => doc.createElementNS("http://www.w3.org/1999/xhtml", tag);
 
-  function styledRuns(node, runs, bold, italic) {
+  function collect(node, runs, style) {
     if (node.nodeType === 3) {
-      if (node.nodeValue) runs.push({ text: node.nodeValue, bold, italic });
+      if (node.nodeValue) runs.push({ ...style, text: node.nodeValue });
       return;
     }
-    for (const child of node.childNodes) styledRuns(child, runs, bold || ["strong", "b"].includes(node.localName), italic || ["em", "i"].includes(node.localName));
+    if (node.classList?.contains("dr-parallel-atom")) {
+      const { widthEm, heightEm, depthEm } = node.dataset;
+      runs.push({
+        node,
+        text: "\uFFFC",
+        widthEm: Number(widthEm),
+        heightEm: Number(heightEm),
+        depthEm: Number(depthEm)
+      });
+      return;
+    }
+    const next = {
+      bold: style.bold || ["strong", "b"].includes(node.localName),
+      italic: style.italic || ["em", "i"].includes(node.localName),
+      color: node.style?.color || style.color,
+      link: node.dataset?.sourceLink ?? style.link
+    };
+    for (const child of node.childNodes) collect(child, runs, next);
   }
 
-  // Keep the original run styles when an engine line break cuts through an emphasis span.
+  function preparedRuns(doc, fragment, unit, family) {
+    const runs = [];
+    collect(fragment, runs, { bold: unit.title && unit.boldTitle, italic: unit.allItalic });
+    while (runs.length && !runs.at(-1).text.trim()) runs.pop();
+    if (runs.length) runs.at(-1).text = runs.at(-1).text.trimEnd();
+    const engineText = engine().TextLinebreak;
+    const ctx = h(doc, "canvas").getContext("2d"),
+      segments = [],
+      textChunks = [];
+    let index = 0,
+      widths = [];
+    // The engine shapes one text chunk between each pair of inline objects.
+    // UTF-16 offsets remain valid across run boundaries and surrogate pairs.
+    for (const r of runs) {
+      r.start = index;
+      index += r.text.length;
+      r.end = index;
+      if (r.node) {
+        if (widths.length) {
+          textChunks.push(widths);
+          widths = [];
+        }
+        segments.push({ type: "math", widthEm: r.widthEm, heightEm: r.heightEm, depthEm: r.depthEm });
+      } else {
+        segments.push({ type: "text", value: r.text });
+        ctx.font = `${r.italic ? "italic" : "normal"} ${r.bold ? "bold" : "normal"} 100px ${family}`;
+        for (const ch of r.text) {
+          widths.push(ctx.measureText(ch).width / 100);
+          if (ch.length === 2) widths.push(0);
+        }
+      }
+    }
+    if (widths.length) textChunks.push(widths);
+    let chunk = 0;
+    const prepared = engineText.prepare(segments, {
+      ascender: 0.82,
+      descender: 0.18,
+      shape: () => textChunks[chunk++]
+    });
+    return { runs, prepared };
+  }
+
   function makeLine(doc, runs, start, end) {
     const line = h(doc, "div");
     line.className = "dr-parallel-line";
+    const ink = h(doc, "span");
+    ink.className = "dr-parallel-line-ink";
+    line.append(ink);
     for (const r of runs) {
       if (r.end <= start) continue;
       if (r.start >= end) break;
-      const slice = r.text.slice(Math.max(0, start - r.start), Math.min(r.text.length, end - r.start));
-      let part = doc.createTextNode(slice);
-      for (const tag of [r.italic && "em", r.bold && "strong"]) {
-        if (tag) { const mark = h(doc, tag); mark.append(part); part = mark; }
+      if (r.node) {
+        ink.append(r.node);
+        continue;
       }
-      line.append(part);
+      let part = doc.createTextNode(
+        r.text.slice(Math.max(0, start - r.start), Math.min(r.text.length, end - r.start))
+      );
+      if (r.bold) {
+        const mark = h(doc, "strong");
+        mark.append(part);
+        part = mark;
+      }
+      if (r.italic) {
+        const mark = h(doc, "em");
+        mark.append(part);
+        part = mark;
+      }
+      if (r.color || r.link != null) {
+        const span = h(doc, r.link != null ? "a" : "span");
+        if (r.color) span.style.color = r.color;
+        if (r.link != null) {
+          span.href = "#";
+          span.dataset.sourceLink = r.link;
+        }
+        span.append(part);
+        part = span;
+      }
+      ink.append(part);
     }
     return line;
   }
 
   function draw(box, unit, fragment, sourceSize) {
-    const doc = box.ownerDocument, api = engine();
-    const original = Math.max(1, sourceSize);
-    const marker = unit.marker ? unit.marker + " " : "";
-    const runs = [];
-    if (marker) runs.push({ text: marker, bold: false, italic: false });
-    const rich = !!fragment.querySelector(":not(p,strong,em,b,i)") || /[\uFFFC\u2028\n]/.test(fragment.textContent.trim());
-    styledRuns(fragment, runs, unit.title, false);
-    while (runs.length && !runs[runs.length - 1].text.trim()) runs.pop();
-    if (runs.length) runs[runs.length - 1].text = runs[runs.length - 1].text.trimEnd();
-    let text = "";
-    for (const r of runs) {
-      r.start = text.length; text += r.text; r.end = text.length;
-    }
+    const doc = box.ownerDocument,
+      api = engine(),
+      original = Math.max(1, sourceSize);
+    const width = parseFloat(box.style.width),
+      height = parseFloat(box.style.height);
     const family = doc.defaultView.getComputedStyle(box).fontFamily;
-    const measure = h(doc, "canvas").getContext("2d");
-    const breaker = api.TextLinebreak;
-    // Use actual locally available serif faces (also for CJK fallback), measured in em.
-    const prepared = !rich && breaker.prepare([{ type: "text", value: text }], {
-      ascender: 0.82, descender: 0.18,
-      shape(value) {
-        const advances = new Float64Array(value.length);
-        for (const r of runs) {
-          measure.font = `${r.italic ? "italic" : "normal"} ${r.bold ? "bold" : "normal"} 100px ${family}`;
-          let offset = r.start;
-          for (const ch of r.text) { advances[offset] = measure.measureText(ch).width / 100; offset += ch.length; }
-        }
-        return advances;
-      },
-    });
-    const lineRatio = Math.min(1.45, Math.max(1.05, unit.pitch || 1.18));
-    const width = parseFloat(box.style.width);
-    function paint(size, ratio) {
-      box.style.fontSize = `${size}px`;
-      box.style.lineHeight = String(ratio);
-      if (prepared) {
-        const indent = (unit.indent || 0) * size;
-        const hang = marker ? Math.max(1.1, unit.hanging || 0) * size : 0;
-        const result = breaker.layout(prepared, size, width, { indent, hang });
-        const rows = result.lines.filter((line) => line.end > line.start).map((range, i) => {
-          const line = makeLine(doc, runs, range.start, range.end);
-          line.style.paddingInlineStart = `${i ? hang : indent}px`;
-          if (unit.justified && i < result.lines.length - 1) {
-            const gaps = breaker.justifiableGaps(prepared, range.start, range.end);
-            const left = i ? hang : 0;
-            if (gaps && width - left - range.width <= gaps * size * 0.25) line.style.textAlignLast = "justify";
-          }
-          return line;
+    const simple =
+      ![...fragment.querySelectorAll("*")].some(
+        (el) =>
+          !el.closest(".dr-parallel-atom") && !["p", "span", "a", "strong", "em", "b", "i"].includes(el.localName)
+      ) && !/[\uFFFC\u2028\n]/.test(fragment.textContent.trim());
+    const content = h(doc, "div");
+    content.className = "dr-parallel-copy";
+    let marker;
+    if (unit.marker) {
+      marker = h(doc, "span");
+      marker.className = "dr-parallel-marker";
+      marker.textContent = unit.marker;
+      if (unit.markerRect) marker.style.opacity = "0";
+      box.append(marker);
+    }
+    box.append(content);
+    const markerInset = unit.marker ? (unit.markerIndent ?? (unit.hanging || 1.2)) * original : 0;
+    const nextInset = unit.marker ? (unit.hanging || unit.markerIndent || 1.2) * original : 0;
+    const firstInset = unit.marker ? markerInset : (unit.indent || 0) * original;
+    const sourceLines = unit.rects?.length || 1;
+    if (unit.title && simple && sourceLines === 1) {
+      const line = h(doc, "div"),
+        ink = h(doc, "span");
+      line.className = "dr-parallel-line";
+      ink.className = "dr-parallel-line-ink";
+      line.style.paddingInlineStart = firstInset + "px";
+      line.append(ink);
+      ink.append(fragment);
+      content.append(line);
+      const number = ink.querySelector(".dr-parallel-heading-number");
+      if (number?.nextSibling?.nodeType === 3)
+        number.nextSibling.nodeValue = number.nextSibling.nodeValue.trimStart();
+      box.style.fontSize = original + "px";
+      box.style.lineHeight = height + "px";
+      // One line of Latin headings often has a glyph box shorter than its em.
+      // Keep its actual font size and number-to-title gap when the title fits.
+      if (ink.offsetWidth + firstInset <= width + 0.5) {
+        box.classList.add("dr-parallel-heading");
+        if (unit.centered) line.style.textAlign = "center";
+        return;
+      }
+      if (number) {
+        number.classList.remove("dr-parallel-heading-number");
+        number.after(" ");
+      }
+      fragment.append(...ink.childNodes);
+      content.replaceChildren();
+    }
+    const material = simple ? preparedRuns(doc, fragment, unit, family) : null;
+    if (!simple) content.append(fragment);
+    const cjkBody =
+      !unit.title && !unit.caption && /\p{Script=Han}/u.test(material?.prepared.text || content.textContent);
+    const sourcePitch = Math.min(
+      1.5,
+      Math.max(1.05, (unit.caption || unit.title ? unit.pitch : unit.bodyPitch) || 1.2)
+    );
+    const preferredSize = cjkBody ? original * 1.12 : original;
+    const standardStep = cjkBody ? Math.max(original * sourcePitch, preferredSize * 1.34) : original * sourcePitch;
+    // Tight frames have one second, shared baseline step. Font fitting never
+    // redistributes leftover height across an individual paragraph.
+    const compactStep = Math.min(standardStep, original * Math.max(1.14, sourcePitch));
+
+    function paint(size, requestedStep) {
+      box.style.fontSize = size + "px";
+      box.style.lineHeight = requestedStep + "px";
+      if (!material) {
+        content.style.paddingInlineStart = nextInset + "px";
+        content.style.textIndent = firstInset - nextInset + "px";
+        return box.scrollWidth <= box.clientWidth + 1 && box.scrollHeight <= box.clientHeight + 1;
+      }
+
+      let measureWidth = width,
+        rows = [],
+        excess = 0;
+      for (let pass = 0; pass < 4; pass++) {
+        const { lines } = api.TextLinebreak.layout(material.prepared, size, measureWidth, {
+          indent: firstInset,
+          hang: nextInset
         });
-        box.replaceChildren(...rows);
+        rows = lines
+          .filter((l) => l.end > l.start)
+          .map((range, i) => {
+            let end = range.end;
+            while (end > range.start && /\s/u.test(material.prepared.text[end - 1])) end--;
+            const row = makeLine(doc, material.runs, range.start, end);
+            const ink = row.firstChild;
+            ink.style.left = (i ? nextInset : firstInset) + "px";
+            row.classList.add("dr-parallel-grid-line");
+            // A zero-height inline box exposes the actual Gecko baseline, even
+            // when an adjacent original formula has an unusually tall exponent.
+            const probe = h(doc, "span");
+            probe.className = "dr-parallel-baseline";
+            probe.setAttribute("aria-hidden", "true");
+            ink.prepend(probe);
+            return row;
+          });
+        content.replaceChildren(...rows);
+        excess = Math.max(
+          0,
+          ...rows.map((row, i) => row.firstChild.offsetWidth + (i ? nextInset : firstInset) - width)
+        );
+        if (excess <= 0.6 || !rows.length || measureWidth <= width * 0.7) break;
+        measureWidth = Math.max(width * 0.7, measureWidth - excess - 1);
       }
-      else if (!box.firstChild) {
-        if (marker) box.append(marker);
-        box.append(fragment);
-        box.style.textIndent = `${unit.indent || 0}em`;
+      const extents = rows.map((row) => {
+        let above = size * 0.84,
+          below = size * 0.14;
+        for (const atom of row.querySelectorAll(".dr-parallel-atom")) {
+          const depth = Number(atom.dataset.depthEm),
+            height = Number(atom.dataset.heightEm);
+          above = Math.max(above, (height - depth) * size);
+          below = Math.max(below, depth * size);
+        }
+        return { above, below };
+      });
+      const first = extents[0]?.above || 0,
+        last = extents.at(-1)?.below || 0;
+      // Extra clearance is needed only when two consecutive lines really have
+      // protruding ink. Apply it to the entire block so all baselines stay even.
+      let step = requestedStep;
+      for (let i = 1; i < extents.length; i++) step = Math.max(step, extents[i - 1].below + extents[i].above);
+      const occupied = first + Math.max(0, rows.length - 1) * step + last;
+      const baselines = rows.map((row) => {
+        const ink = row.firstChild, probe = ink.firstChild;
+        // offsetTop rounds to whole CSS pixels and creates a visible step
+        // after zooming. Gecko's local coordinates retain fractional baselines.
+        return probe.getBoxQuads({ relativeTo: ink })[0].p1.y;
+      });
+      rows.forEach((row, i) => {
+        row.style.height = (i + 1 === rows.length ? first + last : step) + "px";
+        row.firstChild.style.top = first - baselines[i] + "px";
+      });
+      return excess <= 1 && occupied <= height + 0.4;
+    }
+    let fits = paint(preferredSize, standardStep);
+    if (!fits && cjkBody && paint(original, standardStep)) {
+      const chosen = api.FitModelParts.rects.gallopingGrow(
+        original,
+        preferredSize,
+        0.125,
+        (v) => !paint(v, standardStep)
+      ).value;
+      fits = paint(chosen, standardStep);
+    }
+    if (!fits) {
+      const floor = Math.max(original * 0.82, Math.min(original, 7));
+      fits = paint(preferredSize, compactStep);
+      if (!fits) {
+        const minFits = paint(floor, compactStep);
+        const chosen = minFits
+          ? api.FitModelParts.rects.gallopingGrow(floor, preferredSize, 0.125, (v) => !paint(v, compactStep)).value
+          : floor;
+        fits = paint(chosen, compactStep);
       }
-      return box.scrollWidth <= box.clientWidth + 1 && box.scrollHeight <= box.clientHeight + 1;
-    }
-    let fits = paint(original, lineRatio);
-    if (!fits) {
-      const ratio = Math.min(lineRatio, 1.08);
-      const lower = Math.max(original * 0.82, Math.min(original, 7));
-      const minFits = paint(lower, ratio);
-      const { value } = minFits ? api.FitModelParts.rects.gallopingGrow(lower, original, 0.125, (size) => !paint(size, ratio)) : { value: lower };
-      fits = paint(value, ratio);
     }
     if (!fits) {
-      // Full accessible text stays within the source box even for verbose translations.
-      box.dataset.overflow = "true"; box.tabIndex = 0;
-      box.title = DeepRead.bilingual("译文较长，可在段内滚动", "Scroll within this paragraph for its full translation");
+      box.dataset.overflow = "true";
+      box.tabIndex = 0;
+      box.title = DeepRead.bilingual(
+        "译文较长，可在段内滚动",
+        "Scroll within this paragraph for its full translation"
+      );
     }
   }
   DeepRead.ParallelTypeset = { engine, draw };

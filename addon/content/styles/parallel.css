@@ -7,7 +7,7 @@
 .dr-parallel-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 7px 12px; background: var(--dr-surface); }
 .dr-parallel-bar strong { margin-inline-end: auto; }
 .dr-parallel-nav { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
-.deepread-parallel button, .dr-parallel-page-number { font: inherit; color: var(--dr-text); background: var(--dr-surface); padding: 3px 8px;
+.deepread-parallel button, .dr-parallel-page-number, .dr-parallel-export { font: inherit; color: var(--dr-text); background: var(--dr-surface); padding: 3px 8px;
   border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); min-height: 26px; box-sizing: border-box; }
 .deepread-parallel button { cursor: pointer; }
 .deepread-parallel button:disabled { opacity: 0.5; cursor: default; }
@@ -24,7 +24,24 @@
   color: #171717; font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
   overflow-wrap: anywhere; user-select: text; -moz-user-select: text; }
 .dr-parallel-text .dr-parallel-line { white-space: pre; box-sizing: border-box; }
+.dr-parallel-line-ink { display: inline-block; white-space: pre; }
+.dr-parallel-grid-line { position: relative; }
+.dr-parallel-grid-line > .dr-parallel-line-ink { position: absolute; line-height: 1; }
+.dr-parallel-baseline { display: inline-block; width: 0; height: 0; padding: 0; margin: 0; vertical-align: baseline; }
+.dr-parallel-sans { font-family: "Noto Sans CJK SC", "Microsoft YaHei", Arial, sans-serif; }
+.dr-parallel-copy { padding: 0; margin: 0; }
+.dr-parallel-marker { position: absolute; inset-inline-start: 0; top: 0; }
+.dr-parallel-atom { display: inline-block; position: relative; line-height: 0; white-space: nowrap; }
+.dr-parallel-atom canvas { display: block; width: 100%; height: 100%; }
+.dr-parallel-atom-text { position: absolute; inset: 0; overflow: hidden; opacity: 0; }
+.dr-parallel-text a[data-source-link] { text-decoration: none; cursor: pointer; }
+.dr-parallel-text a[data-source-link]:hover { text-decoration: underline; }
+.deepread-parallel button.dr-parallel-hit { position: absolute; min-height: 0; padding: 0; margin: 0; background: transparent; border: 0; border-radius: 0; }
+.deepread-parallel button.dr-parallel-hit:hover { background: transparent; }
+.deepread-parallel .dr-paired { outline: 1.5px solid var(--dr-accent); outline-offset: 1px; }
 .dr-parallel-text.dr-parallel-title { font-weight: bold; }
+.dr-parallel-heading { overflow: visible; }
+.dr-parallel-heading-number { display: inline-block; }
 .dr-parallel-text[data-overflow="true"] { overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .dr-parallel-text p { margin: 0; }
 .deepread-parallel :is(button,input,summary,[tabindex]):focus-visible { outline: 2px solid var(--dr-accent); outline-offset: -2px; }

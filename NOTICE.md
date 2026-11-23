@@ -41,6 +41,10 @@ The facing-page view also ships three unmodified JavaScript files from the [Reta
 
 DeepRead supplies PDF.js page geometry, local font measurements, translated source units, protected graphics and the Zotero reading interface. Formula markup is rendered with the existing KaTeX library.
 
+## Inline mathematics
+
+The design of the facing-page reader draws on glyph-based formula detection and reinsertion in [PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate/blob/0f0618d3303d064d97e7adb77557b21236c6cee0/pdf2zh/converter.py). DeepRead implements the grouping, source-coordinate matching, protected translation tokens and PDF.js canvas compositing in JavaScript for the Zotero reader.
+
 ## Vendored third-party libraries
 
 Copies of these files are shipped inside the add-on under `addon/content/lib/`.
@@ -49,5 +53,6 @@ Copies of these files are shipped inside the add-on under `addon/content/lib/`.
 |---------|---------|---------|---------------|
 | [marked](https://github.com/markedjs/marked) | 18.0.14 | MIT | `addon/content/lib/marked/marked.js`, `addon/content/lib/marked/LICENSE` |
 | [KaTeX](https://github.com/KaTeX/KaTeX) | 0.16.47 | MIT | `addon/content/lib/katex/katex.min.js`, `katex.min.css`, `auto-render.min.js`, `fonts/*.woff2`, `LICENSE` |
+| [pdf-lib](https://github.com/Hopding/pdf-lib) | 1.17.1 | MIT | `addon/content/lib/pdf-lib/pdf-lib.min.js`, `LICENSE`, `licenses/` |
 
-All vendored libraries are MIT-licensed; their full license texts are included in the respective `LICENSE*` files.
+pdf-lib collects the pages printed by Gecko and preserves their physical dimensions. The distribution includes the notices for pdf-lib and its bundled standard-fonts, UPNG, pako and tslib packages. See the [bundled notices](addon/content/lib/pdf-lib/licenses).

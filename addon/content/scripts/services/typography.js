@@ -1,7 +1,7 @@
 /* PDF text alignment and translation typography. License: AGPL-3.0-or-later */
 (function () {
-  const bold = (c) => c?.bold === true || /bold|black|heavy|semibold|demibold|[-,]Medi\b/i.test(c?.fontName || "");
-  const italic = (c) => c?.italic === true || /italic|oblique/i.test(c?.fontName || "");
+  const bold = (c) => c?.bold === true || /bold|black|heavy|[-,]Medi(?:Ital)?\b/i.test(c?.fontName || "");
+  const italic = (c) => c?.italic === true || /italic|oblique|(?:Regu|Medi|Bold|[-,])Ital(?:MT)?\b/i.test(c?.fontName || "");
   const normal = (s) => String(s || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
   // Only accept an unambiguous full-text match. OCR differences retain the original fallback.
@@ -23,7 +23,18 @@
     while (before >= 0 && /^\s*$/.test(chars[before].u || "") && !chars[before].lineBreakAfter) before--;
     if (before >= 0 && /^[•‣◦▪●]$/.test(chars[before].u || "") && !chars[before].lineBreakAfter
         && Math.abs((chars[before].rect?.[1] || 0) - (chars[start].rect?.[1] || 0)) < (chars[start].fontSize || 10)) start = before;
-    // Preserve trailing sentence punctuation, but do not cross the text line.
+    // Recover the exact suffix discarded by letter-only matching, e.g. the %,
+    // after 46.9. Only consume symbols the source owns, on the same PDF line.
+    const tail = String(text).normalize("NFKC").match(/[^\p{L}\p{N}]*$/u)[0].replace(/\s+/g, "");
+    let suffix = "", next = end;
+    while (suffix.length < tail.length && next < chars.length && !chars[next - 1].lineBreakAfter) {
+      const piece = String(chars[next].u ?? chars[next].c ?? "").normalize("NFKC").replace(/\s+/g, "");
+      if (!tail.startsWith(suffix + piece)) break;
+      suffix += piece;
+      next++;
+    }
+    if (tail && suffix === tail) end = next;
+    // Older OCR text sometimes omits the terminal stop.
     while (end < chars.length && !chars[end - 1].lineBreakAfter && /^[.,:;!?。！？：；)\]]+$/.test(chars[end].u || "")) end++;
     return chars.slice(start, end);
   }
@@ -61,5 +72,5 @@
     flush();
     return out;
   }
-  DeepRead.Typography = { match, metrics, styledSentence };
+  DeepRead.Typography = { match, metrics, styledSentence, bold, italic };
 })();

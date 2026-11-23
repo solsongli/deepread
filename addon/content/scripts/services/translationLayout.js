@@ -109,7 +109,7 @@
     return layout.units.map((u) => `${u.kind === "list-item" ? `${u.marker} ` : ""}${u.translation}`).join("\n\n");
   }
 
-  async function complete(paragraphs, { request, targetLang = "zh", signal, strict = false, contextFor } = {}) {
+  async function complete(paragraphs, { request, targetLang = "zh", signal, strict = false, contextFor, repair = false } = {}) {
     const result = paragraphs.map((p) => ({ ...p, translationLayout: p.translationLayout }));
     const missing = [];
     result.forEach((p, i) => {
@@ -123,12 +123,14 @@
       const indices = missing.slice(at, at + 4);
       const items = indices.flatMap((i) => result[i].translationLayout.units.map((u) => ({
         id: `${i}:${u.id}`, kind: u.kind, source_text: u.styledText || u.sourceText,
+        ...(u.protected?.length ? { protected: u.protected } : {}),
       })));
       try {
         const messages = [{ role: "user", content: `Source layout units (JSON):\n${JSON.stringify(items)}` }];
         const context = contextFor?.(indices);
         if (context?.length) messages.push({ role: "user", content: `Neighbouring source fragments in reading order (JSON):\n${JSON.stringify(context)}\nIf the fragments form a sentence interrupted by a page break or figure, translate it in context. Return only the part belonging to each requested unit ID.` });
-        const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Each unit is an original paragraph or list item. Return exactly one translation per id. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers. Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. JSON only: {"translations":[{"id":"0:u0","translation":"..."}]}.`,
+        const protection = items.some(u=>u.protected) ? ' Each ⟦D…⟧ token represents the exact expression described in that unit’s protected list. Write around the token in natural target-language order and copy its ID exactly once. The reader inserts its final content. Do not spell out its value, change its case, add symbols or reverse a comparison.' : '';
+        const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Each unit is an original paragraph or list item. Return exactly one translation per id. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers.${protection}${repair ? ' The prior reply lost or duplicated a token or emphasis. Check every token ID and emphasis span against its own source before returning this correction.' : ''} Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. JSON only: {"translations":[{"id":"0:u0","translation":"..."}]}.`,
           messages, responseFormat: { type: "json_object" }, temperature: 0.1, signal });
         if (signal?.aborted) { const e = new Error("Aborted"); e.name = "AbortError"; throw e; }
         const text = String(response?.content || "").replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "").replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");

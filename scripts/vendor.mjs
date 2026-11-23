@@ -44,4 +44,13 @@ for (const f of woff2) copyFileSync(join(fontsSrc, f), join(fontsDest, f));
 console.log(`  dist/fonts/*.woff2 (${woff2.length} files) -> ${fontsDest.slice(root.length + 1)}`);
 copyInto(nm("katex", "LICENSE"), join(katexDir, "LICENSE"));
 
+// Only loaded when saving translated pages. Carry notices for the bundled dependencies.
+const pdfDir = lib("pdf-lib");
+copyInto(nm("pdf-lib", "dist", "pdf-lib.min.js"), join(pdfDir, "pdf-lib.min.js"));
+copyInto(nm("pdf-lib", "LICENSE.md"), join(pdfDir, "LICENSE"));
+for (const [pkg, file, name] of [["@pdf-lib/standard-fonts", "LICENSE.md", "standard-fonts"], ["@pdf-lib/upng", "LICENSE", "upng"],
+  ["pako", "LICENSE", "pako"], ["tslib", "LICENSE.txt", "tslib"], ["tslib", "CopyrightNotice.txt", "tslib-copyright"]]) {
+  copyInto(nm(pkg, file), join(pdfDir, "licenses", name + ".txt"));
+}
+
 console.log("vendor: done");
