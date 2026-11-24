@@ -164,14 +164,66 @@
     }
   }
 
-  function draw(box, unit, fragment, sourceSize) {
+  function inlineMath(box, fragment, type, ascent) {
+    const doc=box.ownerDocument;
+    // Use the same atom representation for OCR TeX and native PDF glyph crops.
+    for (const math of fragment.querySelectorAll(".katex, math")) {
+      if (math.parentElement?.closest(".katex, .dr-parallel-atom, .katex-display") || math.getAttribute("display")==="block") continue;
+      const atom=h(doc,"span"), measure=h(doc,"span"), probe=h(doc,"span"), inner=h(doc,"span");
+      atom.className="dr-parallel-atom"; atom.setAttribute("role","math");
+      measure.style.cssText="position:absolute;visibility:hidden;white-space:nowrap;line-height:0";
+      probe.style.cssText="display:inline-block;width:0;height:0;vertical-align:baseline";
+      inner.style.cssText="display:inline-block;vertical-align:baseline;line-height:normal";
+      math.replaceWith(atom);inner.append(math);measure.append(probe,inner);box.append(measure);
+      const bounds=inner.getBoxQuads({relativeTo:measure})[0]?.getBounds();
+      const base=probe.getBoxQuads({relativeTo:measure})[0]?.p1.y;
+      if (bounds?.height>0 && Number.isFinite(base)) {
+        const height=bounds.height/type.size, depth=Math.max(0,(bounds.bottom-base)/type.size);
+        Object.assign(atom.dataset,{widthEm:bounds.width/type.size,heightEm:height,depthEm:Math.min(height,depth)});
+        inner.removeAttribute("style");inner.className="dr-typeset-math";
+        atom.append(inner);
+      } else atom.replaceWith(math);
+      measure.remove();
+    }
+    for (const atom of fragment.querySelectorAll(".dr-parallel-atom")) {
+      const w=Number(atom.dataset.widthEm),h=Number(atom.dataset.heightEm),d=Number(atom.dataset.depthEm);
+      const factor=Math.min(1,ascent/(Math.max(.001,h-d)*type.size),(type.step-ascent)/(Math.max(.001,d)*type.size));
+      Object.assign(atom.dataset,{widthEm:w*factor,heightEm:h*factor,depthEm:d*factor});
+      Object.assign(atom.style,{width:w*factor+"em",height:h*factor+"em",verticalAlign:-d*factor+"em"});
+      if (atom.firstChild?.classList?.contains("dr-typeset-math")) atom.firstChild.style.fontSize=factor+"em";
+    }
+  }
+
+  function fitMath(box,fragment,type,scale=1) {
+    const size=type.size*scale, step=type.step*scale;
+    inlineMath(box,fragment,{size,step},.84*size+.24*(step-size));
+  }
+
+  function markOverflow(box) {
+    box.dataset.overflow="true"; box.tabIndex=0;
+    box.title=DeepRead.bilingual("译文较长，可在段内滚动","Scroll within this paragraph for its full translation");
+  }
+
+  function draw(box, unit, fragment, sourceSize, type = null) {
     const doc = box.ownerDocument,
       api = engine(),
-      original = Math.max(1, sourceSize);
-    const width = parseFloat(box.style.width),
-      height = parseFloat(box.style.height);
+      original = type?.size || Math.max(1, sourceSize);
+    let width = parseFloat(box.style.width);
+    const height = parseFloat(box.style.height);
+    const ascent=type ? .84*original+.24*(type.step-original) : 0;
+    if (type) {
+      DeepRead.PaperStyles.apply(box,type);
+      inlineMath(box,fragment,type,ascent);
+      for (const number of fragment.querySelectorAll(".dr-parallel-heading-number")) {
+        number.style.width="";number.after("\u2002");
+      }
+      if (type.weight===700) {
+        for (const mark of fragment.querySelectorAll("em,i")) if (!mark.closest("[role=math]")) mark.replaceWith(...mark.childNodes);
+      }
+    }
     const style = doc.defaultView.getComputedStyle(box);
     const simple =
+      (!type || fragment.querySelectorAll("p").length<2) &&
       ![...fragment.querySelectorAll("*")].some(
         (el) =>
           !el.closest(".dr-parallel-atom") && !["p", "span", "a", "strong", "em", "b", "i"].includes(el.localName)
@@ -183,7 +235,7 @@
       marker = h(doc, "span");
       marker.className = "dr-parallel-marker";
       marker.textContent = unit.marker;
-      if (unit.markerRect) marker.style.opacity = "0";
+      if (unit.markerRect && !type) marker.style.opacity = "0";
       box.append(marker);
     }
     box.append(content);
@@ -196,7 +248,7 @@
     const firstInset = unit.marker ? markerInset : (unit.indent || 0) * original;
     const sourceLines = unit.rects?.length || 1;
     let headingSize = original;
-    if (unit.documentTitle && unit.titleInsets && simple && /^zh(?:-|$)/i.test(box.lang)) {
+    if (!type && unit.documentTitle && unit.titleInsets && simple && /^zh(?:-|$)/i.test(box.lang)) {
       const measured = h(doc, "span");
       measured.className = "dr-parallel-line-ink";
       measured.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font-size:" + original + "px";
@@ -217,7 +269,7 @@
             )
           );
     }
-    if ((unit.title || unit.centered) && simple && sourceLines === 1) {
+    if (!type && (unit.title || unit.centered) && simple && sourceLines === 1) {
       const line = h(doc, "div"),
         ink = h(doc, "span");
       line.className = "dr-parallel-line";
@@ -265,13 +317,16 @@
     // redistributes leftover height across an individual paragraph.
     const compactStep = Math.min(standardStep, original * Math.max(1.14, sourcePitch));
 
+    let dimensions;
     function paint(size, requestedStep) {
       box.style.fontSize = size + "px";
       box.style.lineHeight = requestedStep + "px";
       if (!material) {
         content.style.paddingInlineStart = nextInset + "px";
         content.style.textIndent = firstInset - nextInset + "px";
-        return box.scrollWidth <= box.clientWidth + 1 && box.scrollHeight <= box.clientHeight + 1;
+        const natural=content.offsetHeight;
+        dimensions={height:natural,inkHeight:natural,wide:content.scrollWidth>width+1};
+        return !dimensions.wide && natural<=height+.5;
       }
 
       let measureWidth = width,
@@ -290,7 +345,7 @@
         }
         measureWidth = Math.min(width, hi + size * 0.4);
       }
-      for (let pass = 0; pass < 4; pass++) {
+      for (let pass = 0; pass < (type ? 8 : 4); pass++) {
         const { lines } = api.TextLinebreak.layout(material.prepared, size, measureWidth, {
           indent: firstInset,
           hang: nextInset
@@ -318,7 +373,7 @@
           ...rows.map((row, i) => row.firstChild.offsetWidth + (i ? nextInset : firstInset) - width)
         );
         if (excess <= 0.6 || !rows.length || measureWidth <= width * 0.7) break;
-        measureWidth = Math.max(width * 0.7, measureWidth - excess - 1);
+        measureWidth = Math.max(width * 0.7, measureWidth - excess - (type ? Math.max(size*.5,1) : 1));
       }
       const extents = rows.map((row) => {
         let above = size * 0.84,
@@ -331,12 +386,12 @@
         }
         return { above, below };
       });
-      const first = extents[0]?.above || 0,
+      const first = type ? ascent : extents[0]?.above || 0,
         last = extents.at(-1)?.below || 0;
       // Extra clearance is needed only when two consecutive lines really have
       // protruding ink. Apply it to the entire block so all baselines stay even.
       let step = requestedStep;
-      for (let i = 1; i < extents.length; i++) step = Math.max(step, extents[i - 1].below + extents[i].above);
+      if (!type) for (let i = 1; i < extents.length; i++) step = Math.max(step, extents[i - 1].below + extents[i].above);
       const occupied = first + Math.max(0, rows.length - 1) * step + last;
       const baselines = rows.map((row) => {
         const ink = row.firstChild,
@@ -350,7 +405,20 @@
         row.firstChild.style.top = first - baselines[i] + "px";
         if (unit.centered) row.firstChild.style.left = Math.max(0, (width - row.firstChild.offsetWidth) / 2) + "px";
       });
-      return excess <= 1 && occupied <= height + 0.4;
+      dimensions={height:rows.length*step,inkHeight:occupied,wide:excess>1,excess,
+        lines:rows.map((row,i)=>({left:i===0 && marker ? 0 : parseFloat(row.firstChild.style.left)||0,
+          top:i*step,width:row.firstChild.offsetWidth+(i===0 && marker ? firstInset : 0),
+          height:first+extents[i].below}))};
+      return !dimensions.wide && occupied<=height+.4;
+    }
+    if (type) {
+      const rewrap=newWidth=>{
+        width=newWidth;box.style.width=width+"px";
+        paint(type.size,type.step);
+        if (material && cjkBody && type.role==="body" && !unit.centered) justifyChinese(content,width,firstInset,nextInset,type.size);
+        return {...dimensions,rewrap};
+      };
+      return rewrap(width);
     }
     let fits = paint(preferredSize, standardStep);
     if (!fits && cjkBody && paint(original, standardStep)) {
@@ -376,14 +444,7 @@
     if (fits && material && cjkBody && unit.justified && !unit.centered) {
       justifyChinese(content, width, firstInset, nextInset, parseFloat(box.style.fontSize));
     }
-    if (!fits) {
-      box.dataset.overflow = "true";
-      box.tabIndex = 0;
-      box.title = DeepRead.bilingual(
-        "译文较长，可在段内滚动",
-        "Scroll within this paragraph for its full translation"
-      );
-    }
+    if (!fits) markOverflow(box);
   }
-  DeepRead.ParallelTypeset = { engine, draw };
+  DeepRead.ParallelTypeset = { engine, draw, fitMath, markOverflow };
 })();

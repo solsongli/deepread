@@ -17,7 +17,6 @@
 (function () {
   const HTML_NS = "http://www.w3.org/1999/xhtml";
   const HIGHLIGHT_ALPHA = 0.28; // highlighter colours (session.levelColor) drawn over the PDF text
-  const FIT_MIN = 0.82; // preserve legibility while fitting the original paragraph box
   const FIT_MAX = 1.0;
   const HOVER_POINT_COLOR = "rgba(251, 191, 36, 0.32)";
   const SHOW_DELAY = 140;
@@ -48,6 +47,8 @@
   pointer-events: auto; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .deepread-layer .dr-translation.dr-title { font-weight: 700; text-align: start; }
 .deepread-layer .dr-translation p { margin: 0; }
+.deepread-layer .dr-translation .dr-layout-unit + .dr-layout-unit,
+.deepread-layer .dr-translation p + p { margin-block-start: var(--dr-paragraph-gap); }
 .deepread-layer .dr-translation .katex { font-size: 1em; }
 .deepread-layer .dr-translation:focus-visible { outline: 2px solid var(--dr-accent, #2459a9); outline-offset: 2px; }
 .deepread-layer .dr-translation[data-overflow="true"] { scrollbar-color: #a78b42 transparent; }
@@ -316,7 +317,8 @@ ${STRUCTURE_CSS}
       const pageView = this.app?.pdfViewer?.getPageView(pageIndex);
       const viewport = pageView?.viewport;
       if (!pageView?.div || !viewport) return null;
-      return { div: pageView.div, t: Array.from(viewport.transform), w: viewport.width, h: viewport.height };
+      return { div: pageView.div, t: Array.from(viewport.transform), w: viewport.width, h: viewport.height,
+        userUnit:pageView.pdfPage?.userUnit || viewport.userUnit || 1 };
     }
 
     _toPercent(geom, rect) {
@@ -659,7 +661,7 @@ ${STRUCTURE_CSS}
      * Shows the translation in a panel the size of the paragraph, so the original stays readable:
      * on a two-column page beside it in the other column (left column → right, right column → left),
      * otherwise below (above when needed). Match the source width and fit its height
-     * with bounded font/leading changes; long translations scroll. Captions size naturally.
+     * with the document's type scale; long translations scroll. Captions size naturally.
      */
     _drawTranslation(ctx, paragraph) {
       const text = this._paragraphTranslation(paragraph);
@@ -704,42 +706,30 @@ ${STRUCTURE_CSS}
       }, 0) : (pct.height / 100) * pageH;
       // One-line boxes need space for the border; multiline prose follows its source
       // height. Unmapped legacy figure boxes must never dictate a caption's height.
-      const target = Math.min(visibleHeight, Math.max(metrics.lineHeight + 6, sources.length > 1 ? Math.min(rawHeight, visibleHeight * 0.5) : rawHeight));
-      const units = [...box.querySelectorAll(".dr-layout-unit")];
-      if (units.length) {
-        box.style.textIndent = "0";
-        box.dataset.layoutUnits = String(units.length);
-        for (const unit of units) unit.style.minHeight = `${Math.max(0, target - 6) * Number(unit.dataset.share)}px`;
+      const profile=DeepRead.PaperStyles.peek(this.session);
+      const resolved=DeepRead.PaperStyles.resolve(this.session);
+      if (this._typeReady!==resolved) {
+        this._typeReady=resolved;
+        const doc=this.pdfDoc;
+        resolved.then(value=>{
+          if (value!==profile && this.attached && this.pdfDoc===doc && this.trPara) this._drawHover(this.trPara);
+        });
       }
-      const ratio = metrics.lineHeight / metrics.fontSize || 1.2;
-      const setScale = (k, pitch = ratio) => {
-        box.style.fontSize = `${metrics.fontSize * k}px`;
-        box.style.lineHeight = `${metrics.fontSize * k * pitch}px`;
-      };
-      setScale(1);
-      if (!visual) {
-        box.style.height = `${target}px`;
-        const fits = (k, pitch) => {
-          setScale(k, pitch);
-          return box.scrollHeight <= box.clientHeight + 1 && box.scrollWidth <= box.clientWidth + 1;
-        };
-        let scale = 1, pitch = ratio;
-        if (!fits(1, pitch)) {
-          // Tighten leading before shrinking glyphs. Never enlarge short Chinese text
-          // merely to fill the English box, nor drop words to make a translation fit.
-          pitch = Math.min(ratio, 1.12);
-          let lo = Math.max(FIT_MIN, Math.min(1, 9 / metrics.fontSize)), hi = 1;
-          for (let i = 0; i < 8; i++) {
-            const mid = (lo + hi) / 2;
-            if (fits(mid, pitch)) lo = mid;
-            else hi = mid;
-          }
-          scale = lo;
-        }
-        setScale(scale, pitch);
-        box.dataset.scale = scale.toFixed(2);
-      }
-      else box.dataset.scale = "1.00";
+      const sourceItems=this.session.data?.contentList;
+      const structure=DeepRead.PaperStyles.documentStructure(sourceItems);
+      const role=DeepRead.PaperStyles.role({...paragraph,size:paragraph.typography?.fontSize*(geom.userUnit || 1),
+        documentTitle:title && structure?.documentTitle!=null && paragraph.minerUid===structure.documentTitle},
+        profile,structure) || "body";
+      const type=profile.roles[role];
+      const scale=Math.hypot(geom.t[0],geom.t[1])*(geom.div.clientWidth || geom.w)/geom.w/(geom.userUnit || 1);
+      DeepRead.PaperStyles.apply(box,type,scale);
+      DeepRead.ParallelTypeset.fitMath(box,box,type,scale);
+      if (type.role.endsWith("Caption")) DeepRead.PaperStyles.captionLabel(box);
+      const target=Math.min(visibleHeight,Math.max(type.step*scale+6,sources.length>1?Math.min(rawHeight,visibleHeight*.5):rawHeight));
+      const units=box.querySelectorAll(".dr-layout-unit");
+      if (units.length) {box.style.textIndent="0";box.dataset.layoutUnits=String(units.length);}
+      if (!visual) box.style.height=target+"px";
+      box.dataset.scale="1.00";
       if (sources.length > 1) {
         box.dataset.continuationCount = String(sources.length);
         box.title = DeepRead.bilingual(`已合并 ${sources.length} 处续段的完整译文`, `Complete translation of ${sources.length} interrupted fragments`);
@@ -875,7 +865,8 @@ ${STRUCTURE_CSS}
       this.session.rail?.linkParagraph(paragraph);
       if (this._translationAllowed(paragraph) && this._paragraphTranslation(paragraph)) {
         const doc = this.pdfDoc;
-        const fonts = DeepRead.PaperType.ready(doc, this.session.data?.language || DeepRead.prefs.language());
+        const fonts = Promise.all([DeepRead.PaperType.ready(doc, this.session.data?.language || DeepRead.prefs.language()),
+          DeepRead.PaperStyles.resolve(this.session)]);
         this._timers.translation = setTimeout(async () => {
           await fonts;
           if (!this.attached || this.pdfDoc !== doc || this.hoverPara !== paragraph || !this._translationAllowed(paragraph)) return;

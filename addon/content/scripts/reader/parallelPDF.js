@@ -51,6 +51,7 @@
       .sheet {position:relative;width:${page.width}pt;height:${page.height}pt;overflow:hidden;margin:0;break-inside:avoid}
       .dr-parallel-stage {transform:scale(1.3333333333)!important;transform-origin:0 0!important} .dr-paired {outline:none!important}
       .supplement {break-before:page;padding:24pt;font-size:11pt;line-height:1.55;overflow-wrap:anywhere} .supplement p {margin:.6em 0}
+      .dr-parallel-text[data-type-role]:not([data-overflow]) {overflow:visible}
       .dr-parallel-line a {color:inherit;text-decoration:none} .dr-parallel-text[data-overflow] {overflow:hidden;scrollbar-width:none}`;
     doc.head.append(style);
     const sheet = element(doc, "div");
@@ -64,6 +65,7 @@
     }
     sheet.append(stage);
     doc.body.append(sheet);
+    const supplementStyles=[];
     if (page.supplements?.length) {
       const section = element(doc, "section");
       section.className = "supplement";
@@ -74,6 +76,10 @@
         `Page ${page.index + 1} · Full passages`
       );
       section.append(heading);
+      const styles=page.styleProfile?.roles;
+      doc.body.append(section);
+      if (styles) DeepRead.PaperStyles.apply(heading,styles.heading,4/3);
+      let previous=styles?.heading;
       const canvas = reader.source.canvas,
         pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
       for (const unit of page.supplements) {
@@ -84,18 +90,65 @@
         );
         const content=DeepRead.ParallelInk.materialize(doc, translated, unit, page, canvas, pixels);
         if(!unit.title && !unit.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(content,unit.modelText);
+        const type=styles?.[unit.typeRole] || styles?.body;
+        if (type) {
+          DeepRead.PaperType.apply(paragraph,page.language);
+          DeepRead.PaperStyles.apply(paragraph,type,4/3);
+          supplementStyles.push({paragraph,type});
+          if(type.role.endsWith("Caption")) DeepRead.PaperStyles.captionLabel(content);
+          paragraph.style.margin=Math.max(type.before,previous?.after || 0)+"pt 0 0";
+          previous=type;
+        }
         paragraph.append(content);
         section.append(paragraph);
       }
-      doc.body.append(section);
-    }
-    if (doc.querySelector("canvas[data-math-crop]")) {
-      const detail=await DeepRead.ParallelDetail.raster(reader,page,4,signal);
-      if (detail && !signal.aborted) DeepRead.ParallelInk.sharpen(doc.body,detail,page);
     }
     await Promise.all(sheets);
     doc.documentElement.getBoundingClientRect();
     await doc.fonts.ready;
+    for (const {paragraph,type} of supplementStyles) DeepRead.ParallelTypeset.fitMath(paragraph,paragraph,type,4/3);
+    if (doc.querySelector("canvas[data-math-crop]")) {
+      const detail=await DeepRead.ParallelDetail.raster(reader,page,4,signal);
+      if (detail && !signal.aborted) DeepRead.ParallelInk.sharpen(doc.body,detail,page);
+    }
+  }
+
+  function baselineGrid(reader) {
+    const stage=reader.target.stage, lines=[];
+    for (const box of stage.querySelectorAll(".dr-parallel-text[data-type-role]")) {
+      const size=parseFloat(box.style.fontSize),step=parseFloat(box.style.lineHeight);
+      const x=parseFloat(box.style.left),y=parseFloat(box.style.top),ascent=.84*size+.24*(step-size);
+      const q=Number(/rotate\((\d+)/u.exec(box.style.transform)?.[1] || 0)/90;
+      const ux=[1,0,-1,0][q],uy=[0,1,0,-1][q];
+      let i=0;
+      for (const row of box.querySelectorAll(".dr-parallel-grid-line")) {
+        const quad=row.firstChild.getBoxQuads({relativeTo:stage})[0];
+        if (quad) {
+          const ends=[quad.p1,quad.p2,quad.p3,quad.p4].map(p=>p.x*ux+p.y*uy);
+          lines.push({size,ux,uy,left:Math.min(...ends),right:Math.max(...ends),
+            baseline:-uy*x+ux*y+ascent+i*step});
+        }
+        i++;
+      }
+    }
+    return lines;
+  }
+
+  function alignText(pdf,lines) {
+    if (!lines.length) return;
+    const page=pdf.getPage(0),input=page.node.Contents();
+    const streams=input instanceof library.PDFArray ? input.asArray().map(x=>pdf.context.lookup(x)) : [input];
+    if (!streams.every(s=>s instanceof library.PDFRawStream)) return;
+    const parts=[];
+    for(const stream of streams) {
+      const bytes=library.decodePDFRawStream(stream).decode();
+      // Preserve all byte values, including literal text from a subset font.
+      for(let i=0;i<bytes.length;i+=8192) parts.push(String.fromCharCode(...bytes.subarray(i,i+8192)));
+      parts.push("\n");
+    }
+    const fixed=DeepRead.PrintGrid.snap(parts.join(""),lines,page.getMediaBox());
+    if (fixed) page.node.set(library.PDFName.of("Contents"),pdf.context.register(
+      pdf.context.flateStream(Uint8Array.from(fixed,ch=>ch.charCodeAt(0)))));
   }
 
   function restoreTextMapping(pdf, sourceText) {
@@ -222,6 +275,7 @@
         width,
         height,
         view: page.view,
+        anchors:page.typeAnchors,
         transform: page.transform
       });
       for (const link of page.links || []) {
@@ -293,11 +347,13 @@
           const y = Number.isFinite(height) ? height : page.view[3];
           const [a, b, c, d, e, f] = page.transform;
           const left = originalSide ? page.left : page.x;
+          const original={x:a*x+c*y+e,y:b*x+d*y+f};
+          const point=originalSide?original:DeepRead.ParallelFlow.destination(page.anchors,dest,original.x,original.y);
           destination = [
             page.ref,
             name("XYZ"),
-            left + Math.max(0, Math.min(page.width, a * x + c * y + e)),
-            page.top - Math.max(0, Math.min(page.height, b * x + d * y + f)),
+            left + Math.max(0, Math.min(page.width, point.x)),
+            page.top - Math.max(0, Math.min(page.height, point.y)),
             kind === "XYZ" && value[4] > 0 ? value[4] : null
           ];
         } else if (
@@ -372,6 +428,7 @@
       await context.print(settings);
       if (signal.aborted) return;
       const printed = await library.PDFDocument.load(Uint8Array.from(await IOUtils.read(temp)));
+      alignText(printed,baselineGrid(reader));
       restoreTextMapping(printed, reader.target.stage.textContent + reader.extra.textContent);
       const pages = await output.copyPages(printed, printed.getPageIndices());
       for (const result of pages) {

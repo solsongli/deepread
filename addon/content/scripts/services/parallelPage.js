@@ -116,6 +116,7 @@
       paragraphIndex: i,
       minerUid: item.id ?? `item:${i}`,
       paragraphType: item.text_level > 0 ? "title" : item.type,
+      headingLevel:item.text_level, layoutPart:item.layoutPart,
       bbox: item.bbox,
       context: item.context,
       inlineGlyphs: item.inlineGlyphs,
@@ -209,7 +210,7 @@
             minerUid: String(owner) + ":caption:" + i,
             visualOwner: owner,
             bbox: f.bbox,
-            physicalCaption: true
+            physicalCaption: true, captionKind:f.role?.endsWith("_footnote")?"footnote":item.type==="table"?"table":"figure"
           });
         }
       if (item.type === "code" && !parts.length && item.code_caption?.length) {
@@ -391,7 +392,7 @@
       .map((p) => {
         const meta = typed.get(p.minerUid);
         return meta && ["ref_text", "title", "header", "footer", "page_footnote"].includes(meta.paragraphType)
-          ? { ...p, paragraphType: meta.paragraphType, pageIndex: meta.pageIndex }
+          ? { ...p, paragraphType: meta.paragraphType, pageIndex: meta.pageIndex,headingLevel:meta.headingLevel }
           : p;
       });
     const used = new Set(sources.map((p) => p.minerUid).filter((id) => id != null));
@@ -575,6 +576,12 @@
         };
         block.visualOwner = p.visualOwner;
         block.role = type;
+        block.headingLevel=p.headingLevel;
+        block.layoutPart=p.layoutPart;
+        block.captionKind=p.captionKind;
+        block.frontMatter=authorArea(p) && type==="text" &&
+          (p.verbatim || DeepRead.ParallelVisual.isName(p.paragraphText) ||
+          (p.paragraphText.match(/\p{Lu}[\p{L}.’-]+\s+\p{Lu}[\p{L}.’-]+[\d,;¹²³∗†]/gu)||[]).length>=2 || /@|^\s*[\d*∗†‡]|\b(?:University|Institute|Laboratory)\b/u.test(p.paragraphText.slice(0,80)));
         if (p.flushLeft) block.flushLeft = true;
         block.verbatim = !!p.verbatim || !/[\p{L}\p{N}]/u.test(block.modelText.replace(/⟦D+\d+⟧/gu,""));
         block.context = p.context;
@@ -939,5 +946,5 @@
     }
     for (const [u, text] of accepted) u.translation = text;
   }
-  DeepRead.ParallelPage = { plan, hydrate, records, translate, interruptedContext, setContext };
+  DeepRead.ParallelPage = { fromPermille, plan, hydrate, records, translate, interruptedContext, setContext };
 })();

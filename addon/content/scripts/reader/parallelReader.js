@@ -233,8 +233,9 @@
           if (stored) this.parsed = { provider, items: Array.isArray(stored) ? stored : stored.items,
             legacy:Array.isArray(stored), fallback:!!stored.fallback, fingerprint: page.fingerprint };
         }
-        [page.saved] = await Promise.all([
+        [page.saved,page.styleProfile] = await Promise.all([
           DeepRead.Store.comparisonData(this.session.key, page.fingerprint, slotFor(index, page.language)),
+          DeepRead.PaperStyles.resolve(this.session),
           DeepRead.PaperType.ready(this.doc, page.language),
           DeepRead.FigureOCR.discover(this,page)
         ]);
@@ -281,6 +282,11 @@
       page.localItems = source?.length ? null : items;
       PLAN.setContext(page.units,page.context);
       PLAN.hydrate(page.units, page.saved);
+      if (page.styleProfile) {
+        DeepRead.PaperStyles.classify(page.units,page.styleProfile,DeepRead.PaperStyles.documentStructure(source),page.view,Math.hypot(page.transform[0],page.transform[1]));
+        page.equations=items.filter(it=>["equation","formula","interline_equation"].includes(it.type))
+          .map(it=>PLAN.fromPermille(it.bbox,page.view)).filter(Boolean).map(rect=>project(rect,page.transform));
+      }
     }
 
     async parseDocument(page, signal, force = false) {
@@ -694,16 +700,18 @@
       this.target.stage.replaceChildren(canvas); this.extra.replaceChildren();
       const kx = canvas.width / page.width, ky = canvas.height / page.height;
       const pixels = page.units.some((u) => u.translation) ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
-      const notes = [], hdoc = this.doc;
+      const notes = [], frames=[], hdoc = this.doc;
       page.supplements=[];
       page.dirtyRects=[];
       for (const u of page.units) {
         if (!u.translation) continue;
+        const type=page.styleProfile?.roles[u.typeRole];
         const rects = u.placed ? u.masks.map((r) => project(r, page.transform)) : [];
         const patches=u.verifiedLabel && u.placed ? u.masks.map(mask=>DeepRead.ParallelInk.labelPatch(pixels,mask,page,u.size)) : [];
         const colors = rects.map((r,i) => u.verifiedLabel ? patches[i]?.color : paperColor(pixels, r, kx, ky));
         const originalFragment = hdoc.importNode(this.session.overlay._translationContent(u, u.translation, page.language), true);
         let fragment = materialize(hdoc,originalFragment,u,page,this.source.canvas,pixels);
+        if (type?.role.endsWith("Caption")) DeepRead.PaperStyles.captionLabel(fragment);
         if(!u.title && !u.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(fragment,u.modelText);
         const samples=u.linkSamples || [];
         if (samples.length && !fragment.querySelector("a")) {
@@ -724,7 +732,7 @@
           const r = rects[i]; ctx.fillStyle = `rgb(${colors[i].join(",")})`;
           ctx.fillRect(Math.floor(r.left * kx), Math.floor(r.top * ky), Math.ceil((r.left + r.width) * kx) - Math.floor(r.left * kx), Math.ceil((r.top + r.height) * ky) - Math.floor(r.top * ky));
         }
-        if (u.markerRect) {
+        if (u.markerRect && !type) {
           const m=project(u.markerRect,page.transform), x=Math.max(0,Math.floor(m.left*kx)-1), y=Math.max(0,Math.floor(m.top*ky)-1);
           const w=Math.ceil((m.left+m.width)*kx)-x+1, ht=Math.ceil((m.top+m.height)*ky)-y+1;
           ctx.drawImage(this.source.canvas,x,y,w,ht,x,y,w,ht);
@@ -762,10 +770,15 @@
         if (chinese && u.title && u.allItalic) block.classList.add("dr-paper-subheading");
         if (u.allItalic) block.style.fontStyle='italic';
         this.target.stage.append(block);
-        DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment, u.size * Math.hypot(page.transform[0], page.transform[1]));
+        if (type) layoutUnit={...layoutUnit,allItalic:false,title:type.weight===700,
+          boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:type.role==="documentTitle" && u.centered};
+        const metrics=DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment,
+          u.size*Math.hypot(page.transform[0],page.transform[1]),type);
+        frames.push({unit:u,block,angle,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics});
         if (block.dataset.overflow) page.supplements.push(u);
         this.pair(u,block,false);
       }
+      DeepRead.ParallelFlow.render(frames,page,canvas);
       if (notes.length) {
         const detail = h(hdoc, "details", "dr-parallel-unplaced"); detail.open = true;
         detail.append(h(hdoc, "summary", "", tr(`单独显示的译文（${notes.length}）`, `Translations outside the page (${notes.length})`)));
@@ -773,6 +786,8 @@
           const row = h(hdoc, "div", "dr-parallel-passage");
           const translated = h(hdoc, "div");
           DeepRead.PaperType.apply(translated, page.language);
+          const type=page.styleProfile?.roles[u.typeRole];
+          if (type) DeepRead.PaperStyles.apply(translated,type,4/3);
           translated.append(frag);
           row.append(h(hdoc, "div", "", u.source), translated); detail.append(row);
           this.pair(u,row,true);

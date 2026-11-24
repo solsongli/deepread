@@ -96,6 +96,15 @@ E2E.run = async function () {
     const dims = () => [c.source.element.getBoundingClientRect(), c.target.element.getBoundingClientRect()];
     const [original, target] = dims();
     check('paired pages have equal dimensions at the same Y', Math.abs(original.width-target.width)<0.1 && Math.abs(original.height-target.height)<0.1 && Math.abs(original.y-target.y)<0.1);
+    const paperStyle=c.page.styleProfile.roles;
+    const body=actions.find(el=>el.dataset.typeRole==="body");
+    const cap=actions.find(el=>el.dataset.typeRole==="figureCaption");
+    check("body and caption use their document sizes even with different source frames",
+      !!body && !!cap && parseFloat(body.style.fontSize)===paperStyle.body.size &&
+      parseFloat(cap.style.fontSize)===paperStyle.figureCaption.size && parseFloat(body.style.lineHeight)===paperStyle.body.step);
+    const baseProbes=list.map(el=>[...el.querySelectorAll(".dr-parallel-baseline")].map(p=>p.getBoxQuads({relativeTo:c.target.stage})[0].p1.y));
+    check("adjacent list items have the fixed paragraph gap in the actual baseline positions",
+      list[0].dataset.flow===list[1].dataset.flow && Math.abs(baseProbes[1][0]-baseProbes[0].at(-1)-paperStyle.list.step-paperStyle.list.after)<.1);
     const scale = target.width / c.page.width;
     check('left-column text begins at the matching PDF coordinate', Math.abs((list[0].getBoundingClientRect().x-target.x)/scale - 44)<1);
     check('right column stays in the right column', actions.some((box) => box.textContent.includes('两组实验') && parseFloat(box.style.left) > 310));
@@ -147,6 +156,9 @@ E2E.run = async function () {
     check('stopping a book run discards a late reply', !c.book && !(await D.Store.comparisonData(s.key,c.page.fingerprint,'page:1:zh')));
     const before = calls; await c.translateBook();
     check('whole document resumes from the first missing page and reuses parsed geometry', calls===before+2 && parseCalls===1 && !c.book);
+    const rotated=c.target.stage.querySelector('[data-type-role="body"]');
+    check("navigating to a rotated page keeps the same physical body size and line spacing",
+      rotated && rotated.style.fontSize===body.style.fontSize && rotated.style.lineHeight===body.style.lineHeight);
     check('translated text rotates with its source', [...c.target.stage.querySelectorAll('.dr-parallel-text')].some((b) => b.style.transform === 'rotate(90deg)'));
     await c.showPage(2);
     check('OCR-only text keeps its known physical rectangle', c.target.stage.textContent.includes('扫描页正文'));

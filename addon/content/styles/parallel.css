@@ -30,9 +30,6 @@
 .dr-parallel-baseline { display: inline-block; width: 0; height: 0; padding: 0; margin: 0; vertical-align: baseline; }
 .dr-parallel-copy { padding: 0; margin: 0; }
 .dr-parallel-marker { position: absolute; inset-inline-start: 0; top: 0; }
-.dr-parallel-atom { display: inline-block; position: relative; line-height: 0; white-space: nowrap; }
-.dr-parallel-atom canvas { display: block; width: 100%; height: 100%; }
-.dr-parallel-atom-text { position: absolute; inset: 0; overflow: hidden; opacity: 0; }
 .dr-parallel-text a[data-source-link] { text-decoration: none; cursor: pointer; }
 .dr-parallel-text a[data-source-link]:hover { text-decoration: underline; }
 .deepread-parallel button.dr-parallel-hit { position: absolute; min-height: 0; padding: 0; margin: 0; background: transparent; border: 0; border-radius: 0; }
@@ -43,6 +40,7 @@
 .dr-parallel-heading-number { display: inline-block; }
 .dr-parallel-text[data-overflow="true"] { overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .dr-parallel-text p { margin: 0; }
+.dr-parallel-text[data-type-role] .dr-parallel-copy > p + p { margin-block-start: var(--dr-paragraph-gap); }
 .deepread-parallel :is(button,input,summary,[tabindex]):focus-visible { outline: 2px solid var(--dr-accent); outline-offset: -2px; }
 .deepread-parallel.dr-single:not(.dr-show-source) .dr-parallel-column:first-child,
 .deepread-parallel.dr-single.dr-show-source .dr-parallel-column:last-child { visibility: hidden; position: absolute; left: -100000px; }

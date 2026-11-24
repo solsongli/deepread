@@ -5,7 +5,7 @@
 E2E.run = async function () {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const assert = (ok, message) => { if (!ok) throw new Error(message); };
-  for (let i = 0; i < 100 && !Zotero.DeepRead; i++) await sleep(100);
+  for (let i = 0; i < 120 && !Zotero.DeepRead?.Panes?.paneIDs?.chat; i++) await sleep(100);
   const D = Zotero.DeepRead;
   const item = await Zotero.Attachments.importFromFile({ file: Zotero.File.pathToFile(E2E.env("DEEPREAD_E2E_PDF")), libraryID: Zotero.Libraries.userLibraryID });
   const reader = await Zotero.Reader.open(item.id);
@@ -39,17 +39,19 @@ E2E.run = async function () {
   session.structureBar.refresh();
   assert(!!session.structureBar.root.querySelector(".dr-figures"), "Figure reading control missing");
   const overlay = session.overlay;
+  overlay.setOptions({translationPopup:true});
+  await D.PaperStyles.resolve(session);
   await sleep(700);
   const paras = overlay.pages.get(0);
   for (let i = 0; i < paras.length; i++) {
     await reader.navigate({ position: { pageIndex: 0, rects: paras[i].rects } });
     await sleep(400);
-    overlay.trPara = paras[i];
+    overlay.hoverPara = overlay.trPara = paras[i];
     overlay._drawHover(paras[i]);
-    await sleep(150);
     const box = overlay.pdfDoc.querySelector(".dr-translation");
     assert(box, "No translation rendered");
-    assert(Number(box.dataset.scale) <= 1, "Translation enlarged beyond original");
+    const type=D.PaperStyles.peek(session).roles[i===0?"body":"figureCaption"];
+    assert(box.dataset.typeRole===type.role && box.dataset.scale==="1.00","Paragraph did not use its document type role");
     assert(box.querySelector("strong"), "Bold translation lost in renderer");
     assert(box.querySelector("strong").textContent !== box.textContent.trim(), "Entire translation was bolded");
     const font = Number(box.dataset.fontSize);

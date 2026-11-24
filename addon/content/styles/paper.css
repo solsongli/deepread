@@ -66,3 +66,7 @@
   font-family: "Noto Sans CJK TC", "Source Han Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
 }
 .dr-paper-subheading { font-weight: 600; }
+.dr-parallel-atom { display: inline-block; position: relative; line-height: 0; white-space: nowrap; }
+.dr-parallel-atom canvas { display: block; width: 100%; height: 100%; }
+.dr-parallel-atom-text { position: absolute; inset: 0; overflow: hidden; opacity: 0; }
+.dr-typeset-math { position: absolute; top: 0; left: 0; white-space: nowrap; line-height: normal; }

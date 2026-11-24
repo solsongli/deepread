@@ -114,6 +114,7 @@
         text: text(run),
         page_idx: original.page_idx,
         id: original.id + ":physical:" + suffix,
+        layoutPart:suffix.startsWith("contents-")?"contents":suffix.startsWith("algorithm-")?"algorithm":undefined,
         bbox: boxFor(run),
         inlineGlyphs: run
       };
