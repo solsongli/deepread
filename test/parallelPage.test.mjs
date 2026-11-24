@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const scope = vm.createContext({ DeepRead: { bilingual: (zh) => zh } });
 const load = (file) => vm.runInContext(readFileSync(new URL('../addon/content/' + file, import.meta.url), 'utf8'), scope);
 load('lib/retainpdf/rendering/rects.js');
-for (const name of ['services/typography','services/translationLayout','services/continuations','reader/overlay','services/parallelInline','services/parallelVisual','services/parallelPage']) load('scripts/' + name + '.js');
+for (const name of ['services/typography','services/translationLayout','services/continuations','reader/overlay','services/parallelInline','services/parallelVisual','services/parallelFrames','services/parallelPage']) load('scripts/' + name + '.js');
 const D = scope.DeepRead;
 D.ParallelTypeset = { engine: () => scope.RetainPdfRendering };
 const view = [20, 30, 220, 230];
@@ -33,13 +33,13 @@ scan[0].translation='测量小样本。';
 const saved=D.ParallelPage.records(scan);const updated=D.ParallelPage.plan({...opts,items:[{...frame,text:'A different source.'}]});
 D.ParallelPage.hydrate(updated,saved);assert.equal(updated[0].translation,'','numeric IDs alone cannot recover a translation');
 const units=D.ParallelPage.plan(opts);D.ParallelPage.hydrate(units,saved);assert.equal(units[0].translation,'测量小样本。');
-const pending = Array.from({length:6},(_,i)=>({source:`Paragraph ${i}`,styled:`Paragraph ${i}`,translation:''}));
+const pending = Array.from({length:8},(_,i)=>({source:`Paragraph ${i}`,styled:`Paragraph ${i}`,translation:''}));
 let calls=0;
 await assert.rejects(D.ParallelPage.translate(pending,{language:'zh',signal:new AbortController().signal,request:async (args)=>{
   const list=JSON.parse(args.messages[0].content.split('\n').slice(1).join('\n'));calls++;
-  return {content:JSON.stringify({translations:calls===2?[]:list.map(row=>({id:row.id,translation:'译文'}))})};
+  return {content:JSON.stringify({translations:calls>=2?[]:list.map(row=>({id:row.id,translation:'译文'}))})};
 }}));
-assert.equal(calls,2);assert.ok(pending.every(u=>u.translation===''),'a failed page cannot claim completion after a successful first batch');
+assert.equal(calls,3);assert.ok(pending.every(u=>u.translation===''),'a failed page cannot claim completion after a successful first batch');
 console.log('parallelPage: crop, graphic protection, physical continuation mapping, cache and atomic retries passed');
 
 const describe = (source, lang = 'zh', runs = []) => D.ParallelInline.describe(runs,source,source,10,lang);
@@ -89,7 +89,7 @@ async function repairTest(alwaysFail) {
   }});
   if (alwaysFail) {await assert.rejects(promise);assert.ok(rows.every(u=>!u.translation));}
   else {await promise;assert.ok(rows.every(u=>u.translation));}
-  assert.deepEqual(sizes,[2,1]);
+  assert.deepEqual(sizes,alwaysFail ? [2,1,1] : [2,1]);
 }
 await repairTest(false);await repairTest(true);
 console.log('parallelPage: inline PDF and OCR formulas, protected semantics, numbering, cache migration and selective repair passed');
@@ -183,3 +183,93 @@ assert.equal(bitmap.data[(15*80+24)*4],255);
 assert.equal(bitmap.data[(8*80+24)*4],0,'horizontal cell rule survives text replacement');
 assert.equal(bitmap.data[(14*80+45)*4],0,'vertical cell rule survives text replacement');
 console.log('parallelPage: full dates, heading numbering, paragraph lead-ins and cell rules passed');
+
+const proseUnit = source => ({...describe(source),source,translation:''});
+const copy = proseUnit('Our method performs well on unseen data.');
+assert.equal(D.ParallelInline.valid(copy,copy.source),false);
+assert.equal(D.ParallelInline.valid(copy,'结果显示 Our method performs well on unseen data.'),false);
+assert.equal(D.ParallelInline.fromLegacy(copy,copy.source),'');
+assert.equal(D.ParallelInline.valid({...copy,language:'en'},copy.source),true);
+assert.ok(D.ParallelInline.valid(proseUnit('RoboJEPA'),'RoboJEPA'));
+assert.ok(D.ParallelInline.valid(proseUnit('We use V-JEPA and PyTorch.'),'我们使用 V-JEPA 和 PyTorch。'));
+const again=[proseUnit('Introduction'),proseUnit('Training details'),proseUnit('Introduction')], requests=[], checkpoints=[];
+await D.ParallelPage.translate(again,{language:'zh',signal:new AbortController().signal,onProgress:async rows=>checkpoints.push(rows.length),
+  request:async ({messages})=>{
+    const rows=JSON.parse(messages[0].content.split('\n')[1]);
+    requests.push(rows.map(r=>r.source_text));
+    return {content:JSON.stringify({translations:[{id:rows[0].id,translation:requests.length===1?'引言':'训练细节'}]})};
+  }});
+assert.deepEqual(requests,[['Introduction','Training details'],['Training details']]);
+assert.deepEqual(checkpoints,[2,1]);
+assert.deepEqual(again.map(u=>u.translation),['引言','训练细节','引言']);
+
+const cachedCopy=D.ParallelPage.plan({...opts,items:[{...frame,text:copy.source}]});
+cachedCopy[0].translation=copy.source;
+const copiedRecords=D.ParallelPage.records(cachedCopy);
+cachedCopy[0].translation='';
+D.ParallelPage.hydrate(cachedCopy,copiedRecords);
+assert.equal(cachedCopy[0].translation,'','a cached source-language echo is pending on reopening the reader');
+
+const atY=(value,x,y,opts={})=>at(value,x,y).map((c,i)=>({...c,...opts,lineBreakAfter:i===value.length-1}));
+const tocRows=[
+  atY('A Alpha methods . . . . 10',8,150),
+  atY('B Other results . . . . 12',8,135),
+  atY('C More examples . . . . 14',8,120)
+];
+const flatToc=tocRows.map(r=>r.map(c=>c.u).join('')).join(' ');
+const tocPlan=D.ParallelPage.plan({view:hv,chars:tocRows.flat(),items:[{id:20,type:'text',text:flatToc,bbox:[0,160,1000,420]}]});
+assert.deepEqual(Array.from(tocPlan,u=>u.source),['Alpha methods','Other results','More examples']);
+assert.ok(tocPlan.every(u=>u.placed && u.rect[2]<120 && u.rect[0]>10),'destination numbers and leader dots keep their own ink');
+
+const splitAtScript=[...atY('the vector ',15,100),...atY('V',72,105,{fontSize:6,baseline:106,rect:[72,102,76,108]}),
+  ...atY('t',71,99,{fontSize:6,baseline:99,rect:[71,98,76,104]}),...atY('is given.',80,100)];
+const repaired=D.ParallelFrames.repairScripts(splitAtScript);
+assert.ok(splitAtScript[11].lineBreakAfter && !repaired[11].lineBreakAfter && repaired[12].scriptContinuation);
+assert.equal(D.ParallelFrames.repairScripts([...atY('normal line',10,110),...atY('next line',10,96)])[10].lineBreakAfter,true);
+console.log('parallelPage: missing IDs, incremental cache, source-language echoes, contents and stacked PDF scripts passed');
+
+assert.ok(D.ParallelInline.valid(proseUnit('The study was published in The International Journal of Robotics Research.'),
+  '该研究发表于 The International Journal of Robotics Research。'),'a journal title can remain in English');
+assert.ok(D.Typography.bold({fontName:'ABCDEF+OptimisticDisp-Bd'}));
+const boundaryUnit=proseUnit('We use the compiler; the');
+const edgeParts=[boundaryUnit.source,'next experiment reports a 5% difference in Table 18.'];
+D.ParallelPage.setContext([boundaryUnit],new Map([[D.ParallelInline.geometryText(boundaryUnit.source),edgeParts]]));
+assert.ok(!D.ParallelInline.valid(boundaryUnit,'我们使用编译器；下一次实验的差异为 5%。'));
+assert.ok(D.ParallelInline.valid(boundaryUnit,'我们使用该编译器；'));
+boundaryUnit.translation='我们使用编译器；下一次实验的差异为 5%。';
+D.ParallelPage.hydrate([boundaryUnit],[]);
+assert.equal(boundaryUnit.translation,'','a neighbouring page cannot donate its results to an old translation');
+
+const rectOf = run => [Math.min(...run.map(c=>c.rect[0])),Math.min(...run.map(c=>c.rect[1])),
+  Math.max(...run.map(c=>c.rect[2])),Math.max(...run.map(c=>c.rect[3]))];
+const pageView=[0,0,500,250];
+const itemFor=(id,run,value,role='text')=>{
+  const [l,b,r,t]=rectOf(run);return {id,page_idx:0,type:role,text:value,bbox:[l*2,(250-t)*4,r*2,(250-b)*4]};
+};
+const algorithmLines=['Algorithm 1 Sample procedure','Require: initial state','1: for i = 1 do',
+  '2: Draw one sample','3: end for','4: return state','The next paragraph continues on the next page.'];
+const algRuns=algorithmLines.map((t,i)=>atY(t,20,214-i*16));
+const algorithm=D.ParallelPage.plan({view:pageView,items:algRuns.map((r,i)=>itemFor(i,r,algorithmLines[i])),chars:algRuns.flat()});
+assert.ok(algorithm.some(u=>u.source===algorithmLines.at(-1) && u.placed),'a following prose paragraph is not part of an algorithm');
+assert.ok(algorithm.some(u=>u.role==='algorithm_step' && u.source==='Draw one sample'));
+assert.ok(!algorithm.some(u=>u.source==='4: return state'),'leave pseudocode syntax as printed');
+
+const keyRows=['short horizon: y = 0.32 + x','long horizon: y = 0.75 + x'];
+const keyRuns=keyRows.map((t,i)=>atY(t,20,140-i*13));
+const legend=D.ParallelPage.plan({view:pageView,items:[itemFor(80,keyRuns.flat(),keyRows.join(' '))],chars:keyRuns.flat()});
+assert.deepEqual(Array.from(legend,u=>u.source),['short horizon','long horizon']);
+assert.ok(legend.every(u=>u.placed && u.role==='figure_label'),'fit the legend name without repainting its equation');
+
+const gridCaption='Table 1 Each platform has a separate entry and a notes field.';
+const gridTop=atY(gridCaption,10,225);
+const entries=[['#','Platform','Notes'],['1','Astra','First setting'],['2','Beryl','Second setting'],['3','Ceres','Third setting']];
+const gridRuns=entries.map((cells,i)=>cells.flatMap((v,j)=>{
+  const run=atY(v,[12,30,146][j],196-i*14);
+  if(j<2)Object.assign(run.at(-1),{lineBreakAfter:false,spaceAfter:true});
+  return run;
+}));
+const grid=D.ParallelPage.plan({view:pageView,chars:[...gridTop,...gridRuns.flat()],items:[
+  itemFor(100,gridTop,gridCaption),itemFor(101,gridRuns.flat(),entries.flat().join(' '))]});
+const translatedCells=Array.from(grid.filter(u=>u.role==='table_label'),u=>u.source);
+assert.ok(['Platform','Notes','First setting','Second setting','Third setting'].every(label=>translatedCells.includes(label)),JSON.stringify(translatedCells));
+assert.ok(!grid.some(u=>u.source.includes('First setting Second setting') || u.source==='Astra' || u.source==='1 Astra First setting'));

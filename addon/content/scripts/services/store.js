@@ -180,6 +180,19 @@ DeepRead.Store = {
       [key, fingerprint, slot, JSON.stringify(data)]);
   },
 
+  async mergeComparisonTranslations(key, fingerprint, slot, accepted) {
+    if (!fingerprint) return accepted;
+    let merged;
+    await this.db.executeTransaction(async () => {
+      const existing = await this.comparisonData(key, fingerprint, slot);
+      const byFrame = new Map((existing || []).map(row => [row.identity, row]));
+      for (const row of accepted) byFrame.set(row.identity, row);
+      merged = [...byFrame.values()];
+      await this.saveComparisonData(key, fingerprint, slot, merged);
+    });
+    return merged;
+  },
+
   async getChat(attachmentKey) {
     const raw = await this.db.valueQueryAsync("SELECT messages FROM chats WHERE attachment_key = ?", [attachmentKey]);
     if (!raw) return [];

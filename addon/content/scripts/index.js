@@ -21,6 +21,7 @@
     "services/parallelTypeset.js",
     "services/parallelInline.js",
     "services/parallelVisual.js",
+    "services/parallelFrames.js",
     "services/parallelPage.js",
     "services/continuations.js",
     "services/textLayerParser.js",

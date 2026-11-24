@@ -444,12 +444,47 @@
       copyPlain(last, text.length);
       modelText = tidy(DeepRead.Typography.styledSentence({ text: modelPlain, charMapping: modelMap }, modelGlyphs));
     } else modelText = spans.length ? tidy(modelText + styled(last, text.length)) : sourceStyled;
-    return { tokens: spans, modelText, styled: sourceStyled };
+    return { tokens: spans, modelText, styled: sourceStyled, language };
   }
 
   const pattern = /⟦D+\d+⟧/gu;
+  // Match copied prose against this source. Method names, citations and formula
+  // identifiers can legitimately remain Latin in the middle of a Chinese sentence.
+  function copiedEnglish(unit, translation) {
+    if (!isHan(unit.language) || unit.verbatim) return false;
+    const clean = s => (s || "").replace(pattern, " ").replace(/https?:\/\/\S+|[\w.+-]+@[\w.-]+/giu, " ").replace(/\*/gu, "");
+    const source = clean(unit.modelText || unit.source);
+    const target = clean(translation);
+    const phrase = /[A-Za-z][A-Za-z'-]*(?:[ \t]+[A-Za-z][A-Za-z'-]*)*/gu;
+    const common = /\b(?:an?|the|is|are|for|from|with|which|that|this|these|we|our|was|were|can|has|have|using|each|between|within|into|results?|methods?|training|details|figure|table|introduction|conclusions?|discussion|appendix|abstract|overview|references|loss|average|grasp|task|mean|accuracy|architecture|model|masking|input|output|robot|conditioning|frozen|trainable|view|time|role|accuracy|score|exterior|predictor|encoder|parameters|setup|algorithm|resolution|minimizes)\b/iu;
+    const fold = str => str.toLowerCase().replace(/[^a-z'-]+/gu, " ").trim();
+    const haystack = " " + fold(source) + " ";
+    const hasHan = /\p{Script=Han}/u.test(target);
+    for (const match of target.matchAll(phrase)) {
+      // Official publication names are normally retained in bibliographies.
+      const venue = /\b(?:Journal|Conference|Proceedings|Transactions|Symposium|Workshop|Press)\b/u.test(match[0]) &&
+        match[0].split(/\s+/u).every(w => /^(?:[A-Z][\p{L}'-]*|the|of|on|in|for|and|at)$/u.test(w));
+      if (venue) continue;
+      const words = fold(match[0]);
+      if (!haystack.includes(" " + words + " ") || !common.test(words)) continue;
+      const count = words.split(" ").length;
+      if ((!hasHan && (count >= 2 || words === fold(source))) || (count >= 5 && /\b(?:the|is|are|that|we|our|was|were|with|this|these|can|have|has|which)\b/iu.test(words))) return true;
+    }
+    return false;
+  }
+
+  function numbers(value) {
+    const spelled = ["zero","one","two","three","four","five","six","seven","eight","nine","ten"];
+    const text = (value || "").normalize("NFKC").replace(pattern," ")
+      .replace(/\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/giu, word=>String(spelled.indexOf(word.toLowerCase())))
+      .replace(/(\d)\s*(?:per ?cent|percent|%)/giu,"$1%");
+    return new Set(text.match(/\d+(?:\.\d+)*(?:%)?/gu) || []);
+  }
+
   function valid(unit, text) {
     if (typeof text !== "string" || !text.trim()) return false;
+    if (copiedEnglish(unit, text)) return false;
+    if (unit.foreignNumbers?.length && [...numbers(text)].some(n=>unit.foreignNumbers.includes(n))) return false;
     const actual = text.match(pattern) || [],
       expected = unit.tokens || [];
     if (actual.length !== expected.length || !expected.every((s) => actual.includes(s.id))) return false;
@@ -523,5 +558,5 @@
       .replace(/[ˆˇ˘˙˚˜]/gu, "")
       .replace(/[^\p{L}\p{N}]/gu, "");
   }
-  DeepRead.ParallelInline = { describe, valid, fromLegacy, alignOCR, geometryText };
+  DeepRead.ParallelInline = { describe, valid, fromLegacy, alignOCR, geometryText, numbers };
 })();

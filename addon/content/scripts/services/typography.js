@@ -1,6 +1,6 @@
 /* PDF text alignment and translation typography. License: AGPL-3.0-or-later */
 (function () {
-  const bold = (c) => c?.bold === true || /bold|black|heavy|[-,]Medi(?:Ital)?\b|(?:^|\+)(?:cm|lm)(?:ss)?bx(?:ti|sl)?\d/i.test(c?.fontName || "");
+  const bold = (c) => c?.bold === true || /bold|black|heavy|[-,]Bd(?:It|Obl)?(?:MT)?$|[-,]Medi(?:Ital)?\b|(?:^|\+)(?:cm|lm)(?:ss)?bx(?:ti|sl)?\d/i.test(c?.fontName || "");
   const italic = (c) => c?.italic === true || /italic|oblique|(?:Regu|Medi|Bold|[-,])Ital(?:MT)?\b|(?:^|\+)(?:cm|lm)(?:bxti|bxsl|ti|sl|itt|ssi)\d/i.test(c?.fontName || "");
   const monospace = c => /(?:^|\+)(?:cm|lm)(?:tt|itt)\d|mono|NimbusMon|Courier|Consolas|Menlo/i.test(c?.fontName || "");
   const normal = (s) => String(s || "").normalize("NFKD").toLowerCase().replace(/ı/g,"i")

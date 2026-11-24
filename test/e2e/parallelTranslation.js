@@ -43,7 +43,8 @@ E2E.run = async function () {
     if (text.includes('Errors')) return '分别报告误差。';
     return text.includes('intersecting') ? '与图像重叠的译文。' : '扫描页正文。';
   };
-  let calls = 0, parseCalls = 0, fail = false, stall = false, resume;
+  let calls = 0, parseCalls = 0, fail = false, stall = false;
+  const pendingReplies = [];
   D.Parser.parsePDF = async ({ pdfApp, attachmentKey }) => {
     parseCalls++; check('comparison uses selected parser with an isolated working key', D.prefs.parserConfig().provider === 'mineru' && pdfApp && attachmentKey.startsWith(s.key + '-comparison-'));
     return { contentList: source };
@@ -51,7 +52,7 @@ E2E.run = async function () {
   D.LLM.complete = async (args) => {
     const list = JSON.parse(args.messages[0].content.split('\n').slice(1).join('\n'));
     calls++;
-    if (stall) await new Promise((r) => { resume = r; });
+    if (stall) await new Promise(resolve => pendingReplies.push(resolve));
     if (fail) return { content: JSON.stringify({ translations: [] }) };
     return { content: JSON.stringify({ translations: list.map((u) => ({ id: u.id, translation: translated(u.source_text) })) }) };
   };
@@ -117,8 +118,8 @@ E2E.run = async function () {
     await c.showPage(1);
     check('rotation and crop box come from the original PDF', c.page.width === 560 && c.page.height === 512 && c.page.view[0]===20);
     fail = true; await c.translatePage(); fail = false;
-    check('incomplete provider reply leaves the page retryable, with no partial cache', !c.translateButton.hidden && !(await D.Store.comparisonData(s.key,c.page.fingerprint,'page:1:zh')));
-    stall = true; const canceled = c.translateBook(); await until(() => !!resume); c.bookButton.click(); resume(); await canceled; stall = false;
+    check('a reply with no valid IDs leaves the page retryable and uncached', !c.translateButton.hidden && !(await D.Store.comparisonData(s.key,c.page.fingerprint,'page:1:zh')));
+    stall = true; const canceled = c.translateBook(); await until(() => pendingReplies.length); c.bookButton.click(); pendingReplies.splice(0).forEach(resolve => resolve()); await canceled; stall = false;
     check('stopping a book run discards a late reply', !c.book && !(await D.Store.comparisonData(s.key,c.page.fingerprint,'page:1:zh')));
     const before = calls; await c.translateBook();
     check('whole document resumes from the first missing page and reuses parsed geometry', calls===before+2 && parseCalls===1 && !c.book);

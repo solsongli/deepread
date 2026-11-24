@@ -3,7 +3,7 @@
 (function () {
   const visual = new Set(["image", "figure", "chart", "table"]);
   const protectedTypes = new Set([...visual, "equation", "interline_equation", "formula", "code", "code_block"]);
-  const prose = new Set(["text", "title", "list", "text_with_equation", "ref_text", "header", "footer", "footnote", "page_footnote", "caption", "table_label", "figure_label", "code_comment"]);
+  const prose = new Set(["text", "title", "list", "text_with_equation", "ref_text", "header", "footer", "footnote", "page_footnote", "caption", "algorithm_step", "table_label", "figure_label", "formula_note", "code_comment"]);
   const normalized = text => DeepRead.ParallelInline.geometryText(text);
   const valid = (r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1];
   const union = (rects) => rects.length ? DeepRead.Overlay.unionRect(rects) : null;
@@ -78,7 +78,7 @@
         const height = last && Math.max(last[3] - last[1], c.rect[3] - c.rect[1], c.fontSize || 0);
         const scriptOnLine = last && c.rect[0] >= last[2] - height * 0.2 && c.rect[0] < last[2] + height &&
           c.rect[1] <= last[3] + height * 0.15 && c.rect[3] >= last[1] - height * 0.15;
-        if (last && !scriptOnLine && Math.abs(c.rect[1] - line[0][1]) > Math.max(2, height * 0.65)) {
+        if (last && !scriptOnLine && !c.scriptContinuation && Math.abs(c.rect[1] - line[0][1]) > Math.max(2, height * 0.65)) {
           rects.push(union(line)); line = [];
         }
         line.push(c.rect);
@@ -118,6 +118,9 @@
       paragraphType: item.text_level > 0 ? "title" : item.type,
       bbox: item.bbox,
       context: item.context,
+      inlineGlyphs: item.inlineGlyphs,
+      visualOwner: item.visualOwner,
+      flushLeft: item.flushLeft,
       pageIndex: item.page_idx,
       docTitle: item.text_level === 1 && item.page_idx === 0
     };
@@ -165,8 +168,9 @@
     return {label, end:end+1, rect:union(first.map(c=>c.rect).filter(valid))};
   }
 
-  function uncoveredHeadings(sources, chars, view) {
+  function uncoveredHeadings(sources, chars, view, tableBounds) {
     const frames=sources.map(p=>fromPermille(p.bbox,view) || union((p.rects || []).filter(valid))).filter(valid);
+    for (const bbox of tableBounds || []) frames.push(fromPermille(bbox,view));
     if (!frames.length) return [];
     const result=[];
     let line=[];
@@ -360,11 +364,15 @@
     chars = [],
     view,
     reuse = true,
+    nativeParser = false,
     continuationFor,
     language = "zh",
     rasterLabels = []
   }) {
-    chars = DeepRead.Typography.composeAccents(chars);
+    chars = DeepRead.ParallelFrames.repairScripts(DeepRead.Typography.composeAccents(chars));
+    const recovered = DeepRead.ParallelFrames.recover(items, chars, view);
+    items = recovered.items;
+    paragraphs = paragraphs.filter(p => !recovered.replaced.has(p.minerUid));
     const units = [],
       barriers = [];
     const parsed = items.map(sourceParagraph);
@@ -390,11 +398,11 @@
     const known = new Set(sources.map((p) => JSON.stringify([normalized(p.paragraphText), p.bbox])));
     for (const p of parsed) {
       if (protectedTypes.has(p.paragraphType))
-        barriers.push({ rect: fromPermille(p.bbox, view), owner: p.minerUid });
+        barriers.push({ rect: fromPermille(p.bbox, view), owner: p.minerUid, estimatedGraphic:nativeParser && visual.has(p.paragraphType) });
       if (!used.has(p.minerUid) && !known.has(JSON.stringify([normalized(p.paragraphText), p.bbox])))
         sources.push(p);
     }
-    sources.push(...uncoveredHeadings(sources, chars, view));
+    sources.push(...uncoveredHeadings(sources, chars, view, recovered.tableBounds));
     visualSources(sources, items, chars, view, rasterLabels);
     const paperTitle = items.find((it) => it.page_idx === 0 && it.text_level === 1 && valid(it.bbox));
     const firstSection = items.find(
@@ -412,8 +420,8 @@
     const physicalSources = splitFrontmatter(sources, chars, view, authorArea);
     for (const p of joinSplitFormula(physicalSources, chars, view)) {
       if (p.coveredByOCR) continue;
-      const type = p.paragraphType || "text",
-        caption = visual.has(type) || type === "caption";
+      let type = p.paragraphType || "text";
+      const caption = visual.has(type) || type === "caption";
       const existingRects = (p.rects || []).filter(valid);
       const region = union(existingRects) || fromPermille(p.bbox, view);
       const displayMath = /^(?:\$\$(?:(?!\$\$)[\s\S])+\$\$|\\\[(?:(?!\\\])[\s\S])+\\\])$/u.test(
@@ -425,7 +433,7 @@
       }
       if (!p.paragraphText?.trim()) continue;
       if (/^\s*[\w.%+'-]+@[\w.-]+\.[A-Za-z]{2,}\s*$/i.test(p.paragraphText)) continue;
-      const bounded = charactersIn(region, chars);
+      let bounded = charactersIn(region, chars);
       if (type === "header" && !bounded.length) continue; // journal logos can be single bitmaps
       if (
         authorArea(p) &&
@@ -435,9 +443,19 @@
         bounded.filter(DeepRead.Typography.bold).length > bounded.length * 0.55
       )
         continue;
-      const ocr = DeepRead.ParallelInline.alignOCR(bounded, p.paragraphText);
+      let ocr = DeepRead.ParallelInline.alignOCR(bounded, p.paragraphText);
       let glyphs = p.inlineGlyphs || (ocr ? bounded : match(bounded, p.paragraphText));
+      if (!glyphs.length && existingRects.length && valid(p.bbox)) {
+        const original = charactersIn(fromPermille(p.bbox, view), chars);
+        ocr = DeepRead.ParallelInline.alignOCR(original, p.paragraphText);
+        glyphs = ocr ? original : match(original, p.paragraphText);
+        if (glyphs.length) bounded = original;
+      }
       if (!glyphs.length && caption && !p.physicalCaption) glyphs = match(chars, p.paragraphText);
+      if (type === "text" && glyphs.length && p.paragraphText.length < 120 &&
+          /^(?:[A-Z]|\d+)(?:\.\d+)*\.?\s+\p{Lu}/u.test(p.paragraphText) &&
+          !/[.!?]$/u.test(p.paragraphText) && glyphs.filter(DeepRead.Typography.bold).length > glyphs.length*.85)
+        type = "title";
       const tag = equationTag(glyphs);
       if (tag) {
         barriers.push({ rect: tag.rect, owner: p.minerUid });
@@ -470,7 +488,8 @@
         let source = u.sourceText || p.paragraphText;
         if (tag && source.startsWith(tag.label)) source = source.slice(tag.label.length).trimStart();
         const local = single ? glyphs : match(glyphs.length ? glyphs : bounded, source);
-        let rects = linesOf(local);
+        const orient = local.find((c) => c.rotation != null)?.rotation || 0;
+        let rects = orient && type==="figure_label" && local.length ? [union(local.map(c=>c.rect))] : linesOf(local);
         // Whole-figure boxes are not caption frames. For OCR-only prose a typed
         // text box is usable; never guess a split between unmapped list items.
         if (
@@ -488,7 +507,6 @@
           p.centered && local.length
             ? Math.max(...local.map((c) => c.fontSize || 0), sourceSize)
             : sourceSize || Math.min(caption ? 9 : 10, rect ? rect[3] - rect[1] : 10);
-        const orient = local.find((c) => c.rotation != null)?.rotation || 0;
         const angle = (orient * Math.PI) / 180;
         // A parser can join the tail of one column to the head of another, or
         // enclose a floating object in the blank space between two text runs.
@@ -507,7 +525,7 @@
           .filter((n) => n > 0.7 && n < 2)
           .sort((a, b) => a - b);
         const firstBody = markerLength(local, u.marker);
-        const modelGlyphs = type === "code_comment" ? [] : local.slice(firstBody);
+        const modelGlyphs = type === "code_comment" || (orient && type==="figure_label") ? [] : local.slice(firstBody);
         const inline = DeepRead.ParallelInline.describe(
           modelGlyphs,
           withoutMarker(source, u.marker),
@@ -546,7 +564,7 @@
           pitch: pitches[Math.floor(pitches.length / 2)],
           title: type === "title",
           caption,
-          sans: /sans|NimbusSan|Helvetica|Arial/i.test(primaryFace),
+          sans: /sans|NimbusSan|Helvetica|Arial|OptimisticDisp/i.test(primaryFace),
           allItalic: bodyChars.length > 0 && bodyChars.every(DeepRead.Typography.italic),
           boldTitle: !bodyChars.length || bodyChars.filter(DeepRead.Typography.bold).length > bodyChars.length / 2,
           owner: p.minerUid,
@@ -557,14 +575,17 @@
         };
         block.visualOwner = p.visualOwner;
         block.role = type;
+        if (p.flushLeft) block.flushLeft = true;
+        block.verbatim = !!p.verbatim || !/[\p{L}\p{N}]/u.test(block.modelText.replace(/⟦D+\d+⟧/gu,""));
         block.context = p.context;
         block.hint = p.hint;
         block.documentTitle = type === "title" && primaryTitle != null && p.minerUid === primaryTitle;
-        if (["table_label", "figure_label", "code_comment"].includes(type)) {
+        if (["table_label", "figure_label", "formula_note", "code_comment"].includes(type)) {
           block.caption = true;
           block.verifiedLabel = true;
         }
-        if (type === "code_comment")
+        if (type === "algorithm_step" && rects.length === 1) block.verifiedLabel = true;
+        if (type === "code_comment" || type === "figure_label")
           block.styleSamples = local
             .filter((c) => valid(c.rect))
             .slice(0, 15)
@@ -637,7 +658,7 @@
           type === "table_label" &&
           DeepRead.ParallelVisual.compactLabel(source, language, p.languagePairs, inline.modelText);
         block.translation =
-          fixed || (p.verbatim ? inline.modelText : DeepRead.ParallelInline.fromLegacy(block, old));
+          fixed || (block.verbatim ? inline.modelText : DeepRead.ParallelInline.fromLegacy(block, old));
         units.push(block);
       }
     }
@@ -651,10 +672,25 @@
           (b) =>
             b.rect &&
             overlaps(candidate, b.rect, tolerance) &&
+            !(b.estimatedGraphic && unit.caption && unit.matched && /^(?:Fig(?:ure)?\.?|Table|Tab\.)\s+\d+/iu.test(unit.source)) &&
             !(unit.caption && unit.matched && unit.owner != null && b.owner === unit.owner) &&
             !(unit.visualOwner != null && b.owner === unit.visualOwner && (unit.verifiedLabel || unit.matched))
         ) ||
         units.some((other) => other !== unit && valid(other.rect) && overlaps(candidate, other.rect, tolerance));
+      // A short last line can lie beside the top of a display equation.
+      // The glyph masks stay on that line; shorten the typesetting frame by
+      // the small amount of clear leading occupied by the neighbouring box.
+      if (valid(r) && unit.matched && unit.direction[0] > .99 && obstructed(r,.6)) {
+        const near = Math.min(2.5,unit.size*.24);
+        for (const side of [1,3]) {
+          const edge = r[side], inner = side === 1 ? edge+near : edge-near;
+          const candidate = r.slice();
+          candidate[side] = inner;
+          if (!valid(candidate) || obstructed(candidate,.6) || unit.rects.some(line=>obstructed(line,.6))) continue;
+          r[side] = inner;
+          break;
+        }
+      }
       unit.placed = !!(
         valid(r) &&
         inside(view, r[0], r[1], 1) &&
@@ -735,7 +771,8 @@
       legacy.get(key).push({ rect: parts[2], entry });
     }
     for (const u of units) {
-      if (u.translation) continue;
+      if (u.translation && DeepRead.ParallelInline.valid(u,u.translation)) continue;
+      u.translation="";
       let cached = bySource.get(identity(u));
       if (!cached && valid(u.rect)) {
         const candidates = (legacy.get(JSON.stringify([u.source, u.marker])) || []).filter(({rect}) =>
@@ -764,29 +801,133 @@
     return bySource;
   }
 
-  async function translate(units, { language, signal, request, context }) {
-    const pending = units.filter((u) => !u.translation);
-    if (!pending.length) return;
-    async function attempt(group, repair = false) {
-      const input = group.map((u) => ({ translationLayout: { units: [{ id: 'u0', kind: u.marker ? 'list-item' : (u.role || 'paragraph'),
-        sourceText: u.source, styledText: u.modelText || u.styled, marker: u.marker, hint:u.hint,
-        protected: (u.tokens || []).map(s => ({ id:s.id, source:s.source, meaning:s.display })) }] } }));
-      const result = await DeepRead.TranslationLayout.complete(input, { request, targetLang: language, signal, strict: true, repair,
-        contextFor: (indices) => [...new Set(indices.map((i) => group[i].context || context?.get(normalized(group[i].source))).filter(Boolean))],
-      });
-      if (signal.aborted) throw Object.assign(new Error('Aborted'), { name:'AbortError' });
-      return result.map(p => p.translationLayout.units[0].translation);
+  function setContext(units, context) {
+    const edge = (value, end) => {
+      const sentences = value.trim().match(/[^.!?。！？]+(?:[.!?。！？]+|$)/gu) || [];
+      const sentence = end ? sentences.at(-1) : sentences[0];
+      return end ? sentence?.trim().slice(-180) : sentence?.trim().slice(0,180);
+    };
+    for (const u of units) {
+      const own=normalized(u.source), fragments=u.context || context?.get(own) || [];
+      const index=fragments.findIndex(s=>normalized(s)===own);
+      if (index<0) continue;
+      const before=index>0 ? fragments[index-1] : "";
+      const after=index+1<fragments.length ? fragments[index+1] : "";
+      u.before=edge(before,true);
+      u.after=edge(after,false);
+      // Keep numbers from the full neighbour locally as a cross-frame check.
+      // Only a short boundary sentence is sent to the translator.
+      const original=DeepRead.ParallelInline.numbers(u.source);
+      const neighbour=DeepRead.ParallelInline.numbers(before+" "+after);
+      u.foreignNumbers=[...neighbour].filter(n=>!original.has(n));
     }
-    const texts=await attempt(pending);
-    const invalid=pending.map((u,i)=>i).filter(i=>!DeepRead.ParallelInline.valid(pending[i],texts[i]));
-    if (invalid.length) {
-      const retried=await attempt(invalid.map(i=>pending[i]),true);
-      invalid.forEach((i,j)=>{ texts[i]=retried[j]; });
-      if (invalid.some(i=>!DeepRead.ParallelInline.valid(pending[i],texts[i]))) {
-        throw new Error(DeepRead.bilingual('模型未保留原文的公式、数值、术语或强调，请重试本页。','The model changed a protected expression or emphasis. Retry this page.'));
+  }
+
+  async function translate(units, { language, signal, request, context, concurrency = 1, onProgress }) {
+    setContext(units,context);
+    const copies = new Map(), pending = [];
+    for (const u of units) {
+      if (u.translation) continue;
+      const key = JSON.stringify([u.source,u.role,u.marker,contract(u),context?.get(normalized(u.source))]);
+      if (!copies.has(key)) { copies.set(key, []); pending.push(u); }
+      copies.get(key).push(u);
+    }
+    const matches = new Map([...copies.values()].map(group => [group[0],group]));
+    const batches = [];
+    let batch = [], cost = 0;
+    for (const u of pending) {
+      const length = (u.modelText || u.styled || u.source).length +
+        (u.tokens || []).reduce((n, t) => n + t.source.length + t.display.length + 24, 0);
+      if (batch.length && (batch.length >= 6 || cost + length > 3600)) {
+        batches.push(batch);
+        batch = [];
+        cost = 0;
+      }
+      batch.push(u);
+      cost += length;
+    }
+    if (batch.length) batches.push(batch);
+    const accepted = new Map();
+    async function attempt(group, repair) {
+      const rows = group.map((u, i) => ({
+        id: i + ":u0", kind: u.marker ? "list-item" : (u.role || "paragraph"),
+        source_text: u.modelText || u.styled || u.source,
+        ...(u.hint ? {source_context:u.hint} : {}),
+        ...(!repair && u.before ? {preceding_context:u.before} : {}),
+        ...(!repair && u.after ? {following_context:u.after} : {}),
+        ...(u.tokens?.length ? { protected:u.tokens.map(t => ({id:t.id,source:t.source,meaning:t.display})) } : {})
+      }));
+      const replies = await DeepRead.TranslationLayout.requestUnits(rows, { request, targetLang: language, signal, repair });
+      const missing = [], changed = [];
+      for (const [i,u] of group.entries()) {
+        const candidates = replies.filter(r => r.id === rows[i].id);
+        const text = candidates.length === 1 && candidates[0].translation;
+        if (!DeepRead.ParallelInline.valid(u, text)) { missing.push(u); continue; }
+        const cleaned = DeepRead.TranslationLayout.accept({units:[{id:"u0",marker:u.marker}]}, [{unit_id:"u0",translation:text}]).units[0].translation;
+        for (const copy of matches.get(u)) {
+          accepted.set(copy, cleaned);
+          if (onProgress) { copy.translation = cleaned; changed.push(copy); }
+        }
+      }
+      if (changed.length) await onProgress(changed);
+      return missing;
+    }
+    // A dense mathematical passage can repeatedly lose a protected token.
+    // Translate its word spans with the entire sentence for context. The
+    // renderer restores the source expressions and emphasis in their own slots.
+    async function recoverParts(u) {
+      const parts=(u.modelText || u.styled || u.source).split(/(⟦D+\d+⟧|\*{1,3})/u);
+      if (parts.length<3) return "";
+      const slots=[];
+      for (const [i,part] of parts.entries()) {
+        if (i%2 || !/[\p{L}]{2}/u.test(part) || /^[\s\p{P}A-Z\d]+$/u.test(part)) continue;
+        slots.push({id:String(i)+":u0",kind:u.role || "paragraph",source_text:part.trim()});
+      }
+      if (!slots.length) return "";
+      for (let start=0; start<slots.length; start+=8) {
+        const rows=slots.slice(start,start+8);
+        const translated=await DeepRead.TranslationLayout.requestUnits(rows,{request,targetLang:language,signal,repair:true,
+          context:[[u.modelText || u.source]]});
+        for (const row of rows) {
+          const result=translated.filter(t=>t.id===row.id);
+          const value=result.length===1 && result[0].translation;
+          if (!DeepRead.ParallelInline.valid({language,modelText:row.source_text},value) || /⟦D+\d+⟧|\*{2}/u.test(value)) return "";
+          const i=parseInt(row.id,10), original=parts[i];
+          parts[i]=original.match(/^\s*/u)[0]+value.trim()+original.match(/\s*$/u)[0];
+        }
+      }
+      const text=parts.join("");
+      return DeepRead.ParallelInline.valid(u,text) ? text : "";
+    }
+    let next = 0, failure, incomplete = 0;
+    async function worker() {
+      while (next < batches.length && !failure && !signal?.aborted) {
+        const group = batches[next++];
+        try {
+          const missing = await attempt(group, false);
+          if (!missing.length) continue;
+          const remaining = await attempt(missing,true);
+          for (const u of remaining) {
+            const recovered = await recoverParts(u);
+            if (!recovered) { incomplete++; continue; }
+            for (const copy of matches.get(u)) {
+              accepted.set(copy,recovered);
+              if (onProgress) copy.translation=recovered;
+            }
+            if (onProgress) await onProgress(matches.get(u));
+          }
+        } catch (error) { failure ||= error; }
       }
     }
-    pending.forEach((u,i)=>{ u.translation=texts[i]; });
+    await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, worker));
+    if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name:"AbortError" });
+    if (failure) throw failure;
+    if (incomplete) {
+      const error=new Error(DeepRead.bilingual(`还有 ${incomplete} 处缺少完整译文。`, `${incomplete} passages still need translation.`));
+      error.incomplete=true;
+      throw error;
+    }
+    for (const [u, text] of accepted) u.translation = text;
   }
-  DeepRead.ParallelPage = { plan, hydrate, records, translate, interruptedContext };
+  DeepRead.ParallelPage = { plan, hydrate, records, translate, interruptedContext, setContext };
 })();

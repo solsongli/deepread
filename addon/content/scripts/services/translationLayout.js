@@ -124,6 +124,19 @@
     return layout.units.map((u) => `${u.kind === "list-item" ? `${u.marker} ` : ""}${u.translation}`).join("\n\n");
   }
 
+  async function requestUnits(items, { request, targetLang, signal, repair, context }) {
+    const messages = [{ role: "user", content: `Source layout units (JSON):\n${JSON.stringify(items)}` }];
+    if (context?.length) messages.push({ role: "user", content: `Neighbouring source fragments in reading order (JSON):\n${JSON.stringify(context)}\nIf the fragments form a sentence interrupted by a page break or figure, translate it in context. Return only the part belonging to each requested unit ID.` });
+    const protection = items.some(u=>u.protected) ? ' Each ⟦D…⟧ token represents the exact expression described in that unit’s protected list. Write around the token in natural target-language order and copy its ID exactly once. The reader inserts its final content. Do not spell out its value, change its case, add symbols or reverse a comparison.' : '';
+    const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Translate only source_text. A physical frame can start or end mid-sentence. preceding_context, following_context and source_context are read-only. Never complete the thought or borrow facts, numbers or translations from those fields. Return exactly one translation per id. For table_label and figure_label return a short conventional label that fits the original cell or legend, preserving language-pair direction, abbreviations and symbols. For ref_text keep author names, years and page ranges in source order, translate the work title, and retain venue emphasis. For code_comment translate the comment only. Preserve the association between authors, affiliations, dates and field labels. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers.${protection}${repair ? ' Correct the missing or untranslated text. Check each ID, protected token and emphasis span. Translate all ordinary prose, including headings, captions and clauses alongside formulas.' : ''} Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. Return a JSON object with a translations array of {id,translation} objects. Copy each requested id verbatim.`,
+      messages, responseFormat: { type: "json_object" }, temperature: 0.1, signal });
+    if (signal?.aborted) { const e = new Error("Aborted"); e.name = "AbortError"; throw e; }
+    const text = String(response?.content || "").replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "").replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+    let translations;
+    try { translations = JSON.parse(text)?.translations; } catch { /* A truncated reply is retried by its caller. */ }
+    return Array.isArray(translations) ? translations.filter(t => t && typeof t.id === "string") : [];
+  }
+
   async function complete(paragraphs, { request, targetLang = "zh", signal, strict = false, contextFor, repair = false } = {}) {
     const result = paragraphs.map((p) => ({ ...p, translationLayout: p.translationLayout }));
     const missing = [];
@@ -142,16 +155,7 @@
         ...(u.protected?.length ? { protected: u.protected } : {}),
       })));
       try {
-        const messages = [{ role: "user", content: `Source layout units (JSON):\n${JSON.stringify(items)}` }];
-        const context = contextFor?.(indices);
-        if (context?.length) messages.push({ role: "user", content: `Neighbouring source fragments in reading order (JSON):\n${JSON.stringify(context)}\nIf the fragments form a sentence interrupted by a page break or figure, translate it in context. Return only the part belonging to each requested unit ID.` });
-        const protection = items.some(u=>u.protected) ? ' Each ⟦D…⟧ token represents the exact expression described in that unit’s protected list. Write around the token in natural target-language order and copy its ID exactly once. The reader inserts its final content. Do not spell out its value, change its case, add symbols or reverse a comparison.' : '';
-        const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Each unit belongs to one physical source frame. Return exactly one translation per id. For table_label and figure_label return a short conventional label that fits the original cell or legend, preserving language-pair direction, abbreviations and symbols. For ref_text keep author names, years and page ranges in source order, translate the work title, and retain venue emphasis. For code_comment translate the comment only. Preserve the association between authors, affiliations, dates and field labels. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers.${protection}${repair ? ' The prior reply lost or duplicated a token or emphasis. Check every token ID and emphasis span against its own source before returning this correction.' : ''} Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. JSON only: {"translations":[{"id":"0:u0","translation":"..."}]}.`,
-          messages, responseFormat: { type: "json_object" }, temperature: 0.1, signal });
-        if (signal?.aborted) { const e = new Error("Aborted"); e.name = "AbortError"; throw e; }
-        const text = String(response?.content || "").replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "").replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
-        const translations = JSON.parse(text).translations;
-        if (!Array.isArray(translations)) throw new Error("Missing layout translations");
+        const translations = await requestUnits(items, { request, targetLang, signal, repair, context: contextFor?.(indices) });
         for (const i of indices) {
           const candidate = translations.filter((t) => typeof t.id === "string" && t.id.startsWith(`${i}:`)).map((t) => ({ unit_id: t.id.slice(String(i).length + 1), translation: t.translation }));
           const accepted = accept(result[i].translationLayout, candidate);
@@ -166,5 +170,5 @@
     }
     return result;
   }
-  DeepRead.TranslationLayout = { analyze, accept, fromPoints, ready, markdown, complete };
+  DeepRead.TranslationLayout = { analyze, accept, fromPoints, ready, markdown, requestUnits, complete };
 })();

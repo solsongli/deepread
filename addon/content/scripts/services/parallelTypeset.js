@@ -363,7 +363,7 @@
       fits = paint(chosen, standardStep);
     }
     if (!fits) {
-      const floor = Math.max(original * 0.82, Math.min(original, 7));
+      const floor = unit.verifiedLabel ? original * 0.78 : Math.max(original * 0.82, Math.min(original, 7));
       fits = paint(preferredSize, compactStep);
       if (!fits) {
         const minFits = paint(floor, compactStep);
