@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "DeepRead",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "在 Zotero 中按原版式逐页对照翻译，回看段落讲解、图表和个人笔记。支持 MinerU，使用自己的模型接口。",
   "author": "solsongli",
   "icons": {
