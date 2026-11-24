@@ -771,21 +771,31 @@
       legacy.get(key).push({ rect: parts[2], entry });
     }
     for (const u of units) {
-      if (u.translation && DeepRead.ParallelInline.valid(u,u.translation)) continue;
-      u.translation="";
       let cached = bySource.get(identity(u));
+      if (u.translation && DeepRead.ParallelInline.valid(u,u.translation)) {
+        if (cached?.replaces === u.translation && cached.contract === contract(u) && DeepRead.ParallelInline.valid(u,cached.text)) {
+          u.termBase=u.translation;
+          u.translation=cached.text;
+        }
+        continue;
+      }
+      u.translation="";
       if (!cached && valid(u.rect)) {
         const candidates = (legacy.get(JSON.stringify([u.source, u.marker])) || []).filter(({rect}) =>
           u.rect.every((v, i) => Math.abs(v - rect[i]) <= (i === 2 ? u.size * 1.15 : 0.75)));
         if (candidates.length === 1) cached = candidates[0].entry;
       }
       if (!cached) continue;
-      if (cached.contract === contract(u) && DeepRead.ParallelInline.valid(u,cached.text)) u.translation=cached.text;
+      if (cached.contract === contract(u) && DeepRead.ParallelInline.valid(u,cached.text)) {
+        u.translation=cached.text;
+        if (cached.replaces) u.termBase=cached.replaces;
+      }
       else if (!cached.contract) u.translation=DeepRead.ParallelInline.fromLegacy(u,cached.text);
     }
   }
   function records(units) {
-    return units.filter((u) => u.translation).map((u) => ({ identity: identity(u), contract: contract(u), text: u.translation }));
+    return units.filter((u) => u.translation).map((u) => ({ identity: identity(u), contract: contract(u), text: u.translation,
+      ...(u.termBase ? {replaces:u.termBase} : {}) }));
   }
 
   function interruptedContext(items, pageIndex) {

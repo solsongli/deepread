@@ -25,11 +25,17 @@ fonts = b'/Resources << /Font << /R 6 0 R /B 7 0 R /I 8 0 R >> >>'
 objs = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>']
 for i in range(3):
     box = b'/MediaBox [0 0 612 792]' if i != 1 else b'/MediaBox [0 0 552 612] /CropBox [20 30 532 590] /Rotate 90'
-    objs.append(b'<< /Type /Page /Parent 2 0 R ' + box + b' ' + fonts + f' /Contents {9+i} 0 R >>'.encode())
+    annots = [b' /Annots [12 0 R 13 0 R]', b'', b' /Annots [14 0 R]'][i]
+    objs.append(b'<< /Type /Page /Parent 2 0 R ' + box + b' ' + fonts + annots + f' /Contents {9+i} 0 R >>'.encode())
 for font in ['Times-Roman', 'Times-Bold', 'Times-Italic']:
     objs.append(f'<< /Type /Font /Subtype /Type1 /BaseFont /{font} /Encoding /WinAnsiEncoding >>'.encode())
 for content in streams:
     objs.append(f'<< /Length {len(content)} >>\nstream\n'.encode() + content + b'endstream')
+objs.extend([
+    b'<< /Type /Annot /Subtype /Link /Rect [44 738 178 758] /Border [0 0 0] /Dest [4 0 R /XYZ 50 549 null] >>',
+    b'<< /Type /Annot /Subtype /Link /Rect [333 696 450 709] /Border [0 0 0] /A << /S /URI /URI (https://example.org/reading) >> >>',
+    b'<< /Type /Annot /Subtype /Square /Rect [250 700 271 714] /Border [0 0 1] /C [1 0 0] /F 4 >>'
+])
 pdf = bytearray(b'%PDF-1.4\n'); offsets = [0]
 for i, obj in enumerate(objs, 1):
     offsets.append(len(pdf)); pdf.extend(f'{i} 0 obj\n'.encode() + obj + b'\nendobj\n')

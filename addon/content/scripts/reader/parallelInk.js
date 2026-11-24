@@ -182,13 +182,8 @@
       ht = Math.max(1, bottom - top),
       angle = orientation(unit, page);
     const bitmap = node(doc, "canvas");
-    bitmap.width = angle % 2 ? ht : w;
-    bitmap.height = angle % 2 ? w : ht;
-    const ctx = bitmap.getContext("2d");
-    if (angle === 1) ctx.setTransform(0, -1, 1, 0, 0, w);
-    else if (angle === 2) ctx.setTransform(-1, 0, 0, -1, w, ht);
-    else if (angle === 3) ctx.setTransform(0, 1, -1, 0, ht, 0);
-    ctx.drawImage(source, left, top, w, ht, 0, 0, w, ht);
+    bitmap.dataset.mathCrop=[left/kx,top/ky,w/kx,ht/ky,angle].join(" ");
+    drawCrop(bitmap,source,left,top,w,ht,angle);
     const [a, b, c, d, e, f] = page.transform,
       em = unit.size * Math.hypot(a, b);
     const baseX = a * token.rect[0] + c * token.baseline + e,
@@ -210,6 +205,28 @@
     span.append(bitmap, accessible);
     return span;
   }
+  function drawCrop(bitmap, source, left, top, w, h, angle) {
+    const width = Math.max(1, Math.round(w)),
+      height = Math.max(1, Math.round(h));
+    bitmap.width = angle % 2 ? height : width;
+    bitmap.height = angle % 2 ? width : height;
+    const ctx = bitmap.getContext("2d");
+    if (angle === 1) ctx.setTransform(0, -1, 1, 0, 0, width);
+    else if (angle === 2) ctx.setTransform(-1, 0, 0, -1, width, height);
+    else if (angle === 3) ctx.setTransform(0, 1, -1, 0, height, 0);
+    ctx.drawImage(source, left, top, w, h, 0, 0, width, height);
+  }
+
+  function sharpen(root, source, page) {
+    const sx = source.width / page.width,
+      sy = source.height / page.height;
+    for (const bitmap of root.querySelectorAll("canvas[data-math-crop]")) {
+      const [x, y, w, h, angle] = bitmap.dataset.mathCrop.split(" ").map(Number);
+      if (bitmap.width >= Math.round(angle % 2 ? h * sy : w * sx)) continue;
+      drawCrop(bitmap, source, x * sx, y * sy, w * sx, h * sy, angle);
+    }
+  }
+
   function materialize(doc, frag, unit, page, source, pixels) {
     const byID = new Map((unit.tokens || []).map((t) => [t.id, t]));
     if (!byID.size) return frag;
@@ -266,5 +283,5 @@
     if (/^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.spaceChinese(frag);
     return frag;
   }
-  DeepRead.ParallelInk = { project, orientation, materialize, inkColor, sourceLink, labelPatch };
+  DeepRead.ParallelInk = { project, orientation, materialize, sharpen, inkColor, sourceLink, labelPatch };
 })();

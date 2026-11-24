@@ -53,15 +53,26 @@
     let nodes = [];
     function finish() {
       if (!nodes.length) return;
-      const text = nodes.map(n => n.data).join("");
+      // Treat an inline formula as a single glyph for boundary spacing. Its
+      // contents, baseline and accessible label belong to the math renderer.
+      const text = nodes.map(n => n.nodeType===3 ? n.data : "\uFFFC").join("");
       const gaps = text.matchAll(/(?<=[\p{Script=Han}。，、！？：；“”‘’《》（）【】]) +(?=[\p{Script=Han}。，、！？：；“”‘’《》（）【】])/gu);
       const remove = new Set();
       for (const gap of gaps) for (let i = 0; i < gap[0].length; i++) remove.add(gap.index + i);
-      const boundaries = text.matchAll(/(?<=\p{Script=Han})(?=[\p{Script=Latin}0-9])|(?<=[\p{Script=Latin}0-9%])(?=\p{Script=Han})/gu);
-      const insert = new Set(Array.from(boundaries, match => match.index));
+      const boundaries = text.matchAll(/(?<=\p{Script=Han})[ \u2009]*(?=[\p{Script=Latin}0-9\uFFFC])|(?<=[\p{Script=Latin}0-9%\uFFFC])[ \u2009]*(?=\p{Script=Han})/gu);
+      const insert = new Set();
+      for (const gap of boundaries) {
+        insert.add(gap.index);
+        for (let i=0;i<gap[0].length;i++) remove.add(gap.index+i);
+      }
       if (remove.size || insert.size) {
         let offset = 0;
         for (const node of nodes) {
+          if (node.nodeType!==3) {
+            if (insert.has(offset)) node.before("\u2009");
+            offset++;
+            continue;
+          }
           const original = node.data;
           let cleaned = "";
           for (let i = 0; i < original.length; i++, offset++) {
@@ -75,7 +86,8 @@
     }
     function visit(node) {
       if (node.nodeType === 3) { nodes.push(node); return; }
-      if (node.matches?.("code, pre, a, math, .katex, .dr-paper-code, .dr-list-marker, [role=math]")) { finish(); return; }
+      if (node.matches?.("code, pre, a, .katex-display, math[display=block], .dr-paper-code, .dr-list-marker")) { finish(); return; }
+      if (node.matches?.("math, .katex, [role=math]")) { nodes.push(node); return; }
       const boundary = node.nodeType === 1 && !["span","em","strong","b","i"].includes(node.localName);
       if (boundary) finish();
       for (const child of node.childNodes) visit(child);

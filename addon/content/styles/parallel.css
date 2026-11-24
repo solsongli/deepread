@@ -51,3 +51,5 @@
 .dr-parallel-unplaced summary { cursor: pointer; }
 .dr-parallel-passage { padding-block: 8px; overflow-wrap: anywhere; }
 .dr-parallel-passage > div:first-child { color: var(--dr-muted); }
+
+.dr-parallel-stage > .dr-parallel-detail { pointer-events: none; }

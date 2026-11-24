@@ -273,3 +273,13 @@ const grid=D.ParallelPage.plan({view:pageView,chars:[...gridTop,...gridRuns.flat
 const translatedCells=Array.from(grid.filter(u=>u.role==='table_label'),u=>u.source);
 assert.ok(['Platform','Notes','First setting','Second setting','Third setting'].every(label=>translatedCells.includes(label)),JSON.stringify(translatedCells));
 assert.ok(!grid.some(u=>u.source.includes('First setting Second setting') || u.source==='Astra' || u.source==='1 Astra First setting'));
+
+const alignedCache=D.ParallelPage.plan(opts);
+alignedCache[0].translation='采用统一术语。'; alignedCache[0].termBase='使用早期译名。';
+const reconciled=D.ParallelPage.records(alignedCache);
+const fromCards=D.ParallelPage.plan(opts);fromCards[0].translation='使用早期译名。';
+D.ParallelPage.hydrate(fromCards,reconciled);
+assert.equal(fromCards[0].translation,'采用统一术语。');
+fromCards[0].translation='手工改好的新译文。';
+D.ParallelPage.hydrate(fromCards,reconciled);
+assert.equal(fromCards[0].translation,'手工改好的新译文。','a later edit is never replaced by the older terminology correction');

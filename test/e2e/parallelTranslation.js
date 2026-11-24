@@ -111,7 +111,31 @@ E2E.run = async function () {
     check('untranslated pages leave the previous export and reading position intact',incomplete && (await IOUtils.readUTF8(targetFile))==='previous export' && c.pageIndex===0 && calls===beforeExport);
     c.changeZoom(0.25);
     check('zoom changes both sheets together', dims()[0].width > original.width && Math.abs(dims()[0].width-dims()[1].width)<0.1);
+    const renderInto=c.page.renderInto;
+    let correctFontDocument=false;
+    c.page.renderInto=(canvas,density)=>{
+      correctFontDocument=canvas.ownerDocument===s.overlay.pdfDoc;
+      return renderInto(canvas,density);
+    };
+    c.changeZoom(2);
+    await until(()=>c.page.targetDetail?.isConnected);
+    const high=c.page.detailCanvas;
+    check('zoom renders new PDF pixels on both sides without paying for another translation',
+      high.width>c.source.canvas.width && high.width===c.page.targetDetail.width && calls===beforeExport);
+    const sampleEquation=canvas=>{
+      const crop=c.doc.createElementNS("http://www.w3.org/1999/xhtml","canvas");
+      crop.width=92;crop.height=27;
+      const scale=canvas.width/612, ctx=crop.getContext("2d");
+      ctx.drawImage(canvas,325*scale,335*scale,92*scale,27*scale,0,0,92,27);
+      return ctx.getImageData(0,0,92,27).data;
+    };
+    const lo=sampleEquation(c.source.canvas), hi=sampleEquation(high);
+    let ink=0, error=0;
+    for(let i=0;i<lo.length;i+=4){ink+=255-Math.min(hi[i],lo[i]);error+=Math.abs(hi[i]-lo[i]);}
+    check('high-resolution mathematical ink uses the original embedded font document and preserves the glyph shapes',
+      correctFontDocument && ink>0 && error/ink<.35);
     c.fit.click(); await sleep(80); await shot('parallel-layout.png');
+    check('fit-to-width restores the original display layer',!high.isConnected);
     const initialCalls = calls;
     c.close(false); button.click(); await until(() => s.comparison.root && s.comparison.page?.units);
     check('finished page reloads completely from SQLite', calls === initialCalls && c.translateButton.hidden && c.page.units.every((u) => u.translation));
@@ -128,7 +152,33 @@ E2E.run = async function () {
     check('OCR-only text keeps its known physical rectangle', c.target.stage.textContent.includes('扫描页正文'));
     check('uncertain mixed figure/text is preserved and translation is provided below', c.extra.textContent.includes('与图像重叠') && !c.target.stage.textContent.includes('与图像重叠'));
     check('scan graphic keeps its original colour', rgb(c.source.canvas,220,660) === rgb(c.target.canvas,220,660));
+    const inline=c.doc.createDocumentFragment();
+    const math=()=>{const el=c.doc.createElementNS("http://www.w3.org/1999/xhtml","span");el.setAttribute("role","math");el.textContent="x";return el;};
+    inline.append("比较",math()," 时，",math(),"。使用  MPC 方法。");
+    D.PaperType.spaceChinese(inline);D.PaperType.spaceChinese(inline);
+    check('Chinese, Latin and inline math keep one thin space while punctuation stays attached',
+      inline.textContent==="比较\u2009x\u2009时，x。使用\u2009MPC\u2009方法。");
     const beforeBookSave=calls;
+    check('both page and full bilingual exports are available in the reader', [...c.exportControl.options].some(o=>o.value==='dual-page') && [...c.exportControl.options].some(o=>o.value==='dual-all'));
+    const bilingualFile=PathUtils.join(E2E.env('DEEPREAD_E2E_SHOTS'),'bilingual-book.pdf');
+    check('bilingual export restores the page and uses only the existing translations',
+      await c.savePDF('dual-all',bilingualFile) && c.pageIndex===2 && calls===beforeBookSave);
+    const copy=await Zotero.Attachments.importFromFile({file:Zotero.File.pathToFile(bilingualFile),libraryID:Zotero.Libraries.userLibraryID});
+    const bilingualText=(await Zotero.PDFWorker.getFullText(copy.id)).text.replace(/\s+/g,'');
+    check('both sides of the bilingual PDF have selectable text',bilingualText.includes('Layoutcomparison') && bilingualText.includes('版式对照') && bilingualText.includes('samplinginterval'));
+    const pdfScope={setTimeout,clearTimeout,Uint8Array,ArrayBuffer};
+    Services.scriptloader.loadSubScript("chrome://deepread/content/lib/pdf-lib/pdf-lib.min.js",pdfScope);
+    const {PDFDocument,PDFName,PDFArray}=pdfScope.PDFLib;
+    const dual=await PDFDocument.load(Uint8Array.from(await IOUtils.read(bilingualFile)));
+    const sheets=dual.getPages(), spreads=sheets.filter(p=>p.getWidth()>1000);
+    check('both columns use the visible crop and rotation; supplements follow their source spread',
+      spreads.length===3 && spreads[0]===sheets[0] && sheets[1].getWidth()===612 &&
+      spreads[1]===sheets[2] && spreads[1].getWidth()===1120 && spreads[1].getHeight()===512);
+    const links=spreads[0].node.Annots().asArray().map(ref=>dual.context.lookup(ref));
+    const dest=links.map(link=>link.lookup(PDFName.of('Dest'))).find(d=>d instanceof PDFArray &&
+      d.get(0).toString()===spreads[1].ref.toString() && d.get(2).asNumber()<0);
+    check('source links jump to the original section in the rotated left column, past the supplement',
+      dest && Math.abs(dest.get(2).asNumber()+41)<.01 && Math.abs(dest.get(3).asNumber()-482)<.01);
     const written=await c.savePDF('all',targetFile);
     const bytes=await IOUtils.read(targetFile);
     check('whole-document export writes a PDF, reuses translations and restores the current page',written && bytes[0]===37 && bytes[1]===80 && bytes.length>5000 && c.pageIndex===2 && calls===beforeBookSave);

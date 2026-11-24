@@ -180,6 +180,13 @@ DeepRead.Store = {
       [key, fingerprint, slot, JSON.stringify(data)]);
   },
 
+  async savePaperTerms(key, fingerprint, language, terms) {
+    const slot = "terms:v1:"+language;
+    await this.db.queryAsync("INSERT OR IGNORE INTO comparison_cache (attachment_key, fingerprint, slot, payload) VALUES (?, ?, ?, ?)",
+      [key, fingerprint, slot, JSON.stringify(terms)]);
+    return this.comparisonData(key,fingerprint,slot);
+  },
+
   async mergeComparisonTranslations(key, fingerprint, slot, accepted) {
     if (!fingerprint) return accepted;
     let merged;

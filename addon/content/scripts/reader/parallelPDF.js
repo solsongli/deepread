@@ -16,8 +16,9 @@
 
   function withCanvases(doc, original) {
     const copy = doc.importNode(original, true);
+    for (const detail of copy.querySelectorAll(".dr-parallel-detail")) detail.remove();
     const canvases = [...copy.querySelectorAll("canvas")];
-    [...original.querySelectorAll("canvas")].forEach((src, i) =>
+    [...original.querySelectorAll("canvas:not(.dr-parallel-detail)")].forEach((src, i) =>
       canvases[i].getContext("2d").drawImage(src, 0, 0)
     );
     return copy;
@@ -34,7 +35,7 @@
     });
   }
 
-  async function snapshot(reader, frame) {
+  async function snapshot(reader, frame, signal) {
     const { page, target } = reader,
       doc = frame.contentDocument;
     doc.documentElement.lang = page.language === "zh" ? "zh-CN" : page.language;
@@ -58,7 +59,7 @@
     stage.classList.remove("dr-paired");
     for (const link of stage.querySelectorAll("a")) {
       const annotation = page.links?.[Number(link.dataset.sourceLink)];
-      if (/^https?:\/\//i.test(annotation?.url || "")) link.href = annotation.url;
+      if (/^(?:https?:\/\/|mailto:)/i.test(annotation?.url || "")) link.href = annotation.url;
       else link.removeAttribute("href");
     }
     sheet.append(stage);
@@ -87,6 +88,10 @@
         section.append(paragraph);
       }
       doc.body.append(section);
+    }
+    if (doc.querySelector("canvas[data-math-crop]")) {
+      const detail=await DeepRead.ParallelDetail.raster(reader,page,4,signal);
+      if (detail && !signal.aborted) DeepRead.ParallelInk.sharpen(doc.body,detail,page);
     }
     await Promise.all(sheets);
     doc.documentElement.getBoundingClientRect();
@@ -120,7 +125,204 @@
     }
   }
 
-  async function append(output, reader, signal) {
+  // Share original fonts and images across the whole export. Copying just the
+  // page Form also avoids dragging the original page tree in through annotations.
+  async function facingDocument(output, reader, sourcePath) {
+    const pdfjs = reader.session.overlay.app.pdfDocument;
+    let source, copier;
+    try {
+      // IOUtils returns bytes in the add-on compartment. Reading a content
+      // window's typed-array elements through Xrays is forbidden by Gecko.
+      const bytes = await IOUtils.read(sourcePath);
+      source = await library.PDFDocument.load(Uint8Array.from(bytes), { updateMetadata: false });
+      if (source.getPageCount() !== reader.count) throw new Error("PDF page count changed");
+      const ids = source.context.lookup(source.context.trailerInfo.ID);
+      const id = ids?.get?.(0)?.asBytes?.();
+      const opened = pdfjs.fingerprints?.[0];
+      if (
+        id?.length === 16 &&
+        opened &&
+        !id.every((b) => !b) &&
+        Array.from(id, (b) => b.toString(16).padStart(2, "0")).join("") !== opened
+      )
+        throw new Error("The displayed PDF differs from the file on disk");
+      copier = library.PDFObjectCopier.for(source.context, output.context);
+    } catch (error) {
+      DeepRead.log("Using the reader image for the original side", String(error));
+    }
+    const sheets = new Map(),
+      pending = [],
+      destinations = new Map();
+    const name = library.PDFName.of;
+
+    async function original(sheet, page, left, bottom) {
+      if (copier && !page.hasAnnotationArtwork) {
+        try {
+          const leaf = source.getPage(page.index).node;
+          if (!leaf.Contents()) return;
+          const [x0, y0, x1, y1] = page.view;
+          const form = await library.PDFPageEmbedder.for(
+            leaf,
+            { left: x0, bottom: y0, right: x1, top: y1 },
+            [1, 0, 0, 1, 0, 0]
+          );
+          const ref = await form.embedIntoContext(source.context);
+          const group = leaf.get(name("Group"));
+          if (group) source.context.lookup(ref).dict.set(name("Group"), group);
+          const resource = sheet.node.newXObject("Original", copier.copy(ref));
+          const [a, b, c, d, e, f] = page.transform;
+          sheet.pushOperators(
+            library.pushGraphicsState(),
+            library.concatTransformationMatrix(a, -b, c, -d, left + e, bottom + page.height - f),
+            library.drawObject(resource),
+            library.popGraphicsState()
+          );
+          return;
+        } catch (error) {
+          DeepRead.log("Using original raster on page " + (page.index + 1), String(error));
+        }
+      }
+      const visible = page.detailCanvas || reader.source.canvas;
+      const image = await output.embedPng(visible.toDataURL("image/png"));
+      sheet.drawImage(image, { x: left, y: bottom, width: page.width, height: page.height });
+    }
+
+    function annotation(sheet, rect, action) {
+      const dict = output.context.obj({
+        Type: "Annot",
+        Subtype: "Link",
+        Rect: rect,
+        Border: [0, 0, 0],
+        ...action
+      });
+      sheet.node.addAnnot(output.context.register(dict));
+    }
+
+    function addLink(sheet, link, rect, originalSide) {
+      if (rect[2] <= rect[0] || rect[3] <= rect[1]) return;
+      if (/^(?:https?:\/\/|mailto:)/iu.test(link.url || "")) {
+        const bytes = new TextEncoder().encode(link.url);
+        const uri = library.PDFHexString.of(Array.from(bytes, b => b.toString(16).padStart(2, "0")).join(""));
+        annotation(sheet, rect, { A: { S: "URI", URI: uri } });
+      } else if (link.dest) pending.push({ sheet, rect, dest: link.dest, originalSide });
+    }
+
+    async function pair(sheet, page, x, bottom) {
+      const { width, height } = page,
+        left = x - width,
+        top = bottom + height;
+      await original(sheet, page, left, bottom);
+      sheet.setMediaBox(left, bottom, width * 2, height);
+      sheet.setCropBox(left, bottom, width * 2, height);
+      sheets.set(page.index, {
+        ref: sheet.ref,
+        x,
+        left,
+        top,
+        width,
+        height,
+        view: page.view,
+        transform: page.transform
+      });
+      for (const link of page.links || []) {
+        const r = DeepRead.ParallelInk.project(link.rect, page.transform);
+        addLink(
+          sheet,
+          link,
+          [
+            left + Math.max(0, r.left),
+            top - Math.min(height, r.top + r.height),
+            left + Math.min(width, r.left + r.width),
+            top - Math.max(0, r.top)
+          ],
+          true
+        );
+      }
+      // Gecko already prints external links in the translated text. Internal
+      // links need the output page references, including any supplement pages.
+      for (const el of reader.target.stage.querySelectorAll("a[data-source-link]")) {
+        const link = page.links?.[Number(el.dataset.sourceLink)];
+        if (!link?.dest || link.url) continue;
+        for (const quad of el.getBoxQuads({ relativeTo: reader.target.stage })) {
+          const r = quad.getBounds();
+          addLink(
+            sheet,
+            link,
+            [
+              x + Math.max(0, r.left),
+              top - Math.min(height, r.bottom),
+              x + Math.min(width, r.right),
+              top - Math.max(0, r.top)
+            ],
+            false
+          );
+        }
+      }
+    }
+
+    async function finish(signal) {
+      for (const { sheet, rect, dest, originalSide } of pending) {
+        if (signal.aborted) return;
+        const key = JSON.stringify(dest);
+        if (!destinations.has(key)) {
+          let resolved;
+          try {
+            const value = typeof dest === "string" ? await pdfjs.getDestination(dest) : dest;
+            const ref = value?.[0];
+            const index = Number.isInteger(ref)
+              ? ref
+              : ref?.num != null
+                ? await pdfjs.getPageIndex(
+                    Components.utils.cloneInto({ num: ref.num, gen: ref.gen }, reader.session.overlay.pdfWin)
+                  )
+                : -1;
+            if (sheets.has(index)) resolved = { page: sheets.get(index), value };
+          } catch {
+            /* A PDF can contain an unresolved named destination. */
+          }
+          destinations.set(key, resolved);
+        }
+        const target = destinations.get(key);
+        if (!target) continue;
+        const { page, value } = target,
+          kind = value[1]?.name;
+        let destination = [page.ref, name("Fit")];
+        if (["XYZ", "FitH", "FitBH", "FitV", "FitBV"].includes(kind)) {
+          const x = Number.isFinite(value[2]) && !["FitH", "FitBH"].includes(kind) ? value[2] : page.view[0];
+          const height = ["FitH", "FitBH"].includes(kind) ? value[2] : kind === "XYZ" ? value[3] : null;
+          const y = Number.isFinite(height) ? height : page.view[3];
+          const [a, b, c, d, e, f] = page.transform;
+          const left = originalSide ? page.left : page.x;
+          destination = [
+            page.ref,
+            name("XYZ"),
+            left + Math.max(0, Math.min(page.width, a * x + c * y + e)),
+            page.top - Math.max(0, Math.min(page.height, b * x + d * y + f)),
+            kind === "XYZ" && value[4] > 0 ? value[4] : null
+          ];
+        } else if (
+          kind === "FitR" &&
+          Array.from(value).slice(2, 6).every(Number.isFinite) &&
+          value.length >= 6
+        ) {
+          const r = DeepRead.ParallelInk.project(Array.from(value).slice(2, 6), page.transform);
+          const left = originalSide ? page.left : page.x;
+          destination = [
+            page.ref,
+            name("FitR"),
+            left + r.left,
+            page.top - r.top - r.height,
+            left + r.left + r.width,
+            page.top - r.top
+          ];
+        }
+        annotation(sheet, rect, { Dest: destination });
+      }
+    }
+    return { pair, finish };
+  }
+
+  async function append(output, reader, signal, facing = null) {
     const page = reader.page;
     const frame = element(reader.doc, "iframe");
     frame.tabIndex = -1;
@@ -134,7 +336,7 @@
     try {
       await loaded;
       if (signal.aborted) return;
-      await snapshot(reader, frame);
+      await snapshot(reader, frame, signal);
       if (signal.aborted) return;
       const settings = Cc["@mozilla.org/gfx/printsettings-service;1"]
         .getService(Ci.nsIPrintSettingsService)
@@ -179,6 +381,7 @@
           bottom = box.y + box.height - page.height;
         result.setMediaBox(box.x, bottom, page.width, page.height);
         result.setCropBox(box.x, bottom, page.width, page.height);
+        if (facing && result===pages[0]) await facing.pair(result,page,box.x,bottom);
         output.addPage(result);
       }
     } finally {
@@ -186,5 +389,5 @@
       await IOUtils.remove(temp, { ignoreAbsent: true });
     }
   }
-  DeepRead.ParallelPDF = { create, append };
+  DeepRead.ParallelPDF = { create, append, facingDocument };
 })();
