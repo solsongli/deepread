@@ -1,8 +1,10 @@
 /* PDF text alignment and translation typography. License: AGPL-3.0-or-later */
 (function () {
-  const bold = (c) => c?.bold === true || /bold|black|heavy|[-,]Medi(?:Ital)?\b/i.test(c?.fontName || "");
-  const italic = (c) => c?.italic === true || /italic|oblique|(?:Regu|Medi|Bold|[-,])Ital(?:MT)?\b/i.test(c?.fontName || "");
-  const normal = (s) => String(s || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const bold = (c) => c?.bold === true || /bold|black|heavy|[-,]Medi(?:Ital)?\b|(?:^|\+)(?:cm|lm)(?:ss)?bx(?:ti|sl)?\d/i.test(c?.fontName || "");
+  const italic = (c) => c?.italic === true || /italic|oblique|(?:Regu|Medi|Bold|[-,])Ital(?:MT)?\b|(?:^|\+)(?:cm|lm)(?:bxti|bxsl|ti|sl|itt|ssi)\d/i.test(c?.fontName || "");
+  const monospace = c => /(?:^|\+)(?:cm|lm)(?:tt|itt)\d|mono|NimbusMon|Courier|Consolas|Menlo/i.test(c?.fontName || "");
+  const normal = (s) => String(s || "").normalize("NFKD").toLowerCase().replace(/ı/g,"i")
+    .replace(/[ˆˇ˘˙˚˜]/gu,"").replace(/[^\p{L}\p{N}]/gu, "");
 
   // Only accept an unambiguous full-text match. OCR differences retain the original fallback.
   function match(chars, text) {
@@ -72,5 +74,59 @@
     flush();
     return out;
   }
-  DeepRead.Typography = { match, metrics, styledSentence, bold, italic };
+  // TeX sometimes prints a letter and its accent as overlapping, separate
+  // glyphs in either order. Compose only neighbours on the same baseline.
+  function composeAccents(chars) {
+    const marks = {
+      ˇ: "\u030c",
+      ˆ: "\u0302",
+      "´": "\u0301",
+      "˙": "\u0307",
+      "˘": "\u0306",
+      "˚": "\u030a",
+      "˜": "\u0303",
+      "¨": "\u0308"
+    };
+    let result;
+    for (let i = 0; i < chars.length; i++) {
+      const accent = chars[i],
+        mark = accent.u,
+        rect = accent.rect;
+      if ((!marks[mark] && mark !== "©") || !rect) continue;
+      let best = -1,
+        score = 0.5;
+      for (const j of [i - 1, i + 1]) {
+        const c = chars[j],
+          r = c?.rect;
+        if (
+          !r ||
+          !(mark === "©" ? c.u === "c" : /^[\p{Script=Latin}]$/u.test(c.u)) ||
+          Math.abs(c.baseline - accent.baseline) > (c.fontSize || 10) * 0.25 ||
+          /math|CMMI|CMSY|CMEX/i.test(c.fontName || "")
+        )
+          continue;
+        const width = Math.min(rect[2] - rect[0], r[2] - r[0]);
+        const ratio = (Math.min(rect[2], r[2]) - Math.max(rect[0], r[0])) / width;
+        if (ratio > score) {
+          score = ratio;
+          best = j;
+        }
+      }
+      if (best < 0) continue;
+      result ||= chars.slice();
+      const base = result[best],
+        r = base.rect;
+      result[best] = {
+        ...base,
+        u: mark === "©" ? "©" : ((base.u === "ı" ? "i" : base.u) + marks[mark]).normalize("NFC"),
+        rect: [Math.min(r[0], rect[0]), Math.min(r[1], rect[1]), Math.max(r[2], rect[2]), Math.max(r[3], rect[3])],
+        spaceAfter: base.spaceAfter || accent.spaceAfter,
+        lineBreakAfter: base.lineBreakAfter || accent.lineBreakAfter,
+        paragraphBreakAfter: base.paragraphBreakAfter || accent.paragraphBreakAfter
+      };
+      result[i] = null;
+    }
+    return result ? result.filter(Boolean) : chars;
+  }
+  DeepRead.Typography = { match, metrics, styledSentence, bold, italic, monospace, composeAccents };
 })();

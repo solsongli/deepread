@@ -29,6 +29,82 @@
       ky
     };
   }
+  // Table rules often touch the top/bottom of a text box. Estimate the flat
+  // cell colour inside the box and leave straight rules crossing it intact.
+  function labelPatch(pixels, box, page, em) {
+    const { x0, y0, x1, y1, kx, ky } = sampleBounds(box, page, pixels);
+    const w = x1 - x0,
+      h = y1 - y0;
+    if (w < 2 || h < 2) return null;
+    const bins = new Map(),
+      p = pixels.data;
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        const k = 4 * (y * pixels.width + x),
+          r = p[k],
+          g = p[k + 1],
+          b = p[k + 2],
+          bin = (r >> 4) * 256 + (g >> 4) * 16 + (b >> 4);
+        const cell = bins.get(bin);
+        if (cell) cell.n++;
+        else bins.set(bin, { n: 1, r, g, b });
+      }
+    const bg = [...bins.values()].sort((a, b) => b.n - a.n)[0];
+    if (bg.n < w * h * 0.43) return null;
+    function ink(x, y) {
+      if (x < 0 || y < 0 || x >= pixels.width || y >= pixels.height) return false;
+      const k = 4 * (y * pixels.width + x);
+      return Math.max(Math.abs(p[k] - bg.r), Math.abs(p[k + 1] - bg.g), Math.abs(p[k + 2] - bg.b)) > 30;
+    }
+    const horizontal = new Set(),
+      vertical = new Set();
+    for (let y = y0; y < y1; y++) {
+      if (!ink(x0 - 2, y) || !ink(x1 + 1, y)) continue;
+      let count = 0;
+      for (let x = x0; x < x1; x++) if (ink(x, y)) count++;
+      if (count > w * 0.84) horizontal.add(y);
+    }
+    for (let x = x0; x < x1; x++) {
+      if (!ink(x, y0 - 2) || !ink(x, y1 + 1)) continue;
+      let count = 0;
+      for (let y = y0; y < y1; y++) if (ink(x, y)) count++;
+      if (count > h * 0.84) vertical.add(x);
+    }
+    const free = (start, sign) => {
+      let n = 0;
+      while (n < 2 * em * kx) {
+        const col = start + sign * n;
+        if (col < 0 || col >= pixels.width) break;
+        let occupied = false;
+        for (let y = y0; y < y1; y++)
+          if (!horizontal.has(y) && ink(col, y)) {
+            occupied = true;
+            break;
+          }
+        if (occupied) break;
+        n++;
+      }
+      return Math.max(0, (n - 1) / kx);
+    };
+    return {
+      color: [bg.r, bg.g, bg.b],
+      left: free(x0 - 1, -1),
+      right: free(x1, 1),
+      erase(ctx) {
+        const patch = ctx.getImageData(x0, y0, w, h);
+        for (let y = y0; y < y1; y++)
+          for (let x = x0; x < x1; x++) {
+            if (horizontal.has(y) || vertical.has(x)) continue;
+            const k = 4 * ((y - y0) * w + x - x0);
+            patch.data[k] = bg.r;
+            patch.data[k + 1] = bg.g;
+            patch.data[k + 2] = bg.b;
+          }
+        ctx.putImageData(patch, x0, y0);
+      }
+    };
+  }
+
   function inkColor(token, page, pixels) {
     let dark = 0,
       colored = 0,
@@ -169,6 +245,7 @@
           el.className = "dr-parallel-heading-number";
           el.style.width = unit.headingNumber.width + "px";
         }
+        if (token.mono || token.kind==="code") el.classList.add("dr-paper-code");
         if (pixels) el.style.color = inkColor(token, page, pixels);
         let value = doc.createTextNode(token.display);
         if (token.bold) {
@@ -189,5 +266,5 @@
     if (/^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.spaceChinese(frag);
     return frag;
   }
-  DeepRead.ParallelInk = { project, orientation, materialize };
+  DeepRead.ParallelInk = { project, orientation, materialize, inkColor, sourceLink, labelPatch };
 })();

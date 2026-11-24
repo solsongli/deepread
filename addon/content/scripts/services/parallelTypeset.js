@@ -32,6 +32,7 @@
     const next = {
       bold: style.bold || ["strong", "b"].includes(node.localName),
       italic: style.italic || ["em", "i"].includes(node.localName),
+      mono: style.mono || node.classList?.contains("dr-paper-code"),
       color: node.style?.color || style.color,
       link: node.dataset?.sourceLink ?? style.link
     };
@@ -63,7 +64,8 @@
         segments.push({ type: "math", widthEm: r.widthEm, heightEm: r.heightEm, depthEm: r.depthEm });
       } else {
         segments.push({ type: "text", value: r.text });
-        ctx.font = `${r.italic ? "italic" : "normal"} ${r.bold ? "bold" : style.fontWeight} 100px ${style.fontFamily}`;
+        const family=r.mono ? style.getPropertyValue("--dr-paper-code").trim() || "monospace" : style.fontFamily;
+        ctx.font = `${r.italic ? "italic" : "normal"} ${r.bold ? "bold" : style.fontWeight} 100px ${family}`;
         for (const ch of r.text) {
           widths.push(ctx.measureText(ch).width / 100);
           if (ch.length === 2) widths.push(0);
@@ -106,8 +108,9 @@
         mark.append(part);
         part = mark;
       }
-      if (r.color || r.link != null) {
+      if (r.color || r.link != null || r.mono) {
         const span = h(doc, r.link != null ? "a" : "span");
+        if(r.mono)span.classList.add("dr-paper-code");
         if (r.color) span.style.color = r.color;
         if (r.link != null) {
           span.href = "#";
@@ -119,6 +122,46 @@
       ink.append(part);
     }
     return line;
+  }
+
+  function justifyChinese(content, width, firstInset, nextInset, size) {
+    const doc = content.ownerDocument;
+    for (const [i, row] of [...content.children].slice(0, -1).entries()) {
+      const ink = row.firstChild,
+        slack = width - (i ? nextInset : firstInset) - ink.offsetWidth;
+      if (slack < 1 || slack > size * 1.35) continue;
+      const walker = doc.createTreeWalker(ink, 4),
+        runs = [];
+      let count = 0;
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.parentElement.closest("a, code, .dr-paper-code, [role=math]")) continue;
+        const matches = [...node.data.matchAll(/\p{Script=Han}{2,}/gu)];
+        if (matches.length) runs.push({ node, matches });
+        for (const m of matches) count += [...m[0]].length - 1;
+      }
+      if (count < 5 || slack / count > size * 0.075) continue;
+      const spacing = (slack - 0.6) / count;
+      const touched = [];
+      for (const { node, matches } of runs) {
+        const frag = doc.createDocumentFragment();
+        let start = 0;
+        for (const m of matches) {
+          const chars = [...m[0]],
+            last = chars.pop(),
+            span = h(doc, "span");
+          span.style.letterSpacing = spacing + "px";
+          span.textContent = chars.join("");
+          frag.append(node.data.slice(start, m.index), span, last);
+          touched.push(span);
+          start = m.index + m[0].length;
+        }
+        frag.append(node.data.slice(start));
+        node.replaceWith(frag);
+      }
+      if (ink.offsetWidth + (i ? nextInset : firstInset) > width + 0.5)
+        for (const span of touched) span.style.letterSpacing = "";
+    }
   }
 
   function draw(box, unit, fragment, sourceSize) {
@@ -145,10 +188,36 @@
     }
     box.append(content);
     const markerInset = unit.marker ? (unit.markerIndent ?? (unit.hanging || 1.2)) * original : 0;
-    const nextInset = unit.marker ? (unit.hanging || unit.markerIndent || 1.2) * original : 0;
+    const nextInset = unit.marker
+      ? (unit.hanging || unit.markerIndent || 1.2) * original
+      : unit.role === "ref_text"
+        ? unit.hanging * original
+        : 0;
     const firstInset = unit.marker ? markerInset : (unit.indent || 0) * original;
     const sourceLines = unit.rects?.length || 1;
-    if (unit.title && simple && sourceLines === 1) {
+    let headingSize = original;
+    if (unit.documentTitle && unit.titleInsets && simple && /^zh(?:-|$)/i.test(box.lang)) {
+      const measured = h(doc, "span");
+      measured.className = "dr-parallel-line-ink";
+      measured.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font-size:" + original + "px";
+      measured.append(fragment.cloneNode(true));
+      box.append(measured);
+      const advance = measured.offsetWidth;
+      measured.remove();
+      const sourceAdvance = (unit.rects.reduce((sum, r) => sum + r[2] - r[0], 0) * original) / unit.size;
+      if (advance > 0)
+        headingSize =
+          original *
+          Math.max(
+            1,
+            Math.min(
+              sourceLines > 1 ? 1.36 : 1.1,
+              (0.93 * sourceAdvance) / advance,
+              height / (sourceLines === 1 ? 0.96 : 1 + (sourceLines - 1) * 1.17) / original
+            )
+          );
+    }
+    if ((unit.title || unit.centered) && simple && sourceLines === 1) {
       const line = h(doc, "div"),
         ink = h(doc, "span");
       line.className = "dr-parallel-line";
@@ -160,12 +229,12 @@
       const number = ink.querySelector(".dr-parallel-heading-number");
       if (number?.nextSibling?.nodeType === 3)
         number.nextSibling.nodeValue = number.nextSibling.nodeValue.trimStart();
-      box.style.fontSize = original + "px";
+      box.style.fontSize = headingSize + "px";
       box.style.lineHeight = height + "px";
       // One line of Latin headings often has a glyph box shorter than its em.
       // Keep its actual font size and number-to-title gap when the title fits.
       if (ink.offsetWidth + firstInset <= width + 0.5) {
-        box.classList.add("dr-parallel-heading");
+        if (unit.title) box.classList.add("dr-parallel-heading");
         if (unit.centered) line.style.textAlign = "center";
         return;
       }
@@ -187,8 +256,11 @@
     // Keep the common baseline grid while matching the text size of a printed
     // column. A shorter translation leaves space at the end of its source frame.
     const bodyScale = /^zh(?:-|$)/i.test(box.lang) ? 1.02 : 1.12;
-    const preferredSize = cjkBody ? original * bodyScale : original;
-    const standardStep = original * (cjkBody ? Math.max(sourcePitch, 1.5) : sourcePitch);
+    const preferredSize = cjkBody ? original * bodyScale : headingSize;
+    const standardStep = Math.max(
+      original * (cjkBody ? Math.max(sourcePitch, 1.5) : sourcePitch),
+      unit.documentTitle ? headingSize * 1.17 : 0
+    );
     // Tight frames have one second, shared baseline step. Font fitting never
     // redistributes leftover height across an individual paragraph.
     const compactStep = Math.min(standardStep, original * Math.max(1.14, sourcePitch));
@@ -205,6 +277,19 @@
       let measureWidth = width,
         rows = [],
         excess = 0;
+      if (unit.title && unit.centered && sourceLines > 1 && sourceLines <= 3) {
+        // Balance the Chinese title across the source's line count, keeping
+        // complete Western words and the original heading size.
+        let lo = (width / sourceLines) * 0.65,
+          hi = width;
+        for (let i = 0; i < 7; i++) {
+          const mid = (lo + hi) / 2;
+          const count = api.TextLinebreak.layout(material.prepared, size, mid, { indent: 0, hang: 0 }).lines.length;
+          if (count > sourceLines) lo = mid;
+          else hi = mid;
+        }
+        measureWidth = Math.min(width, hi + size * 0.4);
+      }
       for (let pass = 0; pass < 4; pass++) {
         const { lines } = api.TextLinebreak.layout(material.prepared, size, measureWidth, {
           indent: firstInset,
@@ -254,7 +339,8 @@
       for (let i = 1; i < extents.length; i++) step = Math.max(step, extents[i - 1].below + extents[i].above);
       const occupied = first + Math.max(0, rows.length - 1) * step + last;
       const baselines = rows.map((row) => {
-        const ink = row.firstChild, probe = ink.firstChild;
+        const ink = row.firstChild,
+          probe = ink.firstChild;
         // offsetTop rounds to whole CSS pixels and creates a visible step
         // after zooming. Gecko's local coordinates retain fractional baselines.
         return probe.getBoxQuads({ relativeTo: ink })[0].p1.y;
@@ -262,6 +348,7 @@
       rows.forEach((row, i) => {
         row.style.height = (i + 1 === rows.length ? first + last : step) + "px";
         row.firstChild.style.top = first - baselines[i] + "px";
+        if (unit.centered) row.firstChild.style.left = Math.max(0, (width - row.firstChild.offsetWidth) / 2) + "px";
       });
       return excess <= 1 && occupied <= height + 0.4;
     }
@@ -285,6 +372,9 @@
           : floor;
         fits = paint(chosen, compactStep);
       }
+    }
+    if (fits && material && cjkBody && unit.justified && !unit.centered) {
+      justifyChinese(content, width, firstInset, nextInset, parseFloat(box.style.fontSize));
     }
     if (!fits) {
       box.dataset.overflow = "true";

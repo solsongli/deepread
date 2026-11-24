@@ -202,15 +202,25 @@
         bitmap.width = bitmap.height = 0;
         this.sheets.replaceChildren(this.source.column, this.target.column); this.resize();
         const provider = DeepRead.prefs.parserConfig().provider;
+        const existing=this.session.data;
+        if (existing?.resultDir && existing.contentList?.length) {
+          if (this.enriched?.source!==existing.contentList) {
+            this.enriched={source:existing.contentList,promise:DeepRead.Parser.enrichLayout(existing.resultDir,existing.contentList)};
+          }
+          await this.enriched.promise;
+          if (!this.alive(token)) return;
+        }
         if (this.parsed?.fingerprint !== page.fingerprint) this.parsed = null;
         if (provider !== "builtin" && !this.session.data?.contentList && this.parsed?.provider !== provider) {
           const stored = await DeepRead.Store.comparisonData(this.session.key, page.fingerprint, `parse:${provider}`);
           if (!this.alive(token)) return;
-          if (stored) this.parsed = { provider, items: stored, fingerprint: page.fingerprint };
+          if (stored) this.parsed = { provider, items: Array.isArray(stored) ? stored : stored.items,
+            legacy:Array.isArray(stored), fingerprint: page.fingerprint };
         }
         [page.saved] = await Promise.all([
           DeepRead.Store.comparisonData(this.session.key, page.fingerprint, slotFor(index, page.language)),
-          DeepRead.PaperType.ready(this.doc, page.language)
+          DeepRead.PaperType.ready(this.doc, page.language),
+          DeepRead.FigureOCR.discover(this,page)
         ]);
         if (!this.alive(token)) return;
         this.prepareUnits(page); this.paint();
@@ -247,9 +257,9 @@
       if (!source?.length && this.parsed?.provider === DeepRead.prefs.parserConfig().provider) source = this.parsed.items;
       const paragraphs = (s.data?.hierarchicalData?.find((p) => p.pageIndex === page.index)?.paragraphs || []).map((p) => ({ ...p, pageIndex: page.index }));
       let items = [];
-      if (source?.length) items = source.filter((p) => p.page_idx === page.index);
+      if (source?.length) items = DeepRead.ParallelVisual.pageItems(source,page.index);
       else if (!paragraphs.length) items = DeepRead.TextLayerParser.buildContentList([{ pageIndex: page.index, viewBox: page.view, chars: page.chars }]);
-      page.units = PLAN.plan({ paragraphs, items, chars: page.chars, view: page.view, language: page.language,
+      page.units = PLAN.plan({ paragraphs, items, chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels,
         reuse: (!s.data?.language || s.data.language === page.language), continuationFor: (p) => s.continuationFor(p) });
       page.context = PLAN.interruptedContext(source?.length ? source : items, page.index);
       page.localItems = source?.length ? null : items;
@@ -257,7 +267,7 @@
     }
 
     async parseDocument(page, signal) {
-      if (!this.needsParse()) return;
+      if (!this.needsParse() && !this.parsed?.legacy) return;
       const session = this.session;
       const provider = DeepRead.prefs.parserConfig().provider;
       const path = await session.item.getFilePathAsync();
@@ -273,18 +283,30 @@
       }
       finally { await IOUtils.remove(scratchPath, { recursive: true, ignoreAbsent: true }); }
       if (signal.aborted) return;
-      const items = parsed.contentList.map(({ id, page_idx, type, sub_type, text_level, bbox, text, list_items, image_caption, table_caption, chart_caption }) =>
-        ({ id, page_idx, type, sub_type, text_level, bbox, text, list_items, image_caption, table_caption, chart_caption }));
+      const items = parsed.contentList.map(({ id, page_idx, type, sub_type, text_level, bbox, text, list_items,
+        image_caption, table_caption, chart_caption, code_caption, code_body, table_body, captionFrames, physicalParts }) =>
+        ({ id, page_idx, type, sub_type, text_level, bbox, text, list_items, image_caption, table_caption, chart_caption,
+          code_caption, code_body, table_body, captionFrames, physicalParts }));
       this.parsed = { provider, items, fingerprint: page.fingerprint };
       // A temporary service failure can fall back to built-in parsing. Retry the configured
       // service next time rather than marking its OCR result as permanently cached.
       if (!parsed.fallback) {
-        await DeepRead.Store.saveComparisonData(session.key, page.fingerprint, `parse:${provider}`, items);
+        await DeepRead.Store.saveComparisonData(session.key, page.fingerprint, `parse:${provider}`, {version:2,items});
         session.hasComparisonCache = !!page.fingerprint;
       }
     }
 
     async translateUnits(page, signal) {
+      const hadLabels=page.rasterLabels;
+      try {
+        await DeepRead.FigureOCR.recognize(this,page,signal);
+      } catch(error) {
+        if(signal.aborted || error?.name==="AbortError")throw error;
+        page.figureError=true;
+        DeepRead.log("Figure text unavailable; retaining original artwork",String(error));
+      }
+      if (signal.aborted) return;
+      if (page.rasterLabels!==hadLabels) this.prepareUnits(page);
       if (!page.units.some((u) => !u.translation)) return;
       if (!DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
       if (page.localItems?.length && this.count > 1) {
@@ -314,7 +336,7 @@
       if (!page || !this.alive(token) || page.busy || this.book || this.exportJob) return;
       page.busy = true; this.translateButton.disabled = this.bookButton.disabled = this.exportControl.disabled = true;
       try {
-        if (this.needsParse()) {
+        if (this.needsParse() || this.parsed?.legacy) {
           if (!DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
           await this.parseDocument(page, token.signal);
           if (!this.alive(token)) return;
@@ -345,7 +367,7 @@
       this.number.disabled = this.previous.disabled = this.next.disabled = this.translateButton.disabled = true;
       let visited = 0, originals = 0;
       try {
-        if (this.needsParse()) {
+        if (this.needsParse() || this.parsed?.legacy) {
           if (!DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
           await this.parseDocument(current, signal);
           if (signal.aborted) return;
@@ -494,13 +516,26 @@
       for (const u of page.units) {
         if (!u.translation) continue;
         const rects = u.placed ? u.masks.map((r) => project(r, page.transform)) : [];
-        const colors = rects.map((r) => paperColor(pixels, r, kx, ky));
+        const patches=u.verifiedLabel && u.placed ? u.masks.map(mask=>DeepRead.ParallelInk.labelPatch(pixels,mask,page,u.size)) : [];
+        const colors = rects.map((r,i) => u.verifiedLabel ? patches[i]?.color : paperColor(pixels, r, kx, ky));
         const originalFragment = hdoc.importNode(this.session.overlay._translationContent(u, u.translation, page.language), true);
-        const fragment = materialize(hdoc,originalFragment,u,page,this.source.canvas,pixels);
+        let fragment = materialize(hdoc,originalFragment,u,page,this.source.canvas,pixels);
+        if(!u.title && !u.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(fragment,u.modelText);
+        const samples=u.linkSamples || [];
+        if (samples.length && !fragment.querySelector("a")) {
+          const ids=samples.map(rect=>DeepRead.ParallelInk.sourceLink({samples:[rect]},page));
+          const id=ids.find(i=>i>=0);
+          if (id!=null && ids.filter(i=>i===id).length>=samples.length*.9) {
+            const link=h(hdoc,"a");link.href="#";link.dataset.sourceLink=String(id);
+            link.style.color=DeepRead.ParallelInk.inkColor({samples},page,pixels);
+            link.append(fragment);fragment=hdoc.createDocumentFragment();fragment.append(link);
+          }
+        }
         if (!rects.length || colors.some((c) => !c)) {
           notes.push([u, fragment]); page.supplements.push(u); continue;
         }
         for (let i = 0; i < rects.length; i++) {
+          if(patches[i]) { patches[i].erase(ctx);continue; }
           const r = rects[i]; ctx.fillStyle = `rgb(${colors[i].join(",")})`;
           ctx.fillRect(Math.floor(r.left * kx), Math.floor(r.top * ky), Math.ceil((r.left + r.width) * kx) - Math.floor(r.left * kx), Math.ceil((r.top + r.height) * ky) - Math.floor(r.top * ky));
         }
@@ -515,6 +550,19 @@
         // Rotate the translated line with the source's writing direction, including
         // PDF /Rotate and the reader's own rotation. The source canvas uses this viewport too.
         const angle = orientation(u,page);
+        let layoutUnit=u;
+        if(angle===0 && u.titleInsets) {
+          const k=Math.hypot(page.transform[0],page.transform[1]);
+          r.top-=u.titleInsets[0]*k;r.height+=(u.titleInsets[0]+u.titleInsets[1])*k;
+        }
+        if(angle===0 && u.role==="table_label" && patches[0]) {
+          const mask=rects[0];
+          const left=patches[0].left+Math.max(0,r.left-mask.left);
+          const right=patches[0].right+Math.max(0,mask.left+mask.width-r.left-r.width);
+          if(Math.min(left,right)>1 && Math.abs(left-right)<u.size*.8) {
+            r.left-=left;r.width+=left+right;layoutUnit={...u,centered:true};
+          } else r.width+=right;
+        }
         block.style.transformOrigin = "0 0";
         block.style.transform = `rotate(${angle * 90}deg)`;
         block.style.left = `${r.left + (angle === 1 || angle === 2 ? r.width : 0)}px`;
@@ -522,13 +570,14 @@
         block.style.width = `${angle % 2 ? r.height : r.width}px`;
         block.style.height = `${(angle % 2 ? r.width : r.height) + (angle===0 && !u.title ? u.clearance || 0 : 0)}px`;
         if (colors[0][0] * 0.21 + colors[0][1] * 0.72 + colors[0][2] * 0.07 < 115) block.style.color = "white";
+        else if (u.styleSamples) block.style.color=DeepRead.ParallelInk.inkColor({samples:u.styleSamples},page,pixels);
         if (u.title && u.boldTitle) block.classList.add("dr-parallel-title");
         const chinese = /^zh(?:-|$)/i.test(page.language);
-        if (u.sans && (u.title || !chinese)) block.classList.add("dr-paper-sans");
+        if ((u.sans && (u.title || !chinese)) || u.role==="figure_label") block.classList.add("dr-paper-sans");
         if (chinese && u.title && u.allItalic) block.classList.add("dr-paper-subheading");
         if (u.allItalic) block.style.fontStyle='italic';
         this.target.stage.append(block);
-        DeepRead.ParallelTypeset.draw(block, u, fragment, u.size * Math.hypot(page.transform[0], page.transform[1]));
+        DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment, u.size * Math.hypot(page.transform[0], page.transform[1]));
         if (block.dataset.overflow) page.supplements.push(u);
         this.pair(u,block,false);
       }
@@ -548,15 +597,18 @@
       const total = page.units.length, translated = page.units.filter((u) => u.translation).length;
       this.refreshExport();
       const parse = this.needsParse() && (!translated || translated < total);
-      this.translateButton.hidden = translated === total && !parse;
+      this.translateButton.hidden = translated === total && !parse && !this.parsed?.legacy && !page.imageCandidates?.length;
       this.translateButton.disabled = !!this.book || !!this.exportJob; this.bookButton.disabled = false;
-      this.translateButton.textContent = parse ? tr("解析文档并翻译本页", "Parse PDF and translate page") : tr("翻译本页", "Translate page");
+      this.translateButton.textContent = this.parsed?.legacy ? tr("补全版面并翻译本页","Refresh layout and translate page")
+        : parse ? tr("解析文档并翻译本页", "Parse PDF and translate page") : tr("翻译本页", "Translate page");
       this.status.textContent = parse ? tr("将使用已配置的解析服务处理整份 PDF，再翻译本页。", "Your configured parser will process the PDF before this page is translated.")
         : total ? tr(`第 ${page.index + 1} 页 · 原位 ${translated-notes.length}/${total} 处`, `Page ${page.index + 1} · ${translated-notes.length}/${total} in place`)
           + (notes.length ? tr(` · 页下 ${notes.length} 处`, ` · ${notes.length} below`) : '')
           + (page.supplements.length>notes.length ? tr(` · 段内滚动 ${page.supplements.length-notes.length} 处`, ` · ${page.supplements.length-notes.length} scrollable`) : '')
           + (total>translated ? tr(` · 待译 ${total-translated} 处`, ` · ${total-translated} pending`) : '')
         : tr("本页保留原图。扫描正文需要可用的 OCR 解析结果。", "Original page shown. Scanned text needs OCR results.");
+      if (page.figureError) this.status.textContent+=tr(" · 图内文字识别未完成，保留原图"," · Figure text unavailable, original artwork shown");
+      else if (page.imageCandidates?.length) this.status.textContent+=tr(" · 图内文字待识别"," · Figure labels pending");
     }
 
     pair(unit, target, below) {

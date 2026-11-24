@@ -15,7 +15,8 @@
     "@xmldom/xmldom": "0.9.12",
     "katex": "0.16.47",
     "marked": "18.0.14",
-    "pdf-lib": "1.17.1"
+    "pdf-lib": "1.17.1",
+    "tesseract.js-core": "6.1.2"
   },
   "repository": {
     "type": "git",

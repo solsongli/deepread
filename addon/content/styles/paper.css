@@ -45,11 +45,13 @@
   unicode-range: U+00B7, U+2018-201D, U+2026, U+2E80-9FFF, U+F900-FAFF, U+FF01-FF60, U+20000-323AF;
 }
 .dr-paper {
+  --dr-paper-code: "Liberation Mono", Consolas, Menlo, "Courier New", monospace;
   font-family: "DeepRead Roman", "Times New Roman", "Liberation Serif", serif;
   font-kerning: normal;
   /* Keep adjacent f/i glyphs and author names searchable in Gecko's printed PDF. */
   font-variant-ligatures: none;
 }
+.dr-paper-code { font-family: var(--dr-paper-code, monospace); }
 .dr-paper:lang(zh-CN), .dr-paper:lang(zh-Hans) {
   font-family: "DeepRead Song", "DeepRead Roman", "Source Han Serif SC", "Noto Serif CJK SC",
                "Songti SC", "SimSun", serif;

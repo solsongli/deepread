@@ -46,6 +46,20 @@
     const starts = [0];
     const markers = lines.map((l) => markerOf(text.slice(l.start, l.end)));
     const listContext = type === "list" || markers.filter(Boolean).length >= 2;
+    // Consecutive run-in headings may start at the same x with no extra
+    // leading. Require a repeated emphasis pattern followed by normal prose.
+    const leadStyle = line => {
+      if (!/[\p{Lu}\p{Script=Han}]/u.test(text[line.start])) return "";
+      const style = c => DeepRead.Typography.bold(c) ? "bold" : DeepRead.Typography.italic(c) ? "italic" : "";
+      const lead=style(chars[mapping[line.start]]);
+      if (!lead) return "";
+      let j=line.start+1;
+      while(j<line.end && (/\s/.test(text[j]) || style(chars[mapping[j]])===lead)) j++;
+      const words=text.slice(line.start,j).trim();
+      return words.length>=3 && words.length<=60 && words.split(/\s+/).length<=7 &&
+        /^[\p{L}]/u.test(text[j]||"") && j+3<line.end && !style(chars[mapping[j]]) ? lead : "";
+    };
+    const firstLead=leadStyle(lines[0]);
     for (let i = 1; i < lines.length; i++) {
       const prev = lines[i - 1], current = lines[i];
       const end = text.slice(prev.start, prev.end).trim();
@@ -54,7 +68,8 @@
       const hasMarker = markers[i] && (listContext || /^[•‣◦▪●]$/.test(markers[i]));
       const hardGap = prev.cy - current.cy > pitch * 1.45;
       const indented = indent >= 0.45 && indent <= 2.2 && Math.abs(current.x - prev.x) > bodySize * 0.3;
-      if (hasMarker || (!listContext && complete && (hardGap || indented))) starts.push(i);
+      const runIn=firstLead && Math.abs(current.x-lines[0].x)<bodySize*.4 && leadStyle(current)===firstLead;
+      if (hasMarker || (!listContext && complete && (hardGap || indented || runIn))) starts.push(i);
     }
     const blockTop = lines[0].top, bottom = Math.min(...lines.map((l) => l.bottom));
     const height = Math.max(bodySize, blockTop - bottom), minLeft = Math.min(...lines.map((l) => l.x));
@@ -123,6 +138,7 @@
       const indices = missing.slice(at, at + 4);
       const items = indices.flatMap((i) => result[i].translationLayout.units.map((u) => ({
         id: `${i}:${u.id}`, kind: u.kind, source_text: u.styledText || u.sourceText,
+        ...(u.hint ? {source_context:u.hint} : {}),
         ...(u.protected?.length ? { protected: u.protected } : {}),
       })));
       try {
@@ -130,7 +146,7 @@
         const context = contextFor?.(indices);
         if (context?.length) messages.push({ role: "user", content: `Neighbouring source fragments in reading order (JSON):\n${JSON.stringify(context)}\nIf the fragments form a sentence interrupted by a page break or figure, translate it in context. Return only the part belonging to each requested unit ID.` });
         const protection = items.some(u=>u.protected) ? ' Each ⟦D…⟧ token represents the exact expression described in that unit’s protected list. Write around the token in natural target-language order and copy its ID exactly once. The reader inserts its final content. Do not spell out its value, change its case, add symbols or reverse a comparison.' : '';
-        const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Each unit is an original paragraph or list item. Return exactly one translation per id. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers.${protection}${repair ? ' The prior reply lost or duplicated a token or emphasis. Check every token ID and emphasis span against its own source before returning this correction.' : ''} Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. JSON only: {"translations":[{"id":"0:u0","translation":"..."}]}.`,
+        const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Each unit belongs to one physical source frame. Return exactly one translation per id. For table_label and figure_label return a short conventional label that fits the original cell or legend, preserving language-pair direction, abbreviations and symbols. For ref_text keep author names, years and page ranges in source order, translate the work title, and retain venue emphasis. For code_comment translate the comment only. Preserve the association between authors, affiliations, dates and field labels. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers.${protection}${repair ? ' The prior reply lost or duplicated a token or emphasis. Check every token ID and emphasis span against its own source before returning this correction.' : ''} Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. JSON only: {"translations":[{"id":"0:u0","translation":"..."}]}.`,
           messages, responseFormat: { type: "json_object" }, temperature: 0.1, signal });
         if (signal?.aborted) { const e = new Error("Aborted"); e.name = "AbortError"; throw e; }
         const text = String(response?.content || "").replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "").replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");

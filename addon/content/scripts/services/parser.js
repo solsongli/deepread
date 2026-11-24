@@ -354,7 +354,7 @@ DeepRead.Parser = {
       return_md: "true",
       return_content_list: "true",
       return_images: "true",
-      return_middle_json: "false",
+      return_middle_json: "true",
       return_model_output: "false",
       response_format_zip: "true",
       formula_enable: String(!!cfg.mineruFormula),
@@ -380,6 +380,10 @@ DeepRead.Parser = {
     if (first.content_list !== undefined && first.content_list !== null) {
       const cl = typeof first.content_list === "string" ? first.content_list : JSON.stringify(first.content_list);
       await IOUtils.writeUTF8(PathUtils.join(resultDir, "content_list.json"), cl);
+    }
+    if (first.middle_json) {
+      const layout=typeof first.middle_json==="string" ? first.middle_json : JSON.stringify(first.middle_json);
+      await IOUtils.writeUTF8(PathUtils.join(resultDir,"layout.json"),layout);
     }
     await IOUtils.writeUTF8(PathUtils.join(resultDir, "full.md"), first.md_content || "");
     const images = first.images || {};
@@ -439,6 +443,24 @@ DeepRead.Parser = {
     }
     catch (e) {
       if (e?.name === "AbortError") throw e;
+      // Some result CDNs work in Gecko's privileged HTTP channel after fetch
+      // fails. Retry the same signed URL without credentials or cookies.
+      if (!headers && /^https:\/\//i.test(url)) {
+        return new Promise((resolve, reject) => {
+          const req = new (Zotero.getMainWindow().XMLHttpRequest)({ mozAnon:true });
+          const abort = () => req.abort();
+          req.open("GET",url,true);
+          req.responseType="arraybuffer";
+          req.onload = () => req.status>=200 && req.status<300 ? resolve(new Uint8Array(req.response))
+            : reject(new Error(`MinerU ${step} failed: HTTP ${req.status}`));
+          req.onerror = () => reject(new Error(`MinerU ${step} failed: network error`));
+          req.onabort = () => reject(this._abortError());
+          req.onloadend = () => signal?.removeEventListener("abort",abort);
+          this._throwIfAborted(signal);
+          signal?.addEventListener("abort",abort,{once:true});
+          req.send();
+        });
+      }
       throw new Error(`MinerU ${step} failed: network error: ${e?.message || e}`);
     }
     if (!resp.ok) throw new Error(`MinerU ${step} failed: HTTP ${resp.status} ${await this._excerpt(resp)}`);
@@ -558,9 +580,20 @@ DeepRead.Parser = {
     }
     if (!Array.isArray(raw)) throw new Error("MinerU content list is not an array");
     const contentList = raw.map((item, index) => ({ id: index, ...item }));
+    await this.enrichLayout(resultDir,contentList,files);
     const mdPath = this._findMarkdown(files);
     const markdown = mdPath ? await IOUtils.readUTF8(mdPath) : "";
     return { resultDir, contentList, markdown };
+  },
+
+  async enrichLayout(resultDir,contentList,files) {
+    if (!resultDir || !contentList?.length) return;
+    try {
+      if (!files && !await IOUtils.exists(resultDir)) return;
+      const paths=files || await this._listFiles(resultDir);
+      const layout=paths.find(p=>/^(?:layout|.+_middle)\.json$/i.test(PathUtils.filename(p)));
+      if (layout) DeepRead.ParallelVisual.attachLayout(contentList,JSON.parse(await IOUtils.readUTF8(layout)));
+    } catch (error) { DeepRead.log("MinerU physical layout unavailable",String(error)); }
   },
 
   // ---- helpers -----------------------------------------------------------

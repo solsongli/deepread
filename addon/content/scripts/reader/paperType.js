@@ -75,7 +75,7 @@
     }
     function visit(node) {
       if (node.nodeType === 3) { nodes.push(node); return; }
-      if (node.matches?.("code, pre, a, math, .katex, .dr-list-marker, [role=math]")) { finish(); return; }
+      if (node.matches?.("code, pre, a, math, .katex, .dr-paper-code, .dr-list-marker, [role=math]")) { finish(); return; }
       const boundary = node.nodeType === 1 && !["span","em","strong","b","i"].includes(node.localName);
       if (boundary) finish();
       for (const child of node.childNodes) visit(child);
@@ -85,5 +85,15 @@
     finish();
   }
 
-  DeepRead.PaperType = { install, remove, ready, apply, spaceChinese };
+  function separateLead(fragment, source) {
+    const label=/^(\*{1,3})([^*\n]+)\1\s+(?=[\p{L}⟦])/u.exec(source || "");
+    if (!label || label[2].length>60 || /[.!?;:，。！？；：]$/u.test(label[2].trim())) return;
+    const host=fragment.firstElementChild?.localName==="p" ? fragment.firstElementChild : fragment;
+    const lead=[...host.childNodes].find(node=>node.textContent.trim());
+    if (!["em","strong"].includes(lead?.localName) || !/\p{Script=Han}$/u.test(lead.textContent)) return;
+    const next=lead.nextSibling;
+    if (next && /^\p{Script=Han}/u.test(next.textContent)) lead.after("\u2002");
+  }
+
+  DeepRead.PaperType = { install, remove, ready, apply, spaceChinese, separateLead };
 })();

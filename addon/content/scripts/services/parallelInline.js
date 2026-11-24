@@ -84,23 +84,50 @@
     const offsets = stream.offsets,
       text = stream.text,
       roles = [];
-    const word = (s) => /[A-Za-z]/.test(s || "");
+    const word = (i) =>
+      /\p{Script=Latin}/u.test(text[i] || "") ||
+      (/['’]/u.test(text[i] || "") &&
+        /\p{Script=Latin}/u.test(text[i - 1] || "") &&
+        /\p{Script=Latin}/u.test(text[i + 1] || ""));
     // Small capitals share their baseline with the preceding full-size letter.
     // Superscripts and subscripts shift off that baseline.
-    let bodyBaseline;
+    const baselines = [];
+    for (let a = 0; a < chars.length; ) {
+      let b = a + 1;
+      while (b < chars.length && !chars[b - 1].lineBreakAfter && !chars[b - 1].paragraphBreakAfter) b++;
+      const line = chars.slice(a, b),
+        full = line.filter((c) => c.fontSize >= size * 0.85 && Number.isFinite(c.baseline));
+      const values = (full.length ? full : line)
+        .map((c) => c.baseline)
+        .filter(Number.isFinite)
+        .sort((x, y) => x - y);
+      const value = values[Math.floor(values.length / 2)];
+      for (let i = a; i < b; i++) baselines[i] = value;
+      a = b;
+    }
     const operators = new Set();
-    for (const m of text.matchAll(
-      /\b(?:log|ln|exp|sin|cos|tan|min|max|argmin|argmax)(?=\s*(?:[A-Za-z]\s*)?\()/gu
-    )) {
+    for (const m of text.matchAll(/\b(?:log|ln|exp|sin|cos|tan|min|max|argmin|argmax)(?=\s*(?:[A-Za-z]\s*)?\()/gu)) {
       for (let j = m.index; j < m.index + m[0].length; j++) operators.add(stream.map[j]);
     }
     for (let i = 0; i < chars.length; i++) {
       const c = chars[i],
         v = value(c),
         [a, b] = offsets[i];
-      if (!i || chars[i - 1].lineBreakAfter || chars[i - 1].paragraphBreakAfter) bodyBaseline = undefined;
-      if (c.fontSize >= size * 0.85 && Number.isFinite(c.baseline)) bodyBaseline = c.baseline;
+      const bodyBaseline = baselines[i];
       if (reserved.some((span) => a < span.end && b > span.start)) {
+        roles.push({ seed: false, eligible: false });
+        continue;
+      }
+      if (/^s$/i.test(v) && /['’]/u.test(text[a - 1] || "") && !ocr?.has(c)) {
+        roles.push({ seed: false, eligible: false });
+        continue;
+      }
+      const article =
+        /^[Aa]$/.test(v) &&
+        /^(?:\s+)\p{L}{2}/u.test(text.slice(b, b + 12)) &&
+        (!a || /(?:^|[:.!?])\s*$/u.test(text.slice(Math.max(0, a - 4), a)));
+      const wordPrefix = /^[A-Za-z]$/.test(v) && /^[-‐‑]\p{L}{2}/u.test(text.slice(b, b + 12));
+      if ((article || wordPrefix) && !mathFont(c.fontName) && !ocr?.has(c)) {
         roles.push({ seed: false, eligible: false });
         continue;
       }
@@ -112,15 +139,18 @@
           Math.abs(c.baseline - bodyBaseline) > size * 0.07);
       const scriptOrAccent = (neighbour) =>
         neighbour &&
-        (neighbour.fontSize < size * 0.82 ||
+        ((neighbour.fontSize < size * 0.82 &&
+          (!Number.isFinite(c.baseline) ||
+            !Number.isFinite(neighbour.baseline) ||
+            Math.abs(c.baseline - neighbour.baseline) > size * 0.07)) ||
           (mathFont(neighbour.fontName) &&
             neighbour.rect &&
             c.rect &&
             Math.min(neighbour.rect[2], c.rect[2]) - Math.max(neighbour.rect[0], c.rect[0]) > size * 0.1));
       const single =
         /^[A-Za-z]$/.test(v) &&
-        (!word(text[a - 1]) || scriptOrAccent(chars[i - 1])) &&
-        (!word(text[b]) || scriptOrAccent(chars[i + 1]));
+        (!word(a - 1) || scriptOrAccent(chars[i - 1])) &&
+        (!word(b) || scriptOrAccent(chars[i + 1]));
       const seed =
         operators.has(i) ||
         ocr?.has(c) ||
@@ -235,6 +265,8 @@
     varepsilon: "ε",
     zeta: "ζ",
     eta: "η",
+    chi: "χ",
+    iota: "ι",
     theta: "θ",
     kappa: "κ",
     lambda: "λ",
@@ -256,7 +288,7 @@
     const letter = greek[name.toLowerCase()];
     return letter && (name[0] === name[0].toUpperCase() ? letter.toUpperCase() : letter);
   }
-  function describe(glyphs, source, fallbackStyle, size, language, ocr) {
+  function describe(glyphs, source, fallbackStyle, size, language, ocr, affiliation = false, heading = false) {
     const stream = glyphStream(glyphs),
       text = glyphs.length ? stream.text : fallbackStyle || source;
     const spans = [];
@@ -266,9 +298,39 @@
       return true;
     };
     for (const m of text.matchAll(/⟦D+\d+⟧/gu)) add(m.index, m.index + m[0].length, "literal", m[0]);
+    if (heading) {
+      const section = /^(?:\d+(?:\.\d+)*\.?|[IVXLCDM]+\.)(?=\s+\S)/u.exec(text);
+      if (section) add(0, section[0].length, "section", section[0]);
+    }
+    if (affiliation) {
+      for (const m of text.matchAll(
+        /(?:\p{Lu}[\p{Script=Latin}’'-]+\s+)?\p{Lu}[\p{Script=Latin}’'-]+(?=\s+(?:Institute|Laboratory|Foundation|Society)\b)/gu
+      )) {
+        if (/[^\u0000-\u007f]/u.test(m[0])) add(m.index, m.index + m[0].length, "proper", m[0]);
+      }
+    }
     const roman = /^[IVXLCDM]+\.(?=\s+\p{Lu})/u.exec(text);
     if (roman) add(0, roman[0].length, "section", roman[0]);
     if (isHan(language)) {
+      // Treat a complete date as one fact. Separate day/year tokens can
+      // both survive validation while being assigned to the wrong fields.
+      const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+      const date =
+        /\b(?:(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?|([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?),?\s+((?:18|19|20|21)\d{2})\b/gi;
+      for (const m of text.matchAll(date)) {
+        const word = (m[2] || m[3]).toLowerCase(),
+          month = months.indexOf(word.slice(0, 3)) + 1;
+        if (
+          !/^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$/u.test(
+            word
+          )
+        )
+          continue;
+        const day = Number(m[1] || m[4]),
+          year = Number(m[5]);
+        if (day >= 1 && day <= new Date(Date.UTC(year, month, 0)).getUTCDate())
+          add(m.index, m.index + m[0].length, "date", year + "年" + month + "月" + day + "日");
+      }
       const relation =
         /(?<![\p{L}\p{N}_])(\$\s*(?:\\[a-z]+|[A-Za-z\p{Script=Greek}])\s*\$|\\\(\s*(?:\\[a-z]+|[A-Za-z\p{Script=Greek}])\s*\\\)|[\p{Script=Greek}A-Za-z])\s+(?:(?:is|was|are|were)\s+)?(?:(slightly|strictly)\s+)?(no more than|no less than|greater than|larger than|higher than|less than|smaller than|lower than|at least|at most)\s+([+−-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+−-]?\d+)?(?:%|‰)?)(?![\p{L}\p{N}.]\d|\p{L})/giu;
       for (const m of text.matchAll(relation)) {
@@ -289,16 +351,39 @@
     }
     // Complete URLs, citations and OCR LaTeX are indivisible before individual numbers.
     for (const m of text.matchAll(
-      /https?:\/\/[^\s<>]+|(?:[\w-]+\.)+(?:\s+)?(?:[\w-]+\.)*(?:edu|org|com|net|io)(?:\/[\w./%+-]*)?/gi
+      /https?:\/\/[^\s<>]+|(?:[\w-]+\.)+(?:\s+)?(?:[\w-]+\.)*(?:edu|org|com|net|io)\b(?:\/[\w./%+-]*)?/gi
     )) {
       const url = m[0].replace(/[.,;:!?)]+$/u, "");
       add(m.index, m.index + url.length, "url", url.replace(/\s+/g, ""));
+    }
+    for (const m of text.matchAll(/\b10\.\d{4,9}\/[A-Z0-9._;()/:+-]+/gi)) {
+      const doi = m[0].replace(/[.,;:]+$/u, "");
+      add(m.index, m.index + doi.length, "identifier", doi);
     }
     for (const m of text.matchAll(texPattern)) add(m.index, m.index + m[0].length, "tex", m[0]);
     for (const m of text.matchAll(
       /\b[A-Z][\p{L}’'-]+(?:\s+et\s+al\.|\s+(?:and|&)\s+[A-Z][\p{L}’'-]+)\s*\(\s*(?:19|20)\d{2}[a-z]?\s*\)|\[(?:\d+(?:\s*[,–-]\s*\d+)*)\]/gu
     ))
       add(m.index, m.index + m[0].length, "citation", m[0].replace(/\s+/g, " "));
+    for (let i = 0; i < glyphs.length; ) {
+      if (!DeepRead.Typography.monospace(glyphs[i])) {
+        i++;
+        continue;
+      }
+      let end = i + 1;
+      while (
+        end < glyphs.length &&
+        DeepRead.Typography.monospace(glyphs[end]) &&
+        !glyphs[end - 1].lineBreakAfter &&
+        !glyphs[end - 1].paragraphBreakAfter
+      )
+        end++;
+      const startAt = stream.offsets[i][0],
+        endAt = stream.offsets[end - 1][1];
+      const literal = text.slice(startAt, endAt).trim();
+      if (/[a-z]/i.test(literal)) add(startAt, endAt, "code", literal);
+      i = end;
+    }
     for (const m of mathRuns(glyphs, stream, size, ocr, spans)) add(m.start, m.end, "math", m.display, m);
     if (!glyphs.length)
       for (const m of text.matchAll(
@@ -312,10 +397,7 @@
     spans.sort((a, b) => a.start - b.start);
     const styled = (a, b) =>
       glyphs.length
-        ? DeepRead.Typography.styledSentence(
-            { text: text.slice(a, b), charMapping: stream.map.slice(a, b) },
-            glyphs
-          )
+        ? DeepRead.Typography.styledSentence({ text: text.slice(a, b), charMapping: stream.map.slice(a, b) }, glyphs)
         : text.slice(a, b);
     const tidy = (s) => s.replace(/\s+/gu, " ").trim();
     const sourceStyled = glyphs.length ? tidy(styled(0, text.length)) : fallbackStyle || source;
@@ -323,6 +405,13 @@
     while (text.includes(`⟦${prefix}`)) prefix += "D";
     let last = 0,
       modelText = "";
+    const modelMap = [],
+      modelGlyphs = [...glyphs];
+    let modelPlain = "";
+    const copyPlain = (start, end) => {
+      modelPlain += text.slice(start, end);
+      for (let j = start; j < end; j++) modelMap.push(stream.map[j]);
+    };
     spans.forEach((s, i) => {
       s.id = `⟦${prefix}${i}⟧`;
       s.source = tidy(text.slice(s.start, s.end));
@@ -331,16 +420,30 @@
         : [];
       s.bold = owned.length > 0 && owned.every(DeepRead.Typography.bold);
       s.italic = owned.length > 0 && owned.every(DeepRead.Typography.italic);
+      s.mono = owned.length > 0 && owned.every(DeepRead.Typography.monospace);
       if (!s.rect && owned.length) s.rect = DeepRead.Overlay.unionRect(owned.map((c) => c.rect).filter(Boolean));
       if (s.kind !== "math" && owned.length)
         s.samples = owned
           .filter((c) => c.rect)
           .slice(0, 8)
           .map((c) => c.rect);
-      modelText += styled(last, s.start) + s.id;
+      if (glyphs.length) {
+        copyPlain(last, s.start);
+        const neighbours = [glyphs[stream.map[s.start - 1]], glyphs[stream.map[s.end]]].filter(Boolean);
+        const face = {
+          bold: s.bold && neighbours.some(DeepRead.Typography.bold),
+          italic: s.italic && neighbours.some(DeepRead.Typography.italic)
+        };
+        const index = modelGlyphs.push(face) - 1;
+        modelPlain += s.id;
+        for (let j = 0; j < s.id.length; j++) modelMap.push(index);
+      } else modelText += styled(last, s.start) + s.id;
       last = s.end;
     });
-    modelText = spans.length ? tidy(modelText + styled(last, text.length)) : sourceStyled;
+    if (glyphs.length && spans.length) {
+      copyPlain(last, text.length);
+      modelText = tidy(DeepRead.Typography.styledSentence({ text: modelPlain, charMapping: modelMap }, modelGlyphs));
+    } else modelText = spans.length ? tidy(modelText + styled(last, text.length)) : sourceStyled;
     return { tokens: spans, modelText, styled: sourceStyled };
   }
 
@@ -356,6 +459,8 @@
     )
       return false;
     const unlocked = text.replace(pattern, " ");
+    if(expected.some(s=>s.kind==="date" && text.includes(s.id+"年")) ||
+       (expected.some(s=>s.kind==="date") && /\d{4}\s*年\s*\d{1,2}\s*月/u.test(unlocked))) return false;
     if (
       expected.some((s) => s.kind === "relation") &&
       /(?:[大小低高][于於]|超[过過]|至少|至多|[<>≤≥])\s*[-+−]?\d/u.test(unlocked)
@@ -408,5 +513,15 @@
     }
     return valid(unit, translation) ? translation : "";
   }
-  DeepRead.ParallelInline = { describe, valid, fromLegacy, alignOCR };
+  function geometryText(text) {
+    return String(text || "")
+      .replace(/\\([a-zA-Z]+)/g, (raw, name) => greek[name.toLowerCase()] || raw)
+      .normalize("NFKD")
+      .toLowerCase()
+      .replace(/ı/g, "i")
+      .replace(/c?\s*©/g, "c")
+      .replace(/[ˆˇ˘˙˚˜]/gu, "")
+      .replace(/[^\p{L}\p{N}]/gu, "");
+  }
+  DeepRead.ParallelInline = { describe, valid, fromLegacy, alignOCR, geometryText };
 })();

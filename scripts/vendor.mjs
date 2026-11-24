@@ -1,7 +1,8 @@
 // Copies the browser builds of vendored front-end libraries from node_modules
 // into addon/content/lib/. Idempotent: target folders are cleaned first.
 // Run with: npm run vendor
-import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,4 +54,14 @@ for (const [pkg, file, name] of [["@pdf-lib/standard-fonts", "LICENSE.md", "stan
   copyInto(nm(pkg, file), join(pdfDir, "licenses", name + ".txt"));
 }
 
+// The worker needs only the portable LSTM build. Its English weights are
+// committed separately from the engine and are never downloaded by the add-on.
+const ocrDir=lib("figure-ocr");
+for(const file of ["tesseract-core-lstm.js","tesseract-core-lstm.wasm","LICENSE"]) {
+  copyInto(nm("tesseract.js-core",file),join(ocrDir,file));
+}
+const english=readFileSync(requireFile(join(ocrDir,"eng.traineddata")));
+if(createHash("sha256").update(english).digest("hex")!=="7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2") {
+  throw new Error("Unexpected English OCR data; use the revision in NOTICE.md");
+}
 console.log("vendor: done");

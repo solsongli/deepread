@@ -81,7 +81,9 @@
           reader.session.overlay._translationContent(unit, unit.translation, page.language),
           true
         );
-        paragraph.append(DeepRead.ParallelInk.materialize(doc, translated, unit, page, canvas, pixels));
+        const content=DeepRead.ParallelInk.materialize(doc, translated, unit, page, canvas, pixels);
+        if(!unit.title && !unit.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(content,unit.modelText);
+        paragraph.append(content);
         section.append(paragraph);
       }
       doc.body.append(section);

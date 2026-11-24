@@ -65,3 +65,9 @@ The local print fonts in `addon/content/lib/paper-fonts/` are distributed under 
 - DeepRead Roman contains four static instances derived from STIX Two Text by the STIX Fonts Project Authors. It supplies text and italic faces at weight 450 and the corresponding bold faces at weight 700. [Upstream font and license](https://github.com/google/fonts/tree/718c7ee0e83f5e301cc96bbc081c9bb5ade9ed92/ofl/stixtwotext) · [Bundled license](addon/content/lib/paper-fonts/STIX-OFL.txt).
 
 To reproduce the WOFF2 files, place the three pinned variable fonts in one directory as `NotoSerifSC.ttf`, `STIXTwoText.ttf` and `STIXTwoText-Italic.ttf`. Run `python3 scripts/build-paper-fonts.py DIRECTORY` with fontTools and Brotli installed. The script verifies the input checksums. Local Kai, traditional Chinese and sans-serif faces are selected from the system where appropriate.
+
+## Local figure-label OCR
+
+DeepRead uses the portable LSTM build of Tesseract.js-core 6.1.2 to read printed English plot labels on the user's computer. The worker receives only the local figure crop. [Upstream release](https://github.com/naptha/tesseract.js-core/tree/3d12e9b2d4e0e9e64bd0793e2c55b2d8f6404884) · [Apache 2.0 license](addon/content/lib/figure-ocr/LICENSE).
+
+The bundled English weights come from the Tesseract project's tessdata_fast repository. The SHA-256 of `eng.traineddata` is `7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2`. The core includes Tesseract, Leptonica and its image codecs. This software is based in part on the work of the Independent JPEG Group. [English model revision](https://github.com/tesseract-ocr/tessdata_fast/blob/923915d4ced2a7235221788285785a29c4a42d4a/eng.traineddata) · [Model and component notices](addon/content/lib/figure-ocr/licenses).
