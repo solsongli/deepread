@@ -186,6 +186,7 @@
       }
       text.replaceWith(filled);
     }
+    if (/^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.spaceChinese(frag);
     return frag;
   }
   DeepRead.ParallelInk = { project, orientation, materialize };

@@ -38,7 +38,7 @@
     for (const child of node.childNodes) collect(child, runs, next);
   }
 
-  function preparedRuns(doc, fragment, unit, family) {
+  function preparedRuns(doc, fragment, unit, style) {
     const runs = [];
     collect(fragment, runs, { bold: unit.title && unit.boldTitle, italic: unit.allItalic });
     while (runs.length && !runs.at(-1).text.trim()) runs.pop();
@@ -63,7 +63,7 @@
         segments.push({ type: "math", widthEm: r.widthEm, heightEm: r.heightEm, depthEm: r.depthEm });
       } else {
         segments.push({ type: "text", value: r.text });
-        ctx.font = `${r.italic ? "italic" : "normal"} ${r.bold ? "bold" : "normal"} 100px ${family}`;
+        ctx.font = `${r.italic ? "italic" : "normal"} ${r.bold ? "bold" : style.fontWeight} 100px ${style.fontFamily}`;
         for (const ch of r.text) {
           widths.push(ctx.measureText(ch).width / 100);
           if (ch.length === 2) widths.push(0);
@@ -127,7 +127,7 @@
       original = Math.max(1, sourceSize);
     const width = parseFloat(box.style.width),
       height = parseFloat(box.style.height);
-    const family = doc.defaultView.getComputedStyle(box).fontFamily;
+    const style = doc.defaultView.getComputedStyle(box);
     const simple =
       ![...fragment.querySelectorAll("*")].some(
         (el) =>
@@ -176,7 +176,7 @@
       fragment.append(...ink.childNodes);
       content.replaceChildren();
     }
-    const material = simple ? preparedRuns(doc, fragment, unit, family) : null;
+    const material = simple ? preparedRuns(doc, fragment, unit, style) : null;
     if (!simple) content.append(fragment);
     const cjkBody =
       !unit.title && !unit.caption && /\p{Script=Han}/u.test(material?.prepared.text || content.textContent);
@@ -184,8 +184,11 @@
       1.5,
       Math.max(1.05, (unit.caption || unit.title ? unit.pitch : unit.bodyPitch) || 1.2)
     );
-    const preferredSize = cjkBody ? original * 1.12 : original;
-    const standardStep = cjkBody ? Math.max(original * sourcePitch, preferredSize * 1.34) : original * sourcePitch;
+    // Keep the common baseline grid while matching the text size of a printed
+    // column. A shorter translation leaves space at the end of its source frame.
+    const bodyScale = /^zh(?:-|$)/i.test(box.lang) ? 1.02 : 1.12;
+    const preferredSize = cjkBody ? original * bodyScale : original;
+    const standardStep = original * (cjkBody ? Math.max(sourcePitch, 1.5) : sourcePitch);
     // Tight frames have one second, shared baseline step. Font fitting never
     // redistributes leftover height across an individual paragraph.
     const compactStep = Math.min(standardStep, original * Math.max(1.14, sourcePitch));

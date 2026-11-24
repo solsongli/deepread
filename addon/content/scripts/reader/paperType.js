@@ -1,0 +1,89 @@
+/* Translated prose uses the same local fonts in the PDF reader and print frame.
+ * License: AGPL-3.0-or-later. */
+(function () {
+  const documents = new WeakMap();
+  const css = "chrome://deepread/content/styles/paper.css";
+  function install(doc) {
+    let state = documents.get(doc);
+    if (state?.link.isConnected) return state;
+    const link = doc.createElementNS("http://www.w3.org/1999/xhtml", "link");
+    link.rel = "stylesheet";
+    link.href = css;
+    state = { link, loads: new Map() };
+    state.sheet = new Promise(resolve => {
+      state.finish = resolve;
+      link.onload = link.onerror = resolve;
+    });
+    documents.set(doc, state);
+    (doc.head || doc.documentElement).append(link);
+    return state;
+  }
+
+  function remove(doc) {
+    const state = documents.get(doc);
+    if (!state) return;
+    state.finish();
+    state.link.remove();
+    documents.delete(doc);
+  }
+
+  function ready(doc, language) {
+    const state = install(doc);
+    const simplified = /^(?:zh|zh-CN|zh-Hans)$/i.test(language);
+    if (!state.loads.has(simplified)) {
+      const loading = state.sheet.then(() => {
+        const styles = ["normal", "bold", "italic", "italic bold"];
+        const loads = styles.map(style => doc.fonts.load(style + ' 12px "DeepRead Roman"', "Aa1"));
+        if (simplified) for (const style of styles) loads.push(doc.fonts.load(style + ' 12px "DeepRead Song"', "论文"));
+        return Promise.all(loads);
+      }).catch(error => DeepRead.log("paper font unavailable; using the local fallback", String(error)));
+      state.loads.set(simplified, loading);
+    }
+    return state.loads.get(simplified);
+  }
+
+  function apply(node, language) {
+    node.lang = language === "zh" ? "zh-CN" : language;
+    node.classList.add("dr-paper");
+  }
+
+  // A full-width stop already provides its own sidebearing. Keep deliberate
+  // Western word spaces and add a thin space where two scripts touch.
+  function spaceChinese(fragment) {
+    let nodes = [];
+    function finish() {
+      if (!nodes.length) return;
+      const text = nodes.map(n => n.data).join("");
+      const gaps = text.matchAll(/(?<=[\p{Script=Han}。，、！？：；“”‘’《》（）【】]) +(?=[\p{Script=Han}。，、！？：；“”‘’《》（）【】])/gu);
+      const remove = new Set();
+      for (const gap of gaps) for (let i = 0; i < gap[0].length; i++) remove.add(gap.index + i);
+      const boundaries = text.matchAll(/(?<=\p{Script=Han})(?=[\p{Script=Latin}0-9])|(?<=[\p{Script=Latin}0-9%])(?=\p{Script=Han})/gu);
+      const insert = new Set(Array.from(boundaries, match => match.index));
+      if (remove.size || insert.size) {
+        let offset = 0;
+        for (const node of nodes) {
+          const original = node.data;
+          let cleaned = "";
+          for (let i = 0; i < original.length; i++, offset++) {
+            if (insert.has(offset)) cleaned += "\u2009";
+            if (!remove.has(offset)) cleaned += original[i];
+          }
+          if (cleaned !== original) node.data = cleaned;
+        }
+      }
+      nodes = [];
+    }
+    function visit(node) {
+      if (node.nodeType === 3) { nodes.push(node); return; }
+      if (node.matches?.("code, pre, a, math, .katex, .dr-list-marker, [role=math]")) { finish(); return; }
+      const boundary = node.nodeType === 1 && !["span","em","strong","b","i"].includes(node.localName);
+      if (boundary) finish();
+      for (const child of node.childNodes) visit(child);
+      if (boundary) finish();
+    }
+    visit(fragment);
+    finish();
+  }
+
+  DeepRead.PaperType = { install, remove, ready, apply, spaceChinese };
+})();

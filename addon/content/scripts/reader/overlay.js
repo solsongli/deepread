@@ -44,7 +44,6 @@
 .deepread-layer .dr-translation { position: absolute; box-sizing: border-box; padding: 2px 4px;
   background: var(--dr-surface, #fff); color: var(--dr-text, #202939); border-radius: 5px;
   border: 1px solid var(--dr-border, #d8dee8); box-shadow: var(--dr-popover-shadow, 0 3px 12px rgba(0, 0, 0, 0.16));
-  font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
   text-align: justify; text-align-last: start; overflow-wrap: anywhere; hyphens: none;
   pointer-events: auto; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .deepread-layer .dr-translation.dr-title { font-weight: 700; text-align: start; }
@@ -87,7 +86,7 @@ ${STRUCTURE_CSS}
 .deepread-card .dr-explain-pending { color: #8c959f; font-style: italic; }
 .deepread-card .dr-trtoggle { display: inline-block; margin-top: 6px; font-size: 0.9em; color: #6b7280; cursor: pointer; user-select: none; }
 .deepread-card .dr-trbody { margin-top: 2px; padding: 4px 8px; border-left: 3px solid #93c5fd; border-radius: 4px;
-  background: rgba(59,130,246,0.06); font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", serif; }
+  background: rgba(59,130,246,0.06); }
 .deepread-card .dr-point-translation { color: #424a53; margin-top: 2px; }
 .deepread-card .dr-foot { margin-top: 4px; font-size: 11px; color: #8c959f; }
 .deepread-card .dr-hnote { margin-top: 6px; padding: 4px 8px; border-radius: 6px; border-left: 3px solid #10b981;
@@ -193,6 +192,10 @@ ${STRUCTURE_CSS}
       this.iframeEl = view._iframe;
       DeepRead.UI?.install(this.pdfDoc);
       DeepRead.UI?.install(this.readerDoc);
+      for (const doc of new Set([this.pdfDoc, this.readerDoc])) {
+        DeepRead.PaperType.install(doc);
+        this._cleanup.push(() => DeepRead.PaperType.remove(doc));
+      }
       this._cleanup.push(() => DeepRead.UI?.uninstall(pdfWin.document));
 
       this._injectStyle(this.pdfDoc, "deepread-page-css", PAGE_CSS);
@@ -601,10 +604,10 @@ ${STRUCTURE_CSS}
       return { fontSize, lineHeight, indent, lines: lines.length };
     }
 
-    _translationContent(paragraph, text) {
+    _translationContent(paragraph, text, language = this.session.data?.language || DeepRead.prefs.language()) {
       const layout = this.session.continuationFor?.(paragraph) ? null : paragraph.translationLayout;
       const cached = this._trContent.get(paragraph);
-      let frag = cached?.text === text && cached?.layout === layout ? cached.frag : null;
+      let frag = cached?.text === text && cached?.layout === layout && cached?.language === language ? cached.frag : null;
       if (!frag) {
         if (DeepRead.TranslationLayout?.ready(layout)) {
           frag = this.pdfDoc.createDocumentFragment();
@@ -646,7 +649,8 @@ ${STRUCTURE_CSS}
           }
           if (end) { parts.append(value.slice(end)); node.replaceWith(parts); }
         }
-        this._trContent.set(paragraph, { text, layout, frag });
+        if (!paragraph.tokens?.length && /^zh(?:-|$)/i.test(language)) DeepRead.PaperType.spaceChinese(frag);
+        this._trContent.set(paragraph, { text, layout, language, frag });
       }
       return frag.cloneNode(true);
     }
@@ -667,6 +671,7 @@ ${STRUCTURE_CSS}
       const gapPct = (4 / pageH) * 100;
       const title = paragraph.paragraphType === "title";
       const box = el(this.pdfDoc, "div", title ? "dr-translation dr-title" : "dr-translation");
+      DeepRead.PaperType.apply(box, this.session.data?.language || DeepRead.prefs.language());
       box.setAttribute("role", "region");
       box.setAttribute("aria-label", DeepRead.bilingual("段落译文，按 Esc 收起", "Paragraph translation; Escape to close"));
       box.style.width = `${pct.width}%`;
@@ -869,8 +874,11 @@ ${STRUCTURE_CSS}
       this._drawHover(paragraph);
       this.session.rail?.linkParagraph(paragraph);
       if (this._translationAllowed(paragraph) && this._paragraphTranslation(paragraph)) {
-        this._timers.translation = setTimeout(() => {
-          if (this.hoverPara !== paragraph) return;
+        const doc = this.pdfDoc;
+        const fonts = DeepRead.PaperType.ready(doc, this.session.data?.language || DeepRead.prefs.language());
+        this._timers.translation = setTimeout(async () => {
+          await fonts;
+          if (!this.attached || this.pdfDoc !== doc || this.hoverPara !== paragraph || !this._translationAllowed(paragraph)) return;
           this.trPara = paragraph;
           this._drawHover(paragraph);
         }, TRANSLATION_DELAY);
@@ -1071,6 +1079,7 @@ ${STRUCTURE_CSS}
         let open = DeepRead.prefs.get("cards.translationOpen") === true;
         const toggle = el(doc, "span", "dr-trtoggle");
         const body = el(doc, "div", "dr-trbody");
+        DeepRead.PaperType.apply(body, this.session.data?.language || DeepRead.prefs.language());
         body.append(this._translationContent(paragraph, translation));
         const sync = () => {
           toggle.textContent = `${open ? "▾" : "▸"} ${DeepRead.bilingual("译文", "Translation")}`;

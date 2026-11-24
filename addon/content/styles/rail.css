@@ -54,7 +54,7 @@
 .deepread-rail .dr-trtoggle { display: inline-block; font-size: 0.9em; color: var(--dr-muted, #526075); cursor: pointer; user-select: none; }
 .deepread-rail .dr-trtoggle:hover { color: var(--dr-text, #202939); }
 .deepread-rail .dr-trbody { margin-top: 2px; padding: 3px 7px; border-inline-start: 3px solid #93c5fd; border-radius: 4px;
-  background: rgba(59,130,246,0.06); font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", serif; }
+  background: rgba(59,130,246,0.06); }
 .deepread-rail .dr-muted { color: var(--dr-muted, #526075); }
 .deepread-rail .dr-rcard:hover { z-index: 5; }
 .deepread-rail .dr-rcard.dr-open { z-index: 6; border-color: var(--dr-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dr-accent) 16%, transparent), var(--dr-shadow); }

@@ -21,14 +21,13 @@
 .dr-parallel-stage { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; }
 .dr-parallel-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .dr-parallel-text { position: absolute; box-sizing: border-box; margin: 0; padding: 0; overflow: hidden;
-  color: #171717; font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  color: #111;
   overflow-wrap: anywhere; user-select: text; -moz-user-select: text; }
 .dr-parallel-text .dr-parallel-line { white-space: pre; box-sizing: border-box; }
 .dr-parallel-line-ink { display: inline-block; white-space: pre; }
 .dr-parallel-grid-line { position: relative; }
 .dr-parallel-grid-line > .dr-parallel-line-ink { position: absolute; line-height: 1; }
 .dr-parallel-baseline { display: inline-block; width: 0; height: 0; padding: 0; margin: 0; vertical-align: baseline; }
-.dr-parallel-sans { font-family: "Noto Sans CJK SC", "Microsoft YaHei", Arial, sans-serif; }
 .dr-parallel-copy { padding: 0; margin: 0; }
 .dr-parallel-marker { position: absolute; inset-inline-start: 0; top: 0; }
 .dr-parallel-atom { display: inline-block; position: relative; line-height: 0; white-space: nowrap; }

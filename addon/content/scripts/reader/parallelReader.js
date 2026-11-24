@@ -208,7 +208,10 @@
           if (!this.alive(token)) return;
           if (stored) this.parsed = { provider, items: stored, fingerprint: page.fingerprint };
         }
-        page.saved = await DeepRead.Store.comparisonData(this.session.key, page.fingerprint, slotFor(index, page.language));
+        [page.saved] = await Promise.all([
+          DeepRead.Store.comparisonData(this.session.key, page.fingerprint, slotFor(index, page.language)),
+          DeepRead.PaperType.ready(this.doc, page.language)
+        ]);
         if (!this.alive(token)) return;
         this.prepareUnits(page); this.paint();
       }
@@ -492,7 +495,7 @@
         if (!u.translation) continue;
         const rects = u.placed ? u.masks.map((r) => project(r, page.transform)) : [];
         const colors = rects.map((r) => paperColor(pixels, r, kx, ky));
-        const originalFragment = hdoc.importNode(this.session.overlay._translationContent(u, u.translation), true);
+        const originalFragment = hdoc.importNode(this.session.overlay._translationContent(u, u.translation, page.language), true);
         const fragment = materialize(hdoc,originalFragment,u,page,this.source.canvas,pixels);
         if (!rects.length || colors.some((c) => !c)) {
           notes.push([u, fragment]); page.supplements.push(u); continue;
@@ -508,6 +511,7 @@
         }
         const r = project(u.rect, page.transform);
         const block = h(hdoc, "div", "dr-parallel-text");
+        DeepRead.PaperType.apply(block, page.language);
         // Rotate the translated line with the source's writing direction, including
         // PDF /Rotate and the reader's own rotation. The source canvas uses this viewport too.
         const angle = orientation(u,page);
@@ -519,7 +523,9 @@
         block.style.height = `${(angle % 2 ? r.width : r.height) + (angle===0 && !u.title ? u.clearance || 0 : 0)}px`;
         if (colors[0][0] * 0.21 + colors[0][1] * 0.72 + colors[0][2] * 0.07 < 115) block.style.color = "white";
         if (u.title && u.boldTitle) block.classList.add("dr-parallel-title");
-        if (u.sans) block.classList.add('dr-parallel-sans');
+        const chinese = /^zh(?:-|$)/i.test(page.language);
+        if (u.sans && (u.title || !chinese)) block.classList.add("dr-paper-sans");
+        if (chinese && u.title && u.allItalic) block.classList.add("dr-paper-subheading");
         if (u.allItalic) block.style.fontStyle='italic';
         this.target.stage.append(block);
         DeepRead.ParallelTypeset.draw(block, u, fragment, u.size * Math.hypot(page.transform[0], page.transform[1]));
@@ -530,7 +536,11 @@
         const detail = h(hdoc, "details", "dr-parallel-unplaced"); detail.open = true;
         detail.append(h(hdoc, "summary", "", tr(`单独显示的译文（${notes.length}）`, `Translations outside the page (${notes.length})`)));
         for (const [u, frag] of notes) {
-          const row = h(hdoc, "div", "dr-parallel-passage"); row.append(h(hdoc, "div", "", u.source), frag); detail.append(row);
+          const row = h(hdoc, "div", "dr-parallel-passage");
+          const translated = h(hdoc, "div");
+          DeepRead.PaperType.apply(translated, page.language);
+          translated.append(frag);
+          row.append(h(hdoc, "div", "", u.source), translated); detail.append(row);
           this.pair(u,row,true);
         }
         this.extra.append(detail);

@@ -953,6 +953,7 @@
         wrap.append(toggle);
         if (open) {
           const body = el(doc, "div", "dr-trbody");
+          DeepRead.PaperType.apply(body, this.session.data?.language || DeepRead.prefs.language());
           for (const { paragraph: owner, text } of this.overlay.translationEntriesFor(paras)) {
             const part = el(doc, "div", "dr-trpart");
             part.append(this.overlay._translationContent(owner, text));

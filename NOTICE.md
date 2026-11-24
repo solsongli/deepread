@@ -56,3 +56,12 @@ Copies of these files are shipped inside the add-on under `addon/content/lib/`.
 | [pdf-lib](https://github.com/Hopding/pdf-lib) | 1.17.1 | MIT | `addon/content/lib/pdf-lib/pdf-lib.min.js`, `LICENSE`, `licenses/` |
 
 pdf-lib collects the pages printed by Gecko and preserves their physical dimensions. The distribution includes the notices for pdf-lib and its bundled standard-fonts, UPNG, pako and tslib packages. See the [bundled notices](addon/content/lib/pdf-lib/licenses).
+
+## Typefaces for translated papers
+
+The local print fonts in `addon/content/lib/paper-fonts/` are distributed under the SIL Open Font License 1.1. These fonts are loaded in the reader and the print frame.
+
+- DeepRead Song is derived from Google’s Noto Serif SC, version 2.003. It includes the 6,763 GB 2312 ideographs and Chinese punctuation. The two static faces are set at weights 550 and 720 for body text and bold emphasis. Other characters fall through to fonts installed on the reader’s computer. [Upstream font and license](https://github.com/google/fonts/tree/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoserifsc) · [Bundled license](addon/content/lib/paper-fonts/Noto-OFL.txt).
+- DeepRead Roman contains four static instances derived from STIX Two Text by the STIX Fonts Project Authors. It supplies text and italic faces at weight 450 and the corresponding bold faces at weight 700. [Upstream font and license](https://github.com/google/fonts/tree/718c7ee0e83f5e301cc96bbc081c9bb5ade9ed92/ofl/stixtwotext) · [Bundled license](addon/content/lib/paper-fonts/STIX-OFL.txt).
+
+To reproduce the WOFF2 files, place the three pinned variable fonts in one directory as `NotoSerifSC.ttf`, `STIXTwoText.ttf` and `STIXTwoText-Italic.ttf`. Run `python3 scripts/build-paper-fonts.py DIRECTORY` with fontTools and Brotli installed. The script verifies the input checksums. Local Kai, traditional Chinese and sans-serif faces are selected from the system where appropriate.

@@ -58,6 +58,8 @@ E2E.run = async function () {
   const ps = overlay.pages.get(0);
   overlay.trPara = ps[0]; overlay.hoverPara = ps[0]; overlay._drawHover(ps[0]);
   let box = overlay.pdfDoc.querySelector(".dr-translation");
+  check("the hover translation uses the Chinese print family", box.lang === "zh-CN"
+    && overlay.pdfWin.getComputedStyle(box).fontFamily.includes("DeepRead Song"));
   check("both list markers render independently", box.querySelectorAll(".dr-list-marker").length === 2);
   check("list has hanging indentation", overlay.pdfWin.getComputedStyle(box.querySelector(".dr-layout-list")).display === "grid");
   check("bold labels and inline italic survive", box.querySelectorAll("strong").length === 2 && !!box.querySelector("em"));

@@ -39,6 +39,7 @@
     "pipeline/summaryManager.js",
     "pipeline/pipeline.js",
     "reader/modules.js",
+    "reader/paperType.js",
     "reader/overlay.js",
     "reader/rail.js",
     "reader/structureBar.js",

@@ -42,14 +42,14 @@
     csp.setAttribute("http-equiv", "Content-Security-Policy");
     csp.content = "default-src 'none'; style-src 'unsafe-inline' chrome:; img-src data:; font-src chrome: data:";
     doc.head.append(csp);
-    const sheets = [sheetStyles(doc, "chrome://deepread/content/styles/parallel.css")];
+    const sheets = [sheetStyles(doc, "chrome://deepread/content/styles/parallel.css"), DeepRead.PaperType.install(doc).sheet];
     if (target.stage.querySelector(".katex") || reader.extra.querySelector(".katex"))
       sheets.push(sheetStyles(doc, "chrome://deepread/content/lib/katex/katex.min.css"));
     const style = element(doc, "style");
     style.textContent = `@page {size:${page.width}pt ${page.height}pt;margin:0} html,body {margin:0;padding:0;color:#171717;background:white} * {print-color-adjust:exact}
       .sheet {position:relative;width:${page.width}pt;height:${page.height}pt;overflow:hidden;margin:0;break-inside:avoid}
       .dr-parallel-stage {transform:scale(1.3333333333)!important;transform-origin:0 0!important} .dr-paired {outline:none!important}
-      .supplement {break-before:page;padding:24pt;font:11pt/1.55 serif;overflow-wrap:anywhere} .supplement p {margin:.6em 0}
+      .supplement {break-before:page;padding:24pt;font-size:11pt;line-height:1.55;overflow-wrap:anywhere} .supplement p {margin:.6em 0}
       .dr-parallel-line a {color:inherit;text-decoration:none} .dr-parallel-text[data-overflow] {overflow:hidden;scrollbar-width:none}`;
     doc.head.append(style);
     const sheet = element(doc, "div");
@@ -66,6 +66,7 @@
     if (page.supplements?.length) {
       const section = element(doc, "section");
       section.className = "supplement";
+      DeepRead.PaperType.apply(section, page.language);
       const heading = element(doc, "h3");
       heading.textContent = DeepRead.bilingual(
         `第 ${page.index + 1} 页 · 补充译文`,
@@ -77,7 +78,7 @@
       for (const unit of page.supplements) {
         const paragraph = element(doc, "p");
         const translated = doc.importNode(
-          reader.session.overlay._translationContent(unit, unit.translation),
+          reader.session.overlay._translationContent(unit, unit.translation, page.language),
           true
         );
         paragraph.append(DeepRead.ParallelInk.materialize(doc, translated, unit, page, canvas, pixels));

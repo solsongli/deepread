@@ -34,9 +34,9 @@ E2E.run = async function () {
   const originalLLM = D.LLM.complete, originalParser = D.Parser.parsePDF;
   const translated = (text) => {
     if (text.includes('Layout comparison')) return '版式对照';
-    if (text.includes('Closed-loop')) return '**闭环动作。** 保留*局部反馈*，观察预测如何变化。';
+    if (text.includes('Closed-loop')) return '**闭环动作。** 保留*局部反馈*，核对DDPM预测。';
     if (text.includes('Visual inputs')) return '**视觉输入。** 编码不同视角，让图像留在原处。';
-    if (text.includes('separate control')) return '两组实验在相同条件下比较。'.repeat(24) + '完整的结尾。';
+    if (text.includes('separate control')) return '两组实验在相同条件下比较。'.repeat(24) + 'Diffusion Policy 2020——完整的结尾。';
     if (text.includes('Figure')) return '图 ⟦D0⟧：两次试验的比较。';
     if (text.includes('depends')) return '估计还取决于';
     if (text.includes('sampling interval')) return '实验所用的采样间隔。';
@@ -78,6 +78,12 @@ E2E.run = async function () {
     const list = actions.filter((box) => box.textContent.startsWith('•'));
     check('two list items occupy distinct original frames', list.length === 2 && parseFloat(list[1].style.top) > parseFloat(list[0].style.top) + 25);
     check('renderer preserves strong and italic runs in engine lines', !!list[0].querySelector('.dr-parallel-line strong') && !!list[0].querySelector('.dr-parallel-line em'));
+    check('translation uses the local Chinese and Western print faces', list[0].lang==='zh-CN' &&
+      doc.fonts.check('400 12px "DeepRead Song"', '闭环') && doc.fonts.check('italic 12px "DeepRead Roman"', 'DDPM'));
+    const lead = c.page.units.find(u => u.source.includes('Closed-loop actions'));
+    const mixed = s.overlay._translationContent(lead,lead.translation,'zh').textContent;
+    check('mixed prose has compact Chinese punctuation and thin script boundaries before wrapping',
+      list[0].textContent.includes('动作。保留') && mixed.includes('核对\u2009DDPM\u2009预测'));
     check('long translation is complete and keyboard-scrollable', actions.some((box) => box.textContent.includes('完整的结尾') && box.scrollHeight > box.clientHeight && box.tabIndex === 0));
     const long=actions.find(box=>box.textContent.includes('完整的结尾'));
     const baselines=[...long.querySelectorAll('.dr-parallel-baseline')].map(probe=>probe.getBoundingClientRect().top);
@@ -125,6 +131,10 @@ E2E.run = async function () {
     const written=await c.savePDF('all',targetFile);
     const bytes=await IOUtils.read(targetFile);
     check('whole-document export writes a PDF, reuses translations and restores the current page',written && bytes[0]===37 && bytes[1]===80 && bytes.length>5000 && c.pageIndex===2 && calls===beforeBookSave);
+    const exportedItem=await Zotero.Attachments.importFromFile({file:Zotero.File.pathToFile(targetFile), libraryID:Zotero.Libraries.userLibraryID});
+    const printed=(await Zotero.PDFWorker.getFullText(exportedItem.id)).text.replace(/\s+/gu,'');
+    check('export retains searchable Latin letters, digits, Chinese and paired em dashes',
+      printed.includes('DDPM') && printed.includes('DiffusionPolicy2020——完整的结尾'));
     c.close(false);
     s.data = { language:'zh', contentList:source, hierarchicalData:[{ pageIndex:0, paragraphs:[{ paragraphIndex:1, minerUid:2, paragraphType:'list', paragraphText:first+' '+second, bbox:source[1].bbox,
       translationLayout:{ units:[{id:'u0',kind:'list-item',marker:'•',sourceText:first,translation:'**缓存的闭环动作。** 保留*局部反馈*。'},{id:'u1',kind:'list-item',marker:'•',sourceText:second,translation:'**缓存的视觉条件。** 单独编码观测。'}] }, points:[] }] }] };
