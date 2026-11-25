@@ -251,7 +251,7 @@
     const items = [];
     for (let pi = 0; pi < per.length; pi++) {
       const pg = per[pi];
-      processPage(pg, stats, pi === 0, items);
+      processPage(pg, stats, (pg.page.physicalPageIndex ?? pg.page.pageIndex) === 0, items);
     }
     return items.map((it) => it.item);
   }
@@ -478,7 +478,7 @@
     for (let i = 0; i < total; i++) {
       abortIfNeeded();
       const d = await doc.getPageData({ pageIndex: i });
-      pages.push({ pageIndex: i, viewBox: Array.from(d.viewBox || [0, 0, 612, 792]), chars: d.chars || [] });
+      pages.push({ pageIndex: i, physicalPageIndex: (pdfApp.firstPhysicalPage || 0) + i, viewBox: Array.from(d.viewBox || [0, 0, 612, 792]), chars: d.chars || [] });
       if (onStatus && (i % 3 === 2 || i === total - 1)) {
         onStatus({ phase: "running", message: `Reading text layer ${i + 1}/${total}`, extractedPages: i + 1, totalPages: total });
       }

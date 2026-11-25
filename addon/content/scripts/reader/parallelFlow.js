@@ -136,6 +136,39 @@
     }
     const base = page.styleProfile.base,
       styled = entries.filter((e) => e.style);
+    // A one-line heading's source box can be only as wide as its ink.
+    // Borrow blank space within the same text column before breaking its translation.
+    for (const e of styled) {
+      if (!["heading","subheading","documentTitle"].includes(e.style.role) ||
+          e.unit.rects.length !== 1 || !(e.metrics.lines?.length > 1) || !e.metrics.rewrap) continue;
+      const frame = e.frame, middle = frame.left + frame.width / 2;
+      const columns = styled.filter(o => o.angle === e.angle && o.style.role === "body");
+      let column;
+      if (e.style.role === "documentTitle" && e.unit.centered && columns.length) {
+        const left = Math.min(...columns.map(o => o.frame.left));
+        const end = Math.max(...columns.map(o => right(o.frame)));
+        column = {left, width:end-left};
+      } else {
+        column = columns.map(o => o.frame).filter(r =>
+          Math.abs(r.top - bottom(frame)) < base * 8 && r.width > frame.width &&
+          (Math.abs(r.left - frame.left) <= base * 1.65 ||
+           (e.unit.centered && Math.abs(r.left + r.width / 2 - middle) < base)))
+          .sort((a,b) => Math.abs(a.top-bottom(frame))-Math.abs(b.top-bottom(frame)))[0];
+      }
+      if (!column) continue;
+      const room = e.unit.centered ? Math.min(frame.left-column.left, right(column)-right(frame)) : right(column)-right(frame);
+      if (room < 1) continue;
+      const strips = [{...frame, left:right(frame), width:room}];
+      if (e.unit.centered) strips.push({...frame, left:frame.left-room, width:room});
+      if (strips.some(r => {
+        const box = screen(r,e.angle,page);
+        return hasInk(box) || entries.some(o => o !== e && overlaps(box,o.occupied));
+      })) continue;
+      if (e.unit.centered) frame.left -= room;
+      frame.width += room * strips.length;
+      e.metrics = e.metrics.rewrap(frame.width);
+      e.rect = e.occupied = screen(frame,e.angle,page);
+    }
     for (const e of styled) {
       if (!e.metrics.wide || !e.metrics.rewrap) continue;
       const amount = Math.ceil(e.metrics.excess + 1);

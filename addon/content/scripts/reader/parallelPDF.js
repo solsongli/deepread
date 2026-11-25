@@ -14,6 +14,43 @@
     return library.PDFDocument.create();
   }
 
+  async function readSource(reader, sourcePath) {
+    // IOUtils returns bytes in the add-on compartment. Reading a content
+    // window's typed-array elements through Xrays is forbidden by Gecko.
+    const bytes = await IOUtils.read(sourcePath);
+    const source = await library.PDFDocument.load(Uint8Array.from(bytes), { updateMetadata: false });
+    if (source.getPageCount() !== reader.count) throw new Error("PDF page count changed");
+    const ids = source.context.lookup(source.context.trailerInfo.ID);
+    const id = ids?.get?.(0)?.asBytes?.();
+    const opened = reader.session.overlay.app.pdfDocument.fingerprints?.[0];
+    if (
+      id?.length === 16 &&
+      opened &&
+      !id.every((b) => !b) &&
+      Array.from(id, (b) => b.toString(16).padStart(2, "0")).join("") !== opened
+    )
+      throw new Error("The displayed PDF differs from the file on disk");
+    return source;
+  }
+
+  // Copy only page painting data for a parser. Annotations, outlines and page
+  // destinations can otherwise pull unselected pages into PDFObjectCopier.
+  async function sourceSlices(reader,path) {
+    await create();
+    const source = await readSource(reader,path);
+    return async indices=>{
+      const target=await create(), copier=library.PDFObjectCopier.for(source.context,target.context);
+      for (const index of indices) {
+        const from=source.getPage(index).node, to=target.addPage().node;
+        for (const key of ["MediaBox","CropBox","Rotate","Resources","Contents","Group","UserUnit"]) {
+          const name=library.PDFName.of(key), value=from.getInheritableAttribute(name);
+          if(value) to.set(name,copier.copy(value));
+        }
+      }
+      return Uint8Array.from(await target.save());
+    };
+  }
+
   function withCanvases(doc, original) {
     const copy = doc.importNode(original, true);
     for (const detail of copy.querySelectorAll(".dr-parallel-detail")) detail.remove();
@@ -180,25 +217,11 @@
 
   // Share original fonts and images across the whole export. Copying just the
   // page Form also avoids dragging the original page tree in through annotations.
-  async function facingDocument(output, reader, sourcePath) {
+  async function facingDocument(output, reader, sourcePath, options = {}) {
     const pdfjs = reader.session.overlay.app.pdfDocument;
     let source, copier;
     try {
-      // IOUtils returns bytes in the add-on compartment. Reading a content
-      // window's typed-array elements through Xrays is forbidden by Gecko.
-      const bytes = await IOUtils.read(sourcePath);
-      source = await library.PDFDocument.load(Uint8Array.from(bytes), { updateMetadata: false });
-      if (source.getPageCount() !== reader.count) throw new Error("PDF page count changed");
-      const ids = source.context.lookup(source.context.trailerInfo.ID);
-      const id = ids?.get?.(0)?.asBytes?.();
-      const opened = pdfjs.fingerprints?.[0];
-      if (
-        id?.length === 16 &&
-        opened &&
-        !id.every((b) => !b) &&
-        Array.from(id, (b) => b.toString(16).padStart(2, "0")).join("") !== opened
-      )
-        throw new Error("The displayed PDF differs from the file on disk");
+      source = await readSource(reader, sourcePath);
       copier = library.PDFObjectCopier.for(source.context, output.context);
     } catch (error) {
       DeepRead.log("Using the reader image for the original side", String(error));
@@ -260,37 +283,28 @@
       } else if (link.dest) pending.push({ sheet, rect, dest: link.dest, originalSide });
     }
 
-    async function pair(sheet, page, x, bottom) {
-      const { width, height } = page,
-        left = x - width,
-        top = bottom + height;
-      await original(sheet, page, left, bottom);
-      sheet.setMediaBox(left, bottom, width * 2, height);
-      sheet.setCropBox(left, bottom, width * 2, height);
-      sheets.set(page.index, {
-        ref: sheet.ref,
-        x,
-        left,
-        top,
-        width,
-        height,
-        view: page.view,
-        anchors:page.typeAnchors,
-        transform: page.transform
-      });
+    async function appendPair(pages, page) {
+      const translated=pages[0], {width,height}=page, box=translated.getMediaBox();
+      const x=box.x, top=box.y+height;
+      let sourceSheet=translated, left, sourceTop;
+      if (options.layout==="alternating") {
+        if (options.translationFirst) for (const leaf of pages) output.addPage(leaf);
+        sourceSheet=output.addPage([width,height]); left=0;sourceTop=height;
+        await original(sourceSheet,page,left,0);
+        if (!options.translationFirst) for (const leaf of pages) output.addPage(leaf);
+      } else {
+        left=options.translationFirst ? x+width : x-width;sourceTop=top;
+        await original(translated,page,left,box.y);
+        translated.setMediaBox(Math.min(left,x),box.y,width*2,height);
+        translated.setCropBox(Math.min(left,x),box.y,width*2,height);
+        for (const leaf of pages) output.addPage(leaf);
+      }
+      sheets.set(page.index,{sourceRef:sourceSheet.ref,targetRef:translated.ref,x,left,top,sourceTop,width,height,
+        view:page.view,anchors:page.typeAnchors,transform:page.transform});
       for (const link of page.links || []) {
-        const r = DeepRead.ParallelInk.project(link.rect, page.transform);
-        addLink(
-          sheet,
-          link,
-          [
-            left + Math.max(0, r.left),
-            top - Math.min(height, r.top + r.height),
-            left + Math.min(width, r.left + r.width),
-            top - Math.max(0, r.top)
-          ],
-          true
-        );
+        const r=DeepRead.ParallelInk.project(link.rect,page.transform);
+        addLink(sourceSheet,link,[left+Math.max(0,r.left),sourceTop-Math.min(height,r.top+r.height),
+          left+Math.min(width,r.left+r.width),sourceTop-Math.max(0,r.top)],true);
       }
       // Gecko already prints external links in the translated text. Internal
       // links need the output page references, including any supplement pages.
@@ -300,7 +314,7 @@
         for (const quad of el.getBoxQuads({ relativeTo: reader.target.stage })) {
           const r = quad.getBounds();
           addLink(
-            sheet,
+            translated,
             link,
             [
               x + Math.max(0, r.left),
@@ -340,7 +354,9 @@
         if (!target) continue;
         const { page, value } = target,
           kind = value[1]?.name;
-        let destination = [page.ref, name("Fit")];
+        const ref=originalSide?page.sourceRef:page.targetRef;
+        const top=originalSide?page.sourceTop:page.top;
+        let destination = [ref, name("Fit")];
         if (["XYZ", "FitH", "FitBH", "FitV", "FitBV"].includes(kind)) {
           const x = Number.isFinite(value[2]) && !["FitH", "FitBH"].includes(kind) ? value[2] : page.view[0];
           const height = ["FitH", "FitBH"].includes(kind) ? value[2] : kind === "XYZ" ? value[3] : null;
@@ -350,10 +366,10 @@
           const original={x:a*x+c*y+e,y:b*x+d*y+f};
           const point=originalSide?original:DeepRead.ParallelFlow.destination(page.anchors,dest,original.x,original.y);
           destination = [
-            page.ref,
+            ref,
             name("XYZ"),
             left + Math.max(0, Math.min(page.width, point.x)),
-            page.top - Math.max(0, Math.min(page.height, point.y)),
+            top - Math.max(0, Math.min(page.height, point.y)),
             kind === "XYZ" && value[4] > 0 ? value[4] : null
           ];
         } else if (
@@ -364,18 +380,18 @@
           const r = DeepRead.ParallelInk.project(Array.from(value).slice(2, 6), page.transform);
           const left = originalSide ? page.left : page.x;
           destination = [
-            page.ref,
+            ref,
             name("FitR"),
             left + r.left,
-            page.top - r.top - r.height,
+            top - r.top - r.height,
             left + r.left + r.width,
-            page.top - r.top
+            top - r.top
           ];
         }
         annotation(sheet, rect, { Dest: destination });
       }
     }
-    return { pair, finish };
+    return { appendPair, finish };
   }
 
   async function append(output, reader, signal, facing = null) {
@@ -438,13 +454,13 @@
           bottom = box.y + box.height - page.height;
         result.setMediaBox(box.x, bottom, page.width, page.height);
         result.setCropBox(box.x, bottom, page.width, page.height);
-        if (facing && result===pages[0]) await facing.pair(result,page,box.x,bottom);
-        output.addPage(result);
       }
+      if (facing) await facing.appendPair(pages,page);
+      else for (const result of pages) output.addPage(result);
     } finally {
       frame.remove();
       await IOUtils.remove(temp, { ignoreAbsent: true });
     }
   }
-  DeepRead.ParallelPDF = { create, append, facingDocument };
+  DeepRead.ParallelPDF = { create, append, facingDocument, sourceSlices };
 })();

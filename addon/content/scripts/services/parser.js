@@ -60,7 +60,7 @@ DeepRead.Parser = {
     };
   },
 
-  async parsePDF({ filePath, attachmentKey, onStatus, signal, pdfApp } = {}) {
+  async parsePDF({ filePath, attachmentKey, onStatus, signal, pdfApp, resumeDownload } = {}) {
     const cfg = DeepRead.prefs.parserConfig();
     const status = (phase, message, extra) => {
       try {
@@ -77,14 +77,16 @@ DeepRead.Parser = {
     const resultDir = await DeepRead.Store.resultDirFor(attachmentKey);
     await this._emptyDir(resultDir);
 
-    const ctx = { cfg, filePath, attachmentKey, resultDir, status, signal };
+    const ctx = { cfg, filePath, attachmentKey, resultDir, status, signal, resumeDownload,
+      firstPage:pdfApp?.firstPhysicalPage || 0, pageCount:pdfApp?.pdfDocument?.numPages };
     if (cfg.provider === "builtin") return await this._parseToContentList(ctx, pdfApp);
     try {
       if (cfg.provider === "grobid") return await this._parseToContentList(ctx, pdfApp);
+      let origin;
       if (cfg.provider === "selfhost") await this._selfhostParse(ctx);
-      else await this._mineruParse(ctx);
+      else origin = await this._mineruParse(ctx);
       status("extract", DeepRead.bilingual("读取解析结果…", "Reading parse results…"));
-      return await this._loadResults(resultDir);
+      return {...await this._loadResults(resultDir), origin};
     }
     catch (error) {
       // A service that is down or out of quota should not block reading: fall back to the PDF's
@@ -94,8 +96,16 @@ DeepRead.Parser = {
       status("fallback", DeepRead.bilingual(`解析服务失败（${error?.message || error}），改用内置文字层…`,
         `Parser failed (${error?.message || error}); using the built-in text layer…`));
       await this._emptyDir(resultDir);
-      const result = await this._parseToContentList({ ...ctx, cfg: { ...cfg, provider: "builtin" } }, pdfApp);
-      return { ...result, fallback: true };
+      try {
+        const result = await this._parseToContentList({ ...ctx, cfg: { ...cfg, provider: "builtin" } }, pdfApp);
+        return { ...result, fallback: true, downloadJob: error.downloadJob };
+      } catch (fallbackError) {
+        if (error.downloadJob && !signal?.aborted) throw Object.assign(new Error(DeepRead.bilingual(
+          "MinerU 已完成解析，但下载失败，且这些页没有可用的文字层。可再次翻译以重试下载。",
+          "MinerU finished, but its result could not be downloaded and these pages have no usable text layer. Translate again to retry the download."
+        )), {downloadJob:error.downloadJob});
+        throw fallbackError;
+      }
     }
   },
 
@@ -143,7 +153,7 @@ DeepRead.Parser = {
     const known = this.MINERU_ERRORS[code];
     const msg = known ? DeepRead.bilingual(known[0], known[1]) : "";
     const detail = body?.msg ? ` ${body.msg}` : "";
-    return new Error(`MinerU ${step} failed (code ${code}): ${msg}${msg && detail ? " /" : ""}${detail}`.trim());
+    return Object.assign(new Error(`MinerU ${step} failed (code ${code}): ${msg}${msg && detail ? " /" : ""}${detail}`.trim()), {code});
   },
 
   async _mineruParse(ctx) {
@@ -152,16 +162,38 @@ DeepRead.Parser = {
     const timeout = this._deadline(signal);
     try {
       const sig = timeout.signal;
-      status("upload", DeepRead.bilingual("上传 PDF 至 MinerU…", "Uploading PDF to MinerU…"));
-      const bytes = await IOUtils.read(ctx.filePath);
-      const req = await this._mineruRequestUpload({ base, cfg, bytes, ctx, signal: sig });
-      await this._mineruPut({ url: req.uploadURL, bytes, signal: sig });
-      status("queued", DeepRead.bilingual("MinerU 排队中…", "Queued at MinerU…"));
-      const result = await this._mineruPoll({ base, cfg, batchID: req.batchID, status, signal: sig });
+      let job, result;
+      // Persist a completed batch ID locally. A retry obtains a fresh signed
+      // URL from the configured MinerU account without uploading the PDF again.
+      if (ctx.resumeDownload?.base === base) {
+        job = ctx.resumeDownload;
+        try {
+          result = await this._mineruPoll({base,cfg,batchID:job.batchID,status,signal:sig});
+        } catch (error) {
+          if (!["-60012","-60013"].includes(error.code) && error.status !== 404)
+            throw Object.assign(error,{downloadJob:job});
+          // The stored result expired or belongs to a different account.
+        }
+      }
+      if (!result) {
+        status("upload", DeepRead.bilingual("上传 PDF 至 MinerU…", "Uploading PDF to MinerU…"));
+        const bytes = await IOUtils.read(ctx.filePath);
+        const req = await this._mineruRequestUpload({base,cfg,bytes,ctx,signal:sig});
+        await this._mineruPut({url:req.uploadURL,bytes,signal:sig});
+        job = {base,batchID:req.batchID,first:ctx.firstPage,count:ctx.pageCount};
+        status("queued", DeepRead.bilingual("MinerU 排队中…", "Queued at MinerU…"));
+        result = await this._mineruPoll({base,cfg,batchID:job.batchID,status,signal:sig});
+      }
       status("download", DeepRead.bilingual("下载解析结果…", "Downloading result…"));
-      const zip = await this._download(result.full_zip_url, null, sig, "download result zip");
+      let zip;
+      try {
+        zip = await this._download(result.full_zip_url, null, sig, "download result zip");
+      } catch (error) {
+        throw Object.assign(error,{downloadJob:job});
+      }
       status("extract", DeepRead.bilingual("解压解析结果…", "Extracting result…"));
       await this._extractZip(zip, ctx.resultDir);
+      return {first:job.first,count:job.count};
     }
     catch (e) {
       throw this._normalizeAbort(e, signal, timeout);

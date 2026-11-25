@@ -140,3 +140,17 @@ assert.equal(
   null,
   "unsupported print operators leave the original stream intact"
 );
+
+function narrowHeading() {
+  const entry = paragraph(35,2,{style:style.heading,rect:geometry(35,20,48,14),
+    unit:{source:"2 Score",rects:[[]]}});
+  entry.metrics.lines=[{},{}];
+  entry.metrics.rewrap=width=>({height:15,inkHeight:12,wide:false,lines:[{left:0,top:0,width,height:12}]});
+  return entry;
+}
+const narrow=narrowHeading();
+F.arrange([narrow,paragraph(62)],page,()=>false);
+assert.equal(narrow.metrics.lines.length,1,"a one-line heading uses available column width at its original font size");
+const blocked=narrowHeading();
+F.arrange([blocked,paragraph(62)],page,r=>r.left>=68 && r.top===35);
+assert.equal(blocked.frame.width,48,"a figure or rule beside the heading keeps its original area");

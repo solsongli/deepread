@@ -286,7 +286,7 @@
     }
   }
 
-  function splitFrontmatter(sources, chars, view, authorArea) {
+  function splitFrontmatter(sources, chars, view, authorArea, saved) {
     const physicalSources = [];
     for (const p of sources) {
       // Publishing footers often put the citation and its DOI on separate
@@ -325,6 +325,30 @@
             })
           );
           continue;
+        }
+      }
+      // Some parsers flatten a centered byline, affiliation and email into a
+      // single paragraph. Restore the printed baselines when the glyphs agree.
+      if (p.paragraphType === "text" && authorArea(p) && !p.context &&
+          /@|\s·\s/u.test(p.paragraphText) && !p.translationLayout?.units?.some(u=>u.translation) &&
+          !p.points?.some(point=>point.translation)) {
+        const bounded = charactersIn(fromPermille(p.bbox, view), chars);
+        const run = match(bounded, p.paragraphText.replace(/\s·\s/gu," "));
+        const text = normalized(glyphStream(run).text);
+        const cached = run.length && saved?.some(record=>{
+          try { return record.text && normalized(JSON.parse(record.identity)[0]) === text; }
+          catch { return false; }
+        });
+        const lines = linesOf(run);
+        if (!cached && lines.length > 1) {
+          const fields = lines.map(rect=>charactersIn(rect,run));
+          const assigned = fields.flat();
+          if (fields.every(field=>field.length) && assigned.length===run.length && new Set(assigned).size===run.length) {
+            for (const [i,field] of fields.entries()) physicalSources.push({...p, paragraphText:glyphStream(field).text.trim(),
+              inlineGlyphs:field, rects:[lines[i]], frontMatterLine:true,
+              minerUid:String(p.minerUid)+":byline:"+i, translationLayout:null, points:[]});
+            continue;
+          }
         }
       }
       const parts = String(p.paragraphText || "")
@@ -368,7 +392,8 @@
     nativeParser = false,
     continuationFor,
     language = "zh",
-    rasterLabels = []
+    rasterLabels = [],
+    saved = []
   }) {
     chars = DeepRead.ParallelFrames.repairScripts(DeepRead.Typography.composeAccents(chars));
     const recovered = DeepRead.ParallelFrames.recover(items, chars, view);
@@ -418,7 +443,7 @@
       valid(p.bbox) &&
       p.bbox[1] >= paperTitle.bbox[3] - 3 &&
       p.bbox[1] < (firstSection?.bbox?.[1] ?? paperTitle.bbox[3] + 230);
-    const physicalSources = splitFrontmatter(sources, chars, view, authorArea);
+    const physicalSources = splitFrontmatter(sources, chars, view, authorArea, saved);
     for (const p of joinSplitFormula(physicalSources, chars, view)) {
       if (p.coveredByOCR) continue;
       let type = p.paragraphType || "text";
@@ -580,7 +605,7 @@
         block.layoutPart=p.layoutPart;
         block.captionKind=p.captionKind;
         block.frontMatter=authorArea(p) && type==="text" &&
-          (p.verbatim || DeepRead.ParallelVisual.isName(p.paragraphText) ||
+          (p.frontMatterLine || p.verbatim || DeepRead.ParallelVisual.isName(p.paragraphText) ||
           (p.paragraphText.match(/\p{Lu}[\p{L}.’-]+\s+\p{Lu}[\p{L}.’-]+[\d,;¹²³∗†]/gu)||[]).length>=2 || /@|^\s*[\d*∗†‡]|\b(?:University|Institute|Laboratory)\b/u.test(p.paragraphText.slice(0,80)));
         if (p.flushLeft) block.flushLeft = true;
         block.verbatim = !!p.verbatim || !/[\p{L}\p{N}]/u.test(block.modelText.replace(/⟦D+\d+⟧/gu,""));

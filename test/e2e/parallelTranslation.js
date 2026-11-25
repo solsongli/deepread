@@ -45,9 +45,15 @@ E2E.run = async function () {
   };
   let calls = 0, parseCalls = 0, fail = false, stall = false;
   const pendingReplies = [];
-  D.Parser.parsePDF = async ({ pdfApp, attachmentKey }) => {
-    parseCalls++; check('comparison uses selected parser with an isolated working key', D.prefs.parserConfig().provider === 'mineru' && pdfApp && attachmentKey.startsWith(s.key + '-comparison-'));
-    return { contentList: source };
+  D.Parser.parsePDF = async ({ pdfApp, attachmentKey, filePath }) => {
+    parseCalls++;
+    const geom = await pdfApp.pdfDocument.getPage(1);
+    const data = await pdfApp.pdfDocument.getPageData({pageIndex:0});
+    const index = geom.rotate === 90 ? 1 : data.chars.length ? 0 : 2;
+    check('parser receives one selected PDF page in an isolated file (page '+(index+1)+')',
+      D.prefs.parserConfig().provider === 'mineru' && pdfApp.pdfDocument.numPages===1 &&
+      attachmentKey.startsWith(s.key+'-range-') && filePath !== await item.getFilePathAsync());
+    return {contentList:source.filter(it=>it.page_idx===index).map(it=>({...it,page_idx:0}))};
   };
   D.LLM.complete = async (args) => {
     const list = JSON.parse(args.messages[0].content.split('\n').slice(1).join('\n'));
@@ -155,7 +161,7 @@ E2E.run = async function () {
     stall = true; const canceled = c.translateBook(); await until(() => pendingReplies.length); c.bookButton.click(); pendingReplies.splice(0).forEach(resolve => resolve()); await canceled; stall = false;
     check('stopping a book run discards a late reply', !c.book && !(await D.Store.comparisonData(s.key,c.page.fingerprint,'page:1:zh')));
     const before = calls; await c.translateBook();
-    check('whole document resumes from the first missing page and reuses parsed geometry', calls===before+2 && parseCalls===1 && !c.book);
+    check('whole document resumes from the first missing page and reuses parsed geometry', calls===before+2 && parseCalls===3 && !c.book);
     const rotated=c.target.stage.querySelector('[data-type-role="body"]');
     check("navigating to a rotated page keeps the same physical body size and line spacing",
       rotated && rotated.style.fontSize===body.style.fontSize && rotated.style.lineHeight===body.style.lineHeight);
@@ -191,6 +197,23 @@ E2E.run = async function () {
       d.get(0).toString()===spreads[1].ref.toString() && d.get(2).asNumber()<0);
     check('source links jump to the original section in the rotated left column, past the supplement',
       dest && Math.abs(dest.get(2).asNumber()+41)<.01 && Math.abs(dest.get(3).asNumber()-482)<.01);
+    for (const layout of ["parallel","alternating"]) {
+      const path=PathUtils.join(E2E.env("DEEPREAD_E2E_SHOTS"),layout+"-translation-first.pdf");
+      await c.savePDF("selection",path,{indices:[0,1],layout,translationFirst:true});
+      const output=await PDFDocument.load(Uint8Array.from(await IOUtils.read(path))), pages=output.getPages();
+      const sourceSheet=layout==="alternating"?pages[2]:pages[0], destination=layout==="alternating"?pages[4]:pages[2];
+      const annots=sourceSheet.node.Annots().asArray().map(ref=>output.context.lookup(ref));
+      const link=annots.find(a=>{
+        const d=a.lookup(PDFName.of("Dest"));
+        return d instanceof PDFArray && d.get(0).toString()===destination.ref.toString() &&
+          Math.abs(d.get(2).asNumber()-(layout==="alternating"?519:1079))<.01;
+      });
+      check("translation-first "+layout+" preserves a rotated XYZ link past supplements",
+        !!link && Math.abs(link.lookup(PDFName.of("Dest")).get(3).asNumber()-482)<.01);
+      check("translation-first "+layout+" puts the complete overflow passage after the translation",
+        pages.length===(layout==="alternating"?5:3) && pages[1].getWidth()===612 &&
+        destination.getWidth()===(layout==="alternating"?560:1120));
+    }
     const written=await c.savePDF('all',targetFile);
     const bytes=await IOUtils.read(targetFile);
     check('whole-document export writes a PDF, reuses translations and restores the current page',written && bytes[0]===37 && bytes[1]===80 && bytes.length>5000 && c.pageIndex===2 && calls===beforeBookSave);

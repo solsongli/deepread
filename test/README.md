@@ -9,6 +9,7 @@ The original-layout reader has a three-page fixture covering two columns, lists,
 ```bash
 python3 -E test/build-parallel-fixture.py
 E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/parallel.pdf" scripts/e2e.sh test/e2e/parallelTranslation.js
+E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/parallel.pdf" scripts/e2e.sh test/e2e/pageSelection.js
 ```
 
 For the packaged offline OCR worker, run `E2E_SKIP_SERVICES=1 scripts/e2e.sh test/e2e/rasterLabels.js`. The test draws a small raster chart, checks real OCR and the legend cache, compares its data pixels and reads the translated labels back from the exported PDF.

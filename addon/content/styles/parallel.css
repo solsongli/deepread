@@ -51,3 +51,16 @@
 .dr-parallel-passage > div:first-child { color: var(--dr-muted); }
 
 .dr-parallel-stage > .dr-parallel-detail { pointer-events: none; }
+
+.dr-translation-options[open] { box-sizing: border-box; width: min(26rem, 94vw); max-height: 88vh;
+  overflow: auto; margin: auto; padding: 1.25rem; color: var(--dr-text); background: var(--dr-surface);
+  border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); font: inherit; }
+.dr-translation-options::backdrop { background: #191b203d; }
+.dr-translation-options h2 { margin: 0 0 1em; font-size: 1.22em; }
+.dr-translation-options fieldset { display: grid; gap: .65em; padding: 0; margin: 0; border: 0; }
+.dr-export-field { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 1em; align-items: center; }
+.dr-export-field :is(select,input) { box-sizing: border-box; width: 100%; min-height: 2.2em; padding: 2px 6px;
+  font: inherit; color: inherit; background: var(--dr-surface); border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); }
+.dr-options-status { margin: 1em 0; min-height: 1.45em; color: var(--dr-muted); }
+.dr-options-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .5em; }
+.dr-options-actions button:first-child { margin-inline-end: auto; }

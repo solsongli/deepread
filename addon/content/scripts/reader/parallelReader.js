@@ -88,7 +88,8 @@
       this.exportControl = h(doc, "select", "dr-parallel-export");
       this.exportControl.setAttribute("aria-label", tr("保存译文或双语 PDF", "Save translated or bilingual PDF"));
       for (const [value, label] of [
-        ["", tr("保存 PDF…", "Save PDF…")],
+        ["", tr("页码与导出…", "Pages and export…")],
+        ["options", tr("选页、版式与入库…", "Page range, layout and library…")],
         ["page", tr("本页译文", "Current translated page")],
         ["all", tr("全文译文", "Translated document")],
         ["dual-page", tr("本页双语对照", "Bilingual page")],
@@ -102,7 +103,8 @@
       this.exportControl.addEventListener("change", () => {
         const scope = this.exportControl.value;
         this.exportControl.value = "";
-        if (scope)
+        if (scope === "options") DeepRead.TranslationOptions.open(this);
+        else if (scope)
           this.savePDF(scope).catch((err) => {
             if (this.root) this.status.textContent = DeepRead.util.formatError(err);
           });
@@ -129,9 +131,10 @@
 
     close(navigate = true) {
       if (!this.root) return;
+      this.optionsDialog?.close();
       DeepRead.ParallelDetail.release(this.page);
       this.controller?.abort(); this.renderTask?.cancel(); this.renderTask = null;
-      this.book?.abort(); this.book = null; this.termCache=null;
+      this.book?.abort(); this.book = null; this.termCache=null;this.scopedParse=null;
       this.exportJob?.abort(); this.exportJob=null;
       this.observer?.disconnect(); this.root.close(); this.root.remove(); this.root = null;
       this.doc.getElementById("deepread-parallel-css")?.remove();
@@ -231,7 +234,11 @@
           const stored = await DeepRead.Store.comparisonData(this.session.key, page.fingerprint, `parse:${provider}`);
           if (!this.alive(token)) return;
           if (stored) this.parsed = { provider, items: Array.isArray(stored) ? stored : stored.items,
-            legacy:Array.isArray(stored), fallback:!!stored.fallback, fingerprint: page.fingerprint };
+            legacy:Array.isArray(stored), fallback:!!stored.fallback, downloadJob:stored.downloadJob, fingerprint: page.fingerprint };
+        }
+        if (this.needsDocumentParse() || this.parsed?.legacy || this.parsed?.fallback) {
+          page.partial=(await this.partialLayouts(page)).get(index);
+          if (!this.alive(token)) return;
         }
         [page.saved,page.styleProfile] = await Promise.all([
           DeepRead.Store.comparisonData(this.session.key, page.fingerprint, slotFor(index, page.language)),
@@ -263,34 +270,51 @@
       if (this.root && this.page === old) await this.showPage(number);
     }
 
-    needsParse() {
+    needsDocumentParse() {
       const provider = DeepRead.prefs.parserConfig().provider;
       return provider !== "builtin" && !this.session.data?.contentList?.length && !this.session.hasResults && this.parsed?.provider !== provider;
+    }
+
+    needsParse(page=this.page) {
+      return this.needsDocumentParse() && !page?.partial;
+    }
+
+    partialLayouts(page) {
+      const provider=DeepRead.prefs.parserConfig().provider;
+      const key=JSON.stringify([page.fingerprint,provider]);
+      if (this.scopedParse?.key !== key) {
+        const promise = DeepRead.RangeParser.load(this.session.key,page.fingerprint,provider);
+        this.scopedParse = {key,promise};
+        promise.catch(()=>{if (this.scopedParse?.promise === promise) this.scopedParse = null;});
+      }
+      return this.scopedParse.promise;
     }
 
     prepareUnits(page) {
       const s = this.session;
       let source = s.data?.contentList;
       if (!source?.length && this.parsed?.provider === DeepRead.prefs.parserConfig().provider) source = this.parsed.items;
+      const usePartial = page.partial && !s.data?.contentList?.length && (!source?.length || this.parsed?.legacy || this.parsed?.fallback);
+      if (usePartial) source = page.partial.items;
       const paragraphs = (s.data?.hierarchicalData?.find((p) => p.pageIndex === page.index)?.paragraphs || []).map((p) => ({ ...p, pageIndex: page.index }));
       let items = [];
       if (source?.length) items = DeepRead.ParallelVisual.pageItems(source,page.index);
-      else if (!paragraphs.length) items = DeepRead.TextLayerParser.buildContentList([{ pageIndex: page.index, viewBox: page.view, chars: page.chars }]);
-      page.units = PLAN.plan({ paragraphs, items, nativeParser:!source?.length || !!this.parsed?.fallback || DeepRead.prefs.parserConfig().provider==="builtin", chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels,
+      else if (!paragraphs.length && !page.partial) items = DeepRead.TextLayerParser.buildContentList([{ pageIndex: page.index, viewBox: page.view, chars: page.chars }]);
+      page.units = PLAN.plan({ paragraphs, items, nativeParser:!source?.length || (usePartial ? page.partial.fallback : !!this.parsed?.fallback) || DeepRead.prefs.parserConfig().provider==="builtin", chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels, saved:page.saved,
         reuse: (!s.data?.language || s.data.language === page.language), continuationFor: (p) => s.continuationFor(p) });
       page.context = PLAN.interruptedContext(source?.length ? source : items, page.index);
       page.localItems = source?.length ? null : items;
       PLAN.setContext(page.units,page.context);
       PLAN.hydrate(page.units, page.saved);
       if (page.styleProfile) {
-        DeepRead.PaperStyles.classify(page.units,page.styleProfile,DeepRead.PaperStyles.documentStructure(source),page.view,Math.hypot(page.transform[0],page.transform[1]));
+        DeepRead.PaperStyles.classify(page.units,page.styleProfile,DeepRead.PaperStyles.documentStructure(s.data?.contentList?.length ? s.data.contentList : this.parsed?.items || source),page.view,Math.hypot(page.transform[0],page.transform[1]));
         page.equations=items.filter(it=>["equation","formula","interline_equation"].includes(it.type))
           .map(it=>PLAN.fromPermille(it.bbox,page.view)).filter(Boolean).map(rect=>project(rect,page.transform));
       }
     }
 
     async parseDocument(page, signal, force = false) {
-      if (!force && !this.needsParse() && !this.parsed?.legacy) return;
+      if (!force && !this.needsDocumentParse() && !this.parsed?.legacy) return;
       const session = this.session;
       const provider = DeepRead.prefs.parserConfig().provider;
       const path = await session.item.getFilePathAsync();
@@ -301,7 +325,7 @@
       const scratchPath = PathUtils.join(DeepRead.Store.resultRoot(), scratch);
       let parsed;
       try {
-        parsed = await DeepRead.Parser.parsePDF({ filePath: path, attachmentKey: scratch, pdfApp: session.pdfAdapter(), signal,
+        parsed = await DeepRead.RangeParser.parse(this,page,{ filePath: path, attachmentKey: scratch, pdfApp: session.pdfAdapter(), signal,
           onStatus: (progress) => { if (!signal.aborted) this.status.textContent = progress.message; } });
       }
       finally { await IOUtils.remove(scratchPath, { recursive: true, ignoreAbsent: true }); }
@@ -310,8 +334,8 @@
         image_caption, table_caption, chart_caption, code_caption, code_body, table_body, captionFrames, physicalParts }) =>
         ({ id, page_idx, type, sub_type, text_level, bbox, text, list_items, image_caption, table_caption, chart_caption,
           code_caption, code_body, table_body, captionFrames, physicalParts }));
-      this.parsed = { provider, items, fallback:!!parsed.fallback, fingerprint: page.fingerprint };
-      await DeepRead.Store.saveComparisonData(session.key, page.fingerprint, `parse:${provider}`, {version:3,items,fallback:!!parsed.fallback});
+      this.parsed = { provider, items, fallback:!!parsed.fallback, downloadJob:parsed.downloadJob, fingerprint: page.fingerprint };
+      await DeepRead.Store.saveComparisonData(session.key, page.fingerprint, `parse:${provider}`, {version:3,items,fallback:!!parsed.fallback,downloadJob:parsed.downloadJob});
       session.hasComparisonCache = !!page.fingerprint;
     }
 
@@ -325,7 +349,7 @@
     }
 
     async prepareTranslation(page, signal, force = false) {
-      if (!force && !this.needsParse() && !this.parsed?.legacy) return;
+      if (!force && !this.needsDocumentParse() && !this.parsed?.legacy) return;
       if (!DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
       // Only send already verified, visible native prose while the external
       // parser runs. Its finished layout can reuse the same validated records.
@@ -422,7 +446,8 @@
       page,
       signal,
       concurrency = Math.min(6, DeepRead.prefs.llmConfig().concurrency),
-      glossary
+      glossary,
+      selection
     ) {
       const hadLabels = page.rasterLabels;
       try {
@@ -438,7 +463,7 @@
       if (!page.units.some((u) => !u.translation) && !glossary?.length) return;
       if (page.localItems?.length && this.count > 1) {
         const pdf = this.session.pdfAdapter().pdfDocument;
-        const neighbours = [page.index - 1, page.index + 1].filter((index) => index >= 0 && index < this.count);
+        const neighbours = [page.index - 1, page.index + 1].filter((index) => index >= 0 && index < this.count && (!selection || selection.has(index)));
         const edges = await Promise.all(
           neighbours.map(async (index) => {
             const info = await pdf.getPageData({ pageIndex: index });
@@ -455,19 +480,28 @@
       }
       glossary ??= await this.paperTerms(page, signal);
       if (signal.aborted) return;
+      let context=page.context;
+      if (selection && !page.localItems?.length) {
+        const source=this.session.data?.contentList?.length ? this.session.data.contentList : this.parsed?.items || [];
+        const nearby=[page.index-1,page.index,page.index+1].filter(i=>selection.has(i)).flatMap(i=>
+          source.length?DeepRead.ParallelVisual.pageItems(source,i):(selection.get(i)?.items || []));
+        context=PLAN.interruptedContext(nearby,page.index);
+      }
       const originals = new Map(),
         local = [];
       const work = page.units.map((unit) => {
         const bound = DeepRead.ParallelTerms.constrain(unit, glossary);
-        if (!bound) return unit;
-        if (bound.ready) {
+        if (!bound && !selection) return unit;
+        if (bound?.ready) {
           unit.termBase ||= unit.translation;
           unit.translation = bound.ready;
           local.push(unit);
           return unit;
         }
-        originals.set(bound.work, { unit, restore: bound.restore });
-        return bound.work;
+        const item=bound?.work || {...unit};
+        if(selection) Object.assign(item,{context:undefined,before:undefined,after:undefined,foreignNumbers:undefined});
+        originals.set(item,{unit,restore:bound?.restore});
+        return item;
       });
       if (local.length) await this.checkpoint(page, local, signal);
       if (signal.aborted || !work.some((u) => !u.translation)) return;
@@ -481,15 +515,15 @@
       await PLAN.translate(work, {
         language: page.language,
         signal,
-        context: page.context,
+        context,
         concurrency,
         request: (args) => DeepRead.LLM.complete(args),
         onProgress: (changed) => {
           const accepted = changed.map((u) => {
             const entry = originals.get(u);
             if (!entry) return u;
-            entry.unit.termBase ||= entry.unit.translation;
-            entry.unit.translation = entry.restore(u.translation);
+            if(entry.restore) entry.unit.termBase ||= entry.unit.translation;
+            entry.unit.translation = entry.restore ? entry.restore(u.translation) : u.translation;
             return entry.unit;
           });
           return this.checkpoint(page, accepted, signal);
@@ -502,10 +536,17 @@
       if (!page || !this.alive(token) || page.busy || this.book || this.exportJob) return;
       page.busy = true; this.translateButton.disabled = this.bookButton.disabled = this.exportControl.disabled = true;
       try {
-        await this.prepareTranslation(page,token.signal,forceParse);
+        if (forceParse || this.needsParse(page) || (this.parsed?.legacy && !page.partial)) {
+          if (!DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
+          const partials = await this.partialLayouts(page);
+          await DeepRead.RangeParser.fill(this,page,[page.index],partials,token.signal,forceParse);
+          if (!this.alive(token)) return;
+          page.partial = partials.get(page.index);
+          this.prepareUnits(page);
+        }
         if (!this.alive(token)) return;
         this.status.textContent = tr("正在翻译本页…", "Translating this page…");
-        await this.translateUnits(page, token.signal);
+        await this.translateUnits(page, token.signal, undefined, undefined, new Map([[page.index,page.partial]]));
         if (this.alive(token)) this.paint();
       }
       catch (error) { if (this.alive(token)) this.status.textContent = tr("本页翻译失败：", "Page translation failed: ") + DeepRead.util.formatError(error); }
@@ -518,25 +559,44 @@
       }
     }
 
-    async translateBook() {
+    async translateBook(indices) {
       if (this.book) { this.book.abort(); return; }
       const current = this.page;
       if (!current || current.busy || !this.root || this.exportJob) return;
+      const selected=indices ? DeepRead.PageRange.normalized(indices,this.count) : Array.from({length:this.count},(_,i)=>i);
+      const restricted=selected.length<this.count;
       const token = this.book = new AbortController();
       const signal = token.signal;
       this.bookButton.textContent = tr("停止翻译", "Stop translation");
       this.exportControl.disabled=true;
       this.number.disabled = this.previous.disabled = this.next.disabled = this.translateButton.disabled = true;
-      let visited = 0, originals = 0, stoppedBy;
+      let visited = 0, originals = 0, fallbackPages = 0, stoppedBy;
       const failures = [];
       try {
-        await this.prepareTranslation(current,signal);
-        if (signal.aborted) return;
+        let partials;
+        const missingDocument = this.needsDocumentParse() || this.parsed?.legacy;
+        if (missingDocument || this.parsed?.fallback) partials=await this.partialLayouts(current);
+        if (missingDocument && (restricted || partials.size)) {
+          await DeepRead.RangeParser.fill(this,current,selected,partials,signal);
+          if (signal.aborted) return false;
+          if(selected.includes(current.index)) {
+            current.partial=partials.get(current.index);this.prepareUnits(current);this.paint();
+          }
+          if (!restricted) {
+            const provider=DeepRead.prefs.parserConfig().provider;
+            const items=selected.flatMap(i=>partials.get(i).items);
+            const fallback=selected.some(i=>partials.get(i).fallback);
+            this.parsed={provider,items,fallback,fingerprint:current.fingerprint};
+            await DeepRead.Store.saveComparisonData(this.session.key,current.fingerprint,`parse:${provider}`,{version:3,items,fallback});
+          }
+        } else if (!restricted) await this.prepareTranslation(current,signal);
+        if (signal.aborted) return false;
         this.termWarning=false;
-        const glossary=await this.paperTerms(current,signal,true);
-        if (signal.aborted) return;
+        const glossary=await this.paperTerms(current,signal,!restricted);
+        if (signal.aborted) return false;
         const adapter = this.session.pdfAdapter();
-        const order = [current.index, ...Array.from({length:this.count}, (_, i) => i).filter(i => i !== current.index)];
+        const order = selected.includes(current.index) ? [current.index,...selected.filter(i=>i!==current.index)] : selected;
+        const selection=restricted?new Map(selected.map(i=>[i,partials?.get(i)])):null;
         const limit = Math.min(6, DeepRead.prefs.llmConfig().concurrency);
         const workers = Math.min(3, limit, order.length);
         let next = 0;
@@ -544,19 +604,20 @@
           while (next < order.length && !signal.aborted && !stoppedBy) {
             const index = order[next++];
             try {
-              this.status.textContent = tr(`全文翻译 · 已处理 ${visited}/${this.count} 页 · 正在处理第 ${index + 1} 页`,
-                `Translating page ${index + 1} · ${visited} of ${this.count} processed`);
+              this.status.textContent = tr(`已处理 ${visited}/${selected.length} 页 · 正在翻译第 ${index+1} 页`,
+                `Translating page ${index+1} · ${visited} of ${selected.length} processed`);
               let page = current;
               if (index !== current.index) {
                 const [geometry, data, saved] = await Promise.all([adapter.pdfDocument.getPage(index + 1),
                   adapter.pdfDocument.getPageData({ pageIndex: index }), DeepRead.Store.comparisonData(this.session.key, current.fingerprint, slotFor(index, current.language))]);
                 if (signal.aborted) return;
-                page = { index, language: current.language, fingerprint: current.fingerprint, view: geometry.view, chars: data.chars || [], saved };
+                page = { index, language: current.language, fingerprint: current.fingerprint, view: geometry.view, chars: data.chars || [], saved, partial:partials?.get(index) };
                 this.prepareUnits(page);
               }
-              await this.translateUnits(page, signal, Math.floor(limit / workers),glossary);
+              await this.translateUnits(page, signal, Math.floor(limit / workers),glossary,selection);
               if (signal.aborted) return;
               if (!page.units.length) originals++;
+              if (page.partial ? page.partial.fallback : this.parsed?.fallback) fallbackPages++;
               visited++;
             } catch (error) {
               if (signal.aborted) return;
@@ -571,13 +632,16 @@
         const incomplete = failures.sort((a,b) => a-b).join(", ");
         this.status.textContent = tr(`已处理 ${visited} 页`, `Processed ${visited} pages`) +
           (originals ? tr(`，其中 ${originals} 页保留原图`, ` · ${originals} original-only pages`) : "") +
-          (incomplete ? tr(` · 以下页仍有待译段落，再点翻译全文可续译：${incomplete}`,
-            ` · Pending passages on pages ${incomplete}. Choose Translate all pages to resume.`) : "");
+          (fallbackPages ? tr(` · ${fallbackPages} 页使用了 PDF 文字层`, ` · ${fallbackPages} pages used the PDF text layer`) : "") +
+          (incomplete ? tr(` · 以下页仍有待译段落，可再次翻译所选页：${incomplete}`,
+            ` · Pending passages on pages ${incomplete}. Select those pages to resume.`) : "");
         if (this.termWarning) this.status.textContent+=tr(" · 本次术语提取未完成"," · Paper terminology unavailable");
+        return !failures.length;
       }
       catch (error) {
-        if (!signal.aborted && this.root) this.status.textContent = tr(`第 ${stoppedBy?.page ?? current.index + 1} 页未完成：`,
-          `Page ${stoppedBy?.page ?? current.index + 1} failed: `) + DeepRead.util.formatError(error);
+        if (!signal.aborted && this.root) this.status.textContent = (stoppedBy
+          ? tr(`第 ${stoppedBy.page} 页未完成：`, `Page ${stoppedBy.page} failed: `)
+          : tr("翻译未完成：","Translation incomplete: ")) + DeepRead.util.formatError(error);
       }
       finally {
         if (this.book === token) {
@@ -592,42 +656,38 @@
 
     refreshExport() {
       const units = this.page?.units;
-      this.exportControl.disabled =
-        !units ||
-        !!this.book ||
-        !!this.exportJob ||
-        !!this.page?.busy ||
-        this.needsParse() ||
-        units.some((u) => !u.translation);
+      this.exportControl.disabled = !units || !!this.book || !!this.exportJob || !!this.page?.busy;
+      const incomplete = !units || this.needsParse() || units.some(u => !u.translation);
+      for (const option of this.exportControl.options) {
+        if (option.value && option.value !== "options") option.disabled = incomplete;
+      }
     }
 
-    async savePDF(scope = "page", path) {
+    async savePDF(scope = "page", path, options = {}) {
       const current = this.page;
       if (!current?.units || current.busy || this.book || this.exportJob || !this.root) return false;
-      const token = (this.exportJob = new AbortController()),
-        signal = token.signal,
-        start = this.pageIndex;
-      const scroll = { top: this.scroll.scrollTop, left: this.scroll.scrollLeft };
-      const bilingual = scope === "dual-page" || scope === "dual-all";
+      const start = this.pageIndex;
       const whole = scope === "all" || scope === "dual-all";
-      let tmpPath,
-        message = "";
+      const indices = options.indices ? DeepRead.PageRange.normalized(options.indices,this.count)
+        : whole ? Array.from({length:this.count}, (_,i) => i) : [start];
+      const layout = options.layout || (scope.startsWith("dual-") ? "parallel" : "mono");
+      const bilingual = layout !== "mono", translationFirst = bilingual && !!options.translationFirst;
+      const toLibrary = options.destination === "library";
+      const exporter = DeepRead.ParallelExport;
+      const output = exporter.description(this,indices,layout,translationFirst);
+      const token = this.exportJob = new AbortController(), signal = token.signal;
+      const scroll = { top: this.scroll.scrollTop, left: this.scroll.scrollLeft };
+      const signatures = [];
+      let tmpPath, libraryPath, message = "";
       try {
-        if (!path) {
-          const { FilePicker } = ChromeUtils.importESModule("chrome://zotero/content/modules/filePicker.mjs");
-          const picker = new FilePicker();
-          picker.init(
-            this.session.reader._window || Zotero.getMainWindow(),
-            bilingual ? tr("保存双语对照 PDF","Save bilingual PDF") : tr("保存译文 PDF", "Save translated PDF"),
-            picker.modeSave
-          );
-          const name = (this.session.item.attachmentFilename || "paper").replace(/\.pdf$/i, "");
-          picker.defaultString = `${name}-${current.language}${bilingual ? "-dual" : ""}${whole ? "" : `-p${start + 1}`}.pdf`;
-          picker.defaultExtension = "pdf";
-          picker.appendFilter("PDF", "*.pdf");
-          const result = await picker.show();
-          if (result !== picker.returnOK && result !== picker.returnReplace) return false;
-          path = picker.file;
+        if (toLibrary) {
+          const lib = Zotero.Libraries.get(this.session.item.libraryID);
+          if (!lib.editable || !lib.filesEditable)
+            throw new Error(tr("当前文库不能添加附件，请选择保存文件。", "This library cannot accept files. Choose Save to file."));
+          path = libraryPath = PathUtils.join(PathUtils.tempDir, "deepread-export-"+crypto.randomUUID()+".pdf");
+        } else if (!path) {
+          path = await exporter.choose(this,output.name);
+          if (!path) return false;
         }
         const source = await this.session.item.getFilePathAsync();
         if (source && Zotero.File.pathToFile(source).equals(Zotero.File.pathToFile(path)))
@@ -640,9 +700,8 @@
         const pdf = await DeepRead.ParallelPDF.create();
         pdf.setTitle((this.session.item.attachmentFilename || "DeepRead") + ` · ${current.language}` +
           (bilingual ? tr(" · 双语对照"," · Bilingual") : ""));
-        const facing = bilingual ? await DeepRead.ParallelPDF.facingDocument(pdf,this,source) : null;
-        const first = whole ? 0 : start, last = whole ? this.count - 1 : start;
-        for (let i = first; i <= last; i++) {
+        const facing = bilingual ? await DeepRead.ParallelPDF.facingDocument(pdf,this,source,{layout,translationFirst}) : null;
+        for (const i of indices) {
           if (signal.aborted) return false;
           if (this.pageIndex !== i) await this.showPage(i, token);
           if (signal.aborted) return false;
@@ -661,6 +720,8 @@
               true;
           this.bookButton.disabled = false;
           this.status.textContent = tr(`正在保存第 ${i + 1} 页…`, `Saving page ${i + 1}…`);
+          if (toLibrary) signatures.push(await exporter.digest([this.page.index, this.page.view, this.page.transform,
+            this.page.styleProfile?.roles, PLAN.records(this.page.units)]));
           await DeepRead.ParallelPDF.append(pdf, this, signal, facing);
         }
         if (signal.aborted) return false;
@@ -670,10 +731,17 @@
         if (signal.aborted) return false;
         tmpPath = `${path}.${crypto.randomUUID()}.tmp`;
         await IOUtils.write(path, Uint8Array.from(bytes), { tmpPath });
+        if (toLibrary) {
+          if (signal.aborted) return false;
+          const item = await exporter.attach(this,path,output,current.fingerprint,[current.language,layout,translationFirst,signatures]);
+          message = tr("译稿已加入 Zotero 文库", "PDF added to the Zotero library");
+          return item;
+        }
         message = bilingual ? tr("已保存双语对照 PDF","Bilingual PDF saved") : tr("已保存译文 PDF", "Translated PDF saved");
         return true;
       } finally {
         if (tmpPath) await IOUtils.remove(tmpPath, { ignoreAbsent: true });
+        if (libraryPath) await IOUtils.remove(libraryPath, { ignoreAbsent: true });
         if (this.exportJob === token) {
           if (this.pageIndex !== start) await this.showPage(start, token);
           if (this.exportJob === token) {
@@ -771,7 +839,7 @@
         if (u.allItalic) block.style.fontStyle='italic';
         this.target.stage.append(block);
         if (type) layoutUnit={...layoutUnit,allItalic:false,title:type.weight===700,
-          boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:type.role==="documentTitle" && u.centered};
+          boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:["documentTitle","heading","subheading","metadata"].includes(type.role) && u.centered};
         const metrics=DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment,
           u.size*Math.hypot(page.transform[0],page.transform[1]),type);
         frames.push({unit:u,block,angle,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics});
@@ -797,20 +865,24 @@
       DeepRead.ParallelDetail.refresh(this,page);
       const total = page.units.length, translated = page.units.filter((u) => u.translation).length;
       this.refreshExport();
-      this.retryParse.hidden = !this.parsed?.fallback || !!this.session.data?.contentList?.length;
+      this.retryParse.hidden = !(page.partial ? page.partial.fallback : this.parsed?.fallback) || !!this.session.data?.contentList?.length;
+      const pendingDownload = (page.partial || this.parsed)?.downloadJob;
+      this.retryParse.textContent = pendingDownload ? tr("重试结果下载","Retry result download") : tr("重试解析服务","Retry parser");
       this.retryParse.disabled = !!this.book || !!this.exportJob || !!page.busy;
-      const parse = this.needsParse() && (!translated || translated < total);
-      this.translateButton.hidden = translated === total && !parse && !this.parsed?.legacy && !page.imageCandidates?.length;
+      const parse = this.needsParse();
+      this.translateButton.hidden = translated === total && !parse && (!this.parsed?.legacy || page.partial) && !page.imageCandidates?.length;
       this.translateButton.disabled = !!this.book || !!this.exportJob || !!page.busy; this.bookButton.disabled = !!page.busy;
-      this.translateButton.textContent = this.parsed?.legacy ? tr("补全版面并翻译本页","Refresh layout and translate page")
-        : parse ? tr("解析文档并翻译本页", "Parse PDF and translate page") : tr("翻译本页", "Translate page");
-      this.status.textContent = parse ? tr("将使用已配置的解析服务处理整份 PDF，再翻译本页。", "Your configured parser will process the PDF before this page is translated.")
+      this.translateButton.textContent = this.parsed?.legacy && !page.partial ? tr("补全版面并翻译本页","Refresh layout and translate page")
+        : parse ? tr("解析并翻译本页", "Parse and translate page") : tr("翻译本页", "Translate page");
+      this.status.textContent = parse ? tr("翻译本页时，解析服务只会收到这一页。", "Translate page sends only this page to your configured parser.")
         : total ? tr(`第 ${page.index + 1} 页 · 原位 ${translated-notes.length}/${total} 处`, `Page ${page.index + 1} · ${translated-notes.length}/${total} in place`)
           + (notes.length ? tr(` · 页下 ${notes.length} 处`, ` · ${notes.length} below`) : '')
           + (page.supplements.length>notes.length ? tr(` · 段内滚动 ${page.supplements.length-notes.length} 处`, ` · ${page.supplements.length-notes.length} scrollable`) : '')
           + (total>translated ? tr(` · 待译 ${total-translated} 处`, ` · ${total-translated} pending`) : '')
         : tr("本页保留原图。扫描正文需要可用的 OCR 解析结果。", "Original page shown. Scanned text needs OCR results.");
-      if (this.parsed?.fallback) this.status.textContent+=tr(" · 本次使用 PDF 文字层"," · Using PDF text layer");
+      if (page.partial ? page.partial.fallback : this.parsed?.fallback) this.status.textContent += pendingDownload
+        ? tr(" · MinerU 结果未能下载，当前使用 PDF 文字层"," · MinerU download unavailable, using the PDF text layer")
+        : tr(" · 本次使用 PDF 文字层"," · Using PDF text layer");
       if (page.figureError) this.status.textContent+=tr(" · 图内文字识别未完成，保留原图"," · Figure text unavailable, original artwork shown");
       else if (page.imageCandidates?.length) this.status.textContent+=tr(" · 图内文字待识别"," · Figure labels pending");
     }
