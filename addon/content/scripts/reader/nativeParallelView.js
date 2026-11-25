@@ -69,7 +69,7 @@
       if (this.closed) return;
       this.right = appOf(secondary);
       const rightDoc = (this.rightDoc = Components.utils.unwaiveXrays(secondary._iframeWindow.document));
-      DeepRead.util.injectStylesheet(
+      const sheet = DeepRead.util.readyStylesheet(
         rightDoc,
         "chrome://deepread/content/styles/parallel.css",
         "deepread-native-page-css"
@@ -79,7 +79,10 @@
         "chrome://deepread/content/lib/katex/katex.min.css",
         "deepread-native-math-css"
       );
-      await DeepRead.PaperType.ready(rightDoc, DeepRead.prefs.language());
+      await Promise.race([
+        Promise.all([sheet, DeepRead.PaperType.ready(rightDoc, DeepRead.prefs.language())]),
+        this.ended
+      ]);
       if (this.closed) return;
       const apps = [this.left, this.right];
       for (const [side, app] of apps.entries()) {
@@ -99,25 +102,13 @@
           view.container.addEventListener(type, input, true);
           this.cleanup.push(() => view.container.removeEventListener(type, input, true));
         }
-        listen("updateviewarea", () => {
-          const expected = this.mirrored?.[side],
-            c = view.container;
-          if (
-            this.ready &&
-            !this.syncing &&
-            (!expected ||
-              Math.abs(expected.top - c.scrollTop) > 1 ||
-              Math.abs(expected.left - c.scrollLeft) > 1)
-          )
-            this.driver = side;
-          this.schedule();
-        });
-        const changed = () => {
-          if (this.ready && !this.syncing) this.driver = side;
-          this.schedule();
-        };
-        listen("scalechanging", changed);
-        listen("rotationchanging", changed);
+        // PDF.js also fires page/scale events while it lays out the other
+        // pane. Only user input or an actual navigation chooses the driver.
+        const update = () => this.schedule();
+        view.container.addEventListener("scroll", update, { passive: true });
+        this.cleanup.push(() => view.container.removeEventListener("scroll", update));
+        for (const type of ["updateviewarea", "pagechanging", "scalechanging", "rotationchanging"])
+          listen(type, update);
         listen("pagerendered", () => this.schedule());
         const highlight = (e) => this.highlight(side, e);
         const leave = () => this.clearHighlight();
@@ -132,7 +123,13 @@
       this.right.pdfViewer.currentScale = leftViewer.currentScale;
       align(leftViewer, anchor);
       align(this.right.pdfViewer, anchor);
-      this.mirrored = [];
+      const toolbarInput = () => {
+        this.driver = internal._lastViewPrimary === false ? 1 : 0;
+      };
+      for (const type of ["pointerdown", "keydown"]) {
+        outer.addEventListener(type, toolbarInput, true);
+        this.cleanup.push(() => outer.removeEventListener(type, toolbarInput, true));
+      }
       this.ready = true;
       const observer = new outer.defaultView.MutationObserver(() => {
         if (
@@ -160,19 +157,15 @@
       const viewers = [this.left.pdfViewer, this.right.pdfViewer],
         source = viewers[this.driver],
         target = viewers[1 - this.driver];
-      this.syncing = true;
-      try {
-        if (source.pagesRotation !== target.pagesRotation) target.pagesRotation = source.pagesRotation;
-        if (Math.abs(source.currentScale - target.currentScale) > 0.001)
-          target.currentScale = source.currentScale;
-        align(target, position(source));
-        this.mirrored[1 - this.driver] = {
-          top: target.container.scrollTop,
-          left: target.container.scrollLeft
-        };
-      } finally {
-        this.syncing = false;
+      if (source.pagesRotation !== target.pagesRotation) target.pagesRotation = source.pagesRotation;
+      if (Math.abs(source.currentScale - target.currentScale) > 0.001)
+        target.currentScale = source.currentScale;
+      const anchor = position(source);
+      if (target.currentPageNumber !== source.currentPageNumber) {
+        if (target._setCurrentPageNumber) target._setCurrentPageNumber(source.currentPageNumber, false);
+        else target.currentPageNumber = source.currentPageNumber;
       }
+      align(target, anchor);
       const v = this.right.pdfViewer,
         index = source.currentPageNumber - 1;
       const visible = v._getVisiblePages?.().views || [];

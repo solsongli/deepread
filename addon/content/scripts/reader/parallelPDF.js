@@ -64,7 +64,7 @@
     return new Promise((resolve, reject) => {
       const link = element(doc, "link");
       link.rel = "stylesheet";
-      link.href = url;
+      link.href = DeepRead.util.styleURL(url);
       link.onload = resolve;
       link.onerror = () => reject(new Error("Could not load " + url));
       doc.head.append(link);

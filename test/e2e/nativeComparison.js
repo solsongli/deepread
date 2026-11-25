@@ -127,7 +127,7 @@ E2E.run = async function () {
         atom.getAttribute("aria-label").includes("k") &&
         !atom.textContent.match(/_\{|\^\{/u)
     );
-    const fraction = c.surface.doc.querySelector('link[href$="styles/paper.css"]');
+    const fraction = c.surface.doc.querySelector('link[href*="/styles/paper.css"]');
     fraction.disabled = true;
     check(
       "losing the paper stylesheet cannot expose TeX or enlarge the bitmap",

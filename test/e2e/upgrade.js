@@ -40,6 +40,12 @@ E2E.run = async function () {
   if (legacy) await OLD.Store.savePaper(attachmentKey, item.id, { guide: { markdown: { card: "old export" } },
     user_state: { modules: { guided: true }, notes: { p_0_0: { text: "My original note" } } } });
 
+  if (OLD.ParallelReader) {
+    const session=OLD.Session.forReader(reader);
+    await session.init();
+    doc.querySelector(".dr-parallel-button").click();
+    await waitFor(()=>session.comparison?.page?.units,12000,"open comparison before upgrading");
+  }
   const errors = [];
   const listener = { observe: (m) => { if (/deepread/i.test(String(m.message || m))) errors.push(String(m.message || m).slice(0, 300)); } };
   Services.console.registerListener(listener);
@@ -66,6 +72,21 @@ E2E.run = async function () {
     if (saved?.user_state?.notes?.p_0_0?.text !== "My original note" || JSON.parse(archived)?.markdown?.card !== "old export"
         || NEW.AgentRunner || doc.querySelector('.dr-guide-button') || !doc.querySelector('.dr-parallel-button')) throw new Error("Guide retirement or data preservation failed");
     step("reader and notes migrated", true);
+  }
+  if (NEW.NativeParallelView) {
+    if(doc.querySelector("dialog.deepread-parallel"))throw Error("The old comparison is still open");
+    const session=NEW.Session.forReader(reader);
+    await session.init();
+    doc.querySelector(".dr-parallel-button").click();
+    const view=await waitFor(()=>session.comparison?.native?.ready && session.comparison?.page?.units && session.comparison.native,12000,"native comparison after upgrading");
+    if (view.left.pdfViewer.container.clientWidth<1 || view.right.pdfViewer.container.clientWidth<1)
+      throw Error("An upgraded PDF pane collapsed");
+    if(session.comparison.count>1){
+      view.left.pdfViewer.currentPageNumber=2;
+      await waitFor(()=>view.right.pdfViewer.currentPageNumber===2 && session.comparison.pageIndex===1,10000,"native page jump after upgrade");
+    }
+    step("native split and page jump work in the same open attachment",true);
+    session.comparison.close();
   }
   step("after", { version: NEW.version, started: !!NEW.prefPaneID, ...after, replaced, menu, errors: errors.filter((e) => !/DEBUG/.test(e)).slice(0, 8) });
   return { ok: after.toolbars === 1 && replaced };

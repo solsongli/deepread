@@ -19,13 +19,35 @@ DeepRead.util = {
     return new Promise((resolve) => setTimeout(resolve, ms));
   },
 
+  // Gecko can retain a loaded chrome stylesheet in an open reader across
+  // an in-place add-on update. Each release needs its own stylesheet URI.
+  styleURL(href) {
+    return href + "?v=" + encodeURIComponent(DeepRead.version);
+  },
+
   injectStylesheet(doc, href, id) {
-    if (!doc || doc.getElementById(id)) return;
+    if (!doc) return;
+    const url=this.styleURL(href);
+    const existing=doc.getElementById(id);
+    if (existing) {
+      if (existing.getAttribute("href")!==url) existing.setAttribute("href",url);
+      return existing;
+    }
     const link = doc.createElementNS("http://www.w3.org/1999/xhtml", "link");
     link.id = id;
     link.rel = "stylesheet";
-    link.href = href;
+    link.href = url;
     (doc.head || doc.documentElement).appendChild(link);
+    return link;
+  },
+
+  readyStylesheet(doc,href,id) {
+    const link=this.injectStylesheet(doc,href,id);
+    if(link.sheet)return Promise.resolve();
+    return new Promise((resolve,reject)=>{
+      link.addEventListener("load",resolve,{once:true});
+      link.addEventListener("error",()=>reject(new Error("Could not load "+href)),{once:true});
+    });
   },
 
   /** Create an HTML element in `doc` with attributes, properties and children. */

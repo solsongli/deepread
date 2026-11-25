@@ -43,7 +43,7 @@
       this.doc = doc;
       this.trigger = trigger;
       this.count = app.pdfDocument.numPages;
-      DeepRead.util.injectStylesheet(
+      const sheet=DeepRead.util.readyStylesheet(
         doc,
         "chrome://deepread/content/styles/parallel.css",
         "deepread-parallel-css"
@@ -51,6 +51,8 @@
       const host = doc.getElementById("split-view");
       const root = (this.root = h(doc, "section", "deepread-parallel dr-native-tools"));
       root.id = "deepread-native-controls";
+      // Keep the command bar out of Zotero's flex split on its first layout.
+      Object.assign(root.style,{position:"absolute",inset:"0 0 auto"});
       root.setAttribute("aria-label", tr("原版对照", "Parallel reading"));
       const bar = h(doc, "div", "dr-parallel-bar");
       const button = (parent, cls, label, action) => {
@@ -120,6 +122,8 @@
       this.session._emit("comparison");
       const native = (this.native = new DeepRead.NativeParallelView(this));
       try {
+        await sheet;
+        if(this.native!==native)return;
         await native.open();
         if (this.root && this.native === native)
           await this.showPage(native.active ?? app.pdfViewer.currentPageNumber - 1, null, true);

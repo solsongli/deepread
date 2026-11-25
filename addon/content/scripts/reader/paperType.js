@@ -8,7 +8,7 @@
     if (state?.link.isConnected) return state;
     const link = doc.createElementNS("http://www.w3.org/1999/xhtml", "link");
     link.rel = "stylesheet";
-    link.href = css;
+    link.href = DeepRead.util.styleURL(css);
     state = { link, loads: new Map() };
     state.sheet = new Promise(resolve => {
       state.finish = resolve;
