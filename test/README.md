@@ -12,6 +12,8 @@ E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/parallel.pdf" scripts/e2
 E2E_SKIP_SERVICES=1 E2E_PDF="$PWD/test/fixtures/reading/parallel.pdf" scripts/e2e.sh test/e2e/pageSelection.js
 ```
 
+Run `E2E_SKIP_SERVICES=1 scripts/e2e.sh test/e2e/nativeComparison.js` to exercise both native PDF scroll containers, zoomed math, MathML, incremental full-paper translation and existing split restoration. The test generates its own 13-page paper.
+
 For the packaged offline OCR worker, run `E2E_SKIP_SERVICES=1 scripts/e2e.sh test/e2e/rasterLabels.js`. The test draws a small raster chart, checks real OCR and the legend cache, compares its data pixels and reads the translated labels back from the exported PDF.
 
 Current layout and reading-flow regressions generate their own small PDFs locally:

@@ -171,6 +171,9 @@
       if (math.parentElement?.closest(".katex, .dr-parallel-atom, .katex-display") || math.getAttribute("display")==="block") continue;
       const atom=h(doc,"span"), measure=h(doc,"span"), probe=h(doc,"span"), inner=h(doc,"span");
       atom.className="dr-parallel-atom"; atom.setAttribute("role","math");
+      const label=math.getAttribute("aria-label");
+      if(label)atom.setAttribute("aria-label",label);
+      Object.assign(atom.style,{display:"inline-block",position:"relative",lineHeight:"0"});
       measure.style.cssText="position:absolute;visibility:hidden;white-space:nowrap;line-height:0";
       probe.style.cssText="display:inline-block;width:0;height:0;vertical-align:baseline";
       inner.style.cssText="display:inline-block;vertical-align:baseline;line-height:normal";
@@ -180,7 +183,7 @@
       if (bounds?.height>0 && Number.isFinite(base)) {
         const height=bounds.height/type.size, depth=Math.max(0,(bounds.bottom-base)/type.size);
         Object.assign(atom.dataset,{widthEm:bounds.width/type.size,heightEm:height,depthEm:Math.min(height,depth)});
-        inner.removeAttribute("style");inner.className="dr-typeset-math";
+        inner.style.cssText="position:absolute;top:0;left:0;white-space:nowrap;line-height:normal";inner.className="dr-typeset-math";
         atom.append(inner);
       } else atom.replaceWith(math);
       measure.remove();

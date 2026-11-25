@@ -58,6 +58,7 @@
     "reader/parallelPDF.js",
     "reader/parallelExport.js",
     "reader/translationOptions.js",
+    "reader/nativeParallelView.js",
     "reader/parallelReader.js",
     "reader/session.js",
     "reader/toolbar.js",

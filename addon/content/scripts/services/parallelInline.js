@@ -109,12 +109,17 @@
     for (const m of text.matchAll(/\b(?:log|ln|exp|sin|cos|tan|min|max|argmin|argmax)(?=\s*(?:[A-Za-z]\s*)?\()/gu)) {
       for (let j = m.index; j < m.index + m[0].length; j++) operators.add(stream.map[j]);
     }
+    // A dimensional adjective starts prose after an inline expression, e.g.
+    // "in I_t, a 2D point tracker". Keep it available to the translator.
+    const prose = new Set();
+    for (const part of text.matchAll(/,\s+(?:a|an)\s+[23][dD](?=\s+[a-z]{2})/gu))
+      for (let j=part.index+1;j<part.index+part[0].length;j++) prose.add(stream.map[j]);
     for (let i = 0; i < chars.length; i++) {
       const c = chars[i],
         v = value(c),
         [a, b] = offsets[i];
       const bodyBaseline = baselines[i];
-      if (reserved.some((span) => a < span.end && b > span.start)) {
+      if (prose.has(i) || reserved.some((span) => a < span.end && b > span.start)) {
         roles.push({ seed: false, eligible: false });
         continue;
       }
@@ -363,8 +368,10 @@
     for (const m of text.matchAll(texPattern)) add(m.index, m.index + m[0].length, "tex", m[0]);
     for (const m of text.matchAll(
       /\b[A-Z][\p{L}’'-]+(?:\s+et\s+al\.|\s+(?:and|&)\s+[A-Z][\p{L}’'-]+)\s*\(\s*(?:19|20)\d{2}[a-z]?\s*\)|\[(?:\d+(?:\s*[,–-]\s*\d+)*)\]/gu
-    ))
+    )) {
+      if(glyphs.length && m[0][0]==="[" && /[∈∉]\s*$/u.test(text.slice(0,m.index))) continue;
       add(m.index, m.index + m[0].length, "citation", m[0].replace(/\s+/g, " "));
+    }
     for (let i = 0; i < glyphs.length; ) {
       if (!DeepRead.Typography.monospace(glyphs[i])) {
         i++;

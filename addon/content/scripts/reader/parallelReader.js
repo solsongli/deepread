@@ -27,66 +27,63 @@
     return best.count >= 7 ? best.rgb : null;
   }
 
-  function makeSheet(doc, label) {
-    const column = h(doc, "div", "dr-parallel-column");
-    const element = h(doc, "div", "dr-parallel-sheet");
-    const stage = h(doc, "div", "dr-parallel-stage");
-    const canvas = h(doc, "canvas"); canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", label);
-    stage.append(canvas); element.append(stage);
-    column.append(h(doc, "div", "dr-parallel-label", label), element);
-    return { column, element, stage, canvas };
-  }
-
   DeepRead.ParallelReader = class ParallelReader {
-    constructor(session) { this.session = session; this.zoom = 1; }
+    constructor(session) {
+      this.session = session;
+    }
 
     async open(trigger) {
-      if (this.root) { this.close(); return; }
+      if (this.root) {
+        this.close();
+        return;
+      }
       await this.session.init();
       if (this.root || !this.session.overlay.attached || this.session.status === "running") return;
       const { readerDoc: doc, app } = this.session.overlay;
-      this.doc = doc; this.trigger = trigger;
-      DeepRead.util.injectStylesheet(doc, "chrome://deepread/content/styles/parallel.css", "deepread-parallel-css");
-      const root = this.root = h(doc, "dialog", "deepread-parallel");
-      root.setAttribute("aria-label", tr("原版 1:1 对照", "Original-layout translation"));
+      this.doc = doc;
+      this.trigger = trigger;
+      this.count = app.pdfDocument.numPages;
+      DeepRead.util.injectStylesheet(
+        doc,
+        "chrome://deepread/content/styles/parallel.css",
+        "deepread-parallel-css"
+      );
+      const host = doc.getElementById("split-view");
+      const root = (this.root = h(doc, "section", "deepread-parallel dr-native-tools"));
+      root.id = "deepread-native-controls";
+      root.setAttribute("aria-label", tr("原版对照", "Parallel reading"));
       const bar = h(doc, "div", "dr-parallel-bar");
       const button = (parent, cls, label, action) => {
-        const el = h(doc, "button", cls, label); el.type = "button";
-        el.addEventListener("click", action); parent.append(el); return el;
+        const b = h(doc, "button", cls, label);
+        b.type = "button";
+        b.addEventListener("click", action);
+        parent.append(b);
+        return b;
       };
-      this.back = button(bar, "dr-parallel-close", tr("返回论文", "Back to paper"), () => this.close());
-      bar.append(h(doc, "strong", "", tr("原版对照", "Parallel reading")));
-      const nav = h(doc, "div", "dr-parallel-nav"); bar.append(nav);
-      this.previous = button(nav, "dr-parallel-prev", "‹", () => this.showPage(this.pageIndex - 1));
-      this.previous.setAttribute("aria-label", tr("上一页", "Previous page"));
-      this.number = h(doc, "input", "dr-parallel-page-number"); this.number.type = "number"; this.number.min = "1";
-      this.number.setAttribute("aria-label", tr("页码", "Page number"));
-      this.count = app.pdfDocument.numPages; this.number.max = String(this.count);
-      this.number.addEventListener("change", () => {
-        const n = this.number.valueAsNumber;
-        if (Number.isInteger(n) && n >= 1 && n <= this.count && n !== this.pageIndex + 1) this.showPage(n - 1);
-        else this.number.value = String(this.pageIndex + 1);
-      });
-      nav.append(this.number, h(doc, "span", "", `/ ${this.count}`));
-      this.next = button(nav, "dr-parallel-next", "›", () => this.showPage(this.pageIndex + 1));
-      this.next.setAttribute("aria-label", tr("下一页", "Next page"));
-      const zoom = h(doc, "div", "dr-parallel-nav"); bar.append(zoom);
-      this.minus = button(zoom, "", "−", () => this.changeZoom(-0.25)); this.minus.setAttribute("aria-label", tr("缩小两页", "Zoom out both pages"));
-      this.fit = button(zoom, "", tr("适宽", "Fit width"), () => { this.zoom = 1; this.resize(); });
-      this.plus = button(zoom, "", "+", () => this.changeZoom(0.25)); this.plus.setAttribute("aria-label", tr("放大两页", "Zoom in both pages"));
-      this.swap = button(bar, "dr-parallel-swap", tr("查看原文", "Show original"), () => {
-        root.classList.toggle("dr-show-source"); this.resize();
-      });
-      this.translateButton = button(bar, "dr-parallel-translate", tr("翻译本页", "Translate page"), () => this.translatePage());
-      this.retryParse = button(bar,"dr-parallel-reparse",tr("重试解析服务","Retry parser"),() => this.translatePage(true));
+      this.status = h(doc, "span", "dr-parallel-status");
+      this.status.setAttribute("role", "status");
+      bar.append(this.status);
+      this.translateButton = button(bar, "dr-parallel-translate", tr("翻译本页", "Translate page"), () =>
+        this.translatePage()
+      );
+      this.retryParse = button(bar, "dr-parallel-reparse", tr("重试解析服务", "Retry parser"), () =>
+        this.translatePage(true)
+      );
       this.retryParse.hidden = true;
       this.bookButton = button(bar, "dr-parallel-book", tr("翻译全文", "Translate all pages"), () => {
-        if (this.exportJob) this.exportJob.abort(); else this.translateBook();
+        if (this.exportJob) this.exportJob.abort();
+        else this.translateBook();
       });
       this.bookButton.disabled = true;
-      this.bookButton.title=tr("英译中时按论文统一术语，补译缺失或用词不一致的段落","For Chinese, choose paper-specific terms and translate missing or inconsistent passages");
+      this.bookButton.title = tr(
+        "英译中时按论文统一术语，补译缺失或用词不一致的段落",
+        "For Chinese, choose paper-specific terms and translate missing or inconsistent passages"
+      );
       this.exportControl = h(doc, "select", "dr-parallel-export");
-      this.exportControl.setAttribute("aria-label", tr("保存译文或双语 PDF", "Save translated or bilingual PDF"));
+      this.exportControl.setAttribute(
+        "aria-label",
+        tr("保存译文或双语 PDF", "Save translated or bilingual PDF")
+      );
       for (const [value, label] of [
         ["", tr("页码与导出…", "Pages and export…")],
         ["options", tr("选页、版式与入库…", "Page range, layout and library…")],
@@ -110,152 +107,274 @@
           });
       });
       bar.append(this.exportControl);
-      this.status = h(doc, "div", "dr-parallel-status"); this.status.setAttribute("role", "status");
-      this.scroll = h(doc, "div", "dr-parallel-scroll"); this.scroll.tabIndex = 0;
-      this.sheets = h(doc, "div", "dr-parallel-sheets"); this.scroll.append(this.sheets);
-      this.extra = h(doc, "div", "dr-parallel-extra"); this.scroll.append(this.extra);
-      root.append(bar, this.status, this.scroll); doc.body.append(root);
-      root.addEventListener("cancel", (event) => { event.preventDefault(); this.close(); });
-      root.addEventListener('click', event => {
-        const link = event.target.closest?.('[data-source-link]');
-        if (!link) return;
-        event.preventDefault();
-        this.openReference(Number(link.dataset.sourceLink)).catch(error => { if (this.root) this.status.textContent = DeepRead.util.formatError(error); });
-      });
-      root.showModal(); this.back.focus();
-      this.observer = new doc.defaultView.ResizeObserver(() => this.resize()); this.observer.observe(this.scroll);
-      this.originalPage = Math.max(0, (app.pdfViewer.currentPageNumber || 1) - 1);
+      this.back = button(bar, "dr-parallel-close", tr("退出对照", "Close comparison"), () => this.close());
+      root.append(bar);
+      host.append(root);
+      host.classList.add("dr-native-active");
+      this.barObserver = new doc.defaultView.ResizeObserver(() =>
+        host.style.setProperty("--dr-native-bar", root.offsetHeight + "px")
+      );
+      this.barObserver.observe(root);
+      host.style.setProperty("--dr-native-bar", root.offsetHeight + "px");
+      this.status.textContent = tr("正在打开原生对照…", "Opening parallel views…");
       this.session._emit("comparison");
-      await this.showPage(this.originalPage);
+      const native = (this.native = new DeepRead.NativeParallelView(this));
+      try {
+        await native.open();
+        if (this.root && this.native === native)
+          await this.showPage(native.active ?? app.pdfViewer.currentPageNumber - 1, null, true);
+      } catch (error) {
+        if (this.native === native) this.close();
+        throw error;
+      }
     }
 
-    close(navigate = true) {
+    close(navigate = true, restore = true) {
       if (!this.root) return;
       this.optionsDialog?.close();
-      DeepRead.ParallelDetail.release(this.page);
-      this.controller?.abort(); this.renderTask?.cancel(); this.renderTask = null;
-      this.book?.abort(); this.book = null; this.termCache=null;this.scopedParse=null;
-      this.exportJob?.abort(); this.exportJob=null;
-      this.observer?.disconnect(); this.root.close(); this.root.remove(); this.root = null;
+      this.passageDialog?.close();
+      this.book?.abort();
+      this.book = null;
+      this.exportJob?.abort();
+      this.exportJob = null;
+      this.native?.close(restore);
+      this.native = null;
+      this.releaseSurface(this.exportSurface);
+      this.exportSurface = null;
+      this.barObserver?.disconnect();
+      const host = this.root.parentNode;
+      host?.classList.remove("dr-native-active");
+      host?.style.removeProperty("--dr-native-bar");
+      this.root.remove();
+      this.root = null;
+      this.surface = null;
+      this.page = null;
+      this.source = null;
+      this.target = null;
+      this.scopedParse = null;
+      this.termCache = null;
+      this.controller = null;
+      this.following = null;
       this.doc.getElementById("deepread-parallel-css")?.remove();
-      for (const sheet of [this.source, this.target]) if (sheet) sheet.canvas.width = sheet.canvas.height = 0;
-      this.sheets.replaceChildren(); this.extra.replaceChildren();
-      this.page = null; this.source = null; this.target = null;
-      this.retryParse.hidden = true;
-      const session = this.session;
-      if (navigate && this.pageIndex !== this.originalPage) {
-        session.reader.navigate({ pageIndex: this.pageIndex }).catch((err) => DeepRead.log("comparison navigation", String(err)));
-      }
-      this.trigger?.focus({ preventScroll: true }); this.trigger = null;
-      session._emit("comparison");
+      if (navigate) this.trigger?.focus({ preventScroll: true });
+      this.trigger = null;
+      this.session._emit("comparison");
     }
 
-    changeZoom(amount) { this.zoom = Math.min(3, Math.max(0.5, this.zoom + amount)); this.resize(); }
-
-    resize() {
-      if (!this.root || !this.page || !this.source) return;
-      const width = this.scroll.clientWidth;
-      if (!width) return;
-      const single = width < 740;
-      this.root.classList.toggle("dr-single", single);
-      this.swap.hidden = !single;
-      this.swap.textContent = this.root.classList.contains("dr-show-source") ? tr("查看译文", "Show translation") : tr("查看原文", "Show original");
-      const available = width - 24 - (single ? 0 : 12);
-      const scale = Math.max(0.05, available / (single ? 1 : 2) / this.page.width * this.zoom);
-      for (const sheet of [this.source, this.target]) {
-        sheet.element.style.width = `${this.page.width * scale}px`; sheet.element.style.height = `${this.page.height * scale}px`;
-        sheet.stage.style.transform = `scale(${scale})`;
-      }
-      this.page.screenDensity=scale*(this.doc.defaultView.devicePixelRatio || 1);
-      DeepRead.ParallelDetail.refresh(this,this.page);
-      this.minus.disabled = this.zoom <= 0.5; this.plus.disabled = this.zoom >= 3;
+    alive(token) {
+      return this.root && this.controller === token && !token?.signal.aborted;
     }
 
-    alive(token) { return this.root && this.controller === token && !token.signal.aborted; }
-
-    async showPage(index, exportJob = null) {
-      if (!this.root || this.book || (this.exportJob && this.exportJob!==exportJob) || !Number.isInteger(index) || index < 0 || index >= this.count) return;
-      DeepRead.ParallelDetail.release(this.page);
-      this.controller?.abort(); this.renderTask?.cancel(); this.renderTask = null;
-      const token = this.controller = new AbortController();
-      this.pageIndex = index; this.number.value = String(index + 1);
-      this.previous.disabled = index === 0; this.next.disabled = index + 1 === this.count;
-      this.page = null; this.source = null; this.target = null;
-      this.retryParse.hidden = true;
-      this.exportControl.disabled=true;
-      this.sheets.replaceChildren(); this.extra.replaceChildren(); this.scroll.scrollTop = 0;
-      this.bookButton.disabled = true; this.translateButton.hidden = true; this.status.textContent = tr("正在绘制页面…", "Rendering page…");
-      try {
-        const overlay = this.session.overlay, win = overlay.pdfWin, doc = overlay.app.pdfDocument;
-        const pdfPage = raw(await doc.getPage(index + 1));
-        if (!this.alive(token)) return;
-        const rotation = ((pdfPage.rotate || 0) + (overlay.app.pdfViewer.pagesRotation || 0)) % 360;
-        const viewportAt = (scale) => raw(pdfPage.getViewport(Components.utils.cloneInto({ scale, rotation }, win)));
-        const viewport = viewportAt(1);
-        const width = viewport.width, height = viewport.height;
-        const rasterScale = Math.min(2, 4096 / Math.max(width, height), Math.sqrt(4500000 / (width * height)));
-        const bitmap = h(overlay.pdfDoc, "canvas"); bitmap.width = Math.max(1, Math.ceil(width * rasterScale)); bitmap.height = Math.max(1, Math.ceil(height * rasterScale));
-        const renderInto=(canvas,scale)=>{
-          const params=raw(Components.utils.createObjectIn(win));
-          params.canvasContext=raw(canvas.getContext("2d"));params.viewport=viewportAt(scale);
-          return raw(pdfPage.render(params));
-        };
-        const task = this.renderTask = renderInto(bitmap,rasterScale);
-        const annotationsTask = pdfPage.getAnnotations ? Promise.resolve(pdfPage.getAnnotations(
-          Components.utils.cloneInto({ intent:'display' },win))).catch(() => []) : [];
-        const [pageData, annotations] = await Promise.all([this.session.pdfAdapter().pdfDocument.getPageData({ pageIndex: index }),
-          annotationsTask, task.promise]);
-        if (!this.alive(token)) return;
-        this.renderTask = null;
-        const page = this.page = { index, width, height, renderInto, transform: Array.from(viewport.transform), view: Array.from(pdfPage.view),
-          chars: pageData.chars || [], fingerprint: Array.from(doc.fingerprints || []).join("/"), language: DeepRead.prefs.language() };
-        const pageAnnotations=JSON.parse(win.JSON.stringify(annotations));
-        page.hasAnnotationArtwork=pageAnnotations.some(a=>a.subtype!=="Link" && a.subtype!=="Popup");
-        page.links=pageAnnotations.filter(a=>a.subtype==='Link' && a.rect && (a.dest || /^(?:https?:\/\/|mailto:)/i.test(a.url || '')));
-        this.source = makeSheet(this.doc, tr("原文", "Original")); this.target = makeSheet(this.doc, tr("译文", "Translation"));
-        for (const sheet of [this.source, this.target]) {
-          sheet.stage.style.width = `${width}px`; sheet.stage.style.height = `${height}px`;
-          sheet.canvas.width = bitmap.width; sheet.canvas.height = bitmap.height;
-          sheet.canvas.getContext("2d").drawImage(bitmap, 0, 0);
-        }
-        bitmap.width = bitmap.height = 0;
-        this.sheets.replaceChildren(this.source.column, this.target.column); this.resize();
-        const provider = DeepRead.prefs.parserConfig().provider;
-        const existing=this.session.data;
-        if (existing?.resultDir && existing.contentList?.length) {
-          if (this.enriched?.source!==existing.contentList) {
-            this.enriched={source:existing.contentList,promise:DeepRead.Parser.enrichLayout(existing.resultDir,existing.contentList)};
-          }
-          await this.enriched.promise;
-          if (!this.alive(token)) return;
-        }
-        if (this.parsed?.fingerprint !== page.fingerprint) this.parsed = null;
-        if (provider !== "builtin" && !this.session.data?.contentList && this.parsed?.provider !== provider) {
-          const stored = await DeepRead.Store.comparisonData(this.session.key, page.fingerprint, `parse:${provider}`);
-          if (!this.alive(token)) return;
-          if (stored) this.parsed = { provider, items: Array.isArray(stored) ? stored : stored.items,
-            legacy:Array.isArray(stored), fallback:!!stored.fallback, downloadJob:stored.downloadJob, fingerprint: page.fingerprint };
-        }
-        if (this.needsDocumentParse() || this.parsed?.legacy || this.parsed?.fallback) {
-          page.partial=(await this.partialLayouts(page)).get(index);
-          if (!this.alive(token)) return;
-        }
-        [page.saved,page.styleProfile] = await Promise.all([
-          DeepRead.Store.comparisonData(this.session.key, page.fingerprint, slotFor(index, page.language)),
-          DeepRead.PaperStyles.resolve(this.session),
-          DeepRead.PaperType.ready(this.doc, page.language),
-          DeepRead.FigureOCR.discover(this,page)
-        ]);
-        if (!this.alive(token)) return;
-        this.prepareUnits(page); this.paint();
-      }
-      catch (error) { if (this.alive(token)) this.status.textContent = tr("此页无法显示：", "Could not display page: ") + DeepRead.util.formatError(error); }
+    makeSurface(doc, index, rotation) {
+      const host = h(doc, "div", "dr-native-page"),
+        stage = h(doc, "div", "dr-parallel-stage");
+      // PDF.js installs its embedded fonts in the source iframe.
+      const source = { canvas: h(this.session.overlay.pdfDoc, "canvas") };
+      const target = { stage, canvas: h(doc, "canvas") };
+      host.append(stage);
+      const extra = h(doc, "div", "dr-parallel-extra");
+      return {
+        index,
+        rotation,
+        doc,
+        host,
+        source,
+        target,
+        extra,
+        controller: new AbortController(),
+        session: this.session
+      };
     }
 
-    async openReference(index) {
-      const old = this.page,
-        link = old?.links?.[index];
-      if (!link || this.book || this.exportJob) return;
+    releaseSurface(surface) {
+      if (!surface) return;
+      surface.controller.abort();
+      if (!Components.utils.isDeadWrapper(surface.doc)) {
+        DeepRead.ParallelDetail.release(surface.page);
+        surface.host.remove();
+        surface.extra.replaceChildren();
+        surface.source.canvas.width =
+          surface.source.canvas.height =
+          surface.target.canvas.width =
+          surface.target.canvas.height =
+            0;
+      }
+      surface.page = null;
+    }
+
+    followPage(index) {
+      if (this.following === index || this.book || this.exportJob || this.page?.busy) return;
+      this.following = index;
+      this.showPage(index, null, true)
+        .catch((error) => {
+          if (this.root && this.native?.active === index)
+            this.status.textContent = DeepRead.util.formatError(error);
+        })
+        .finally(() => {
+          if (this.following === index) this.following = null;
+        });
+    }
+
+    async showPage(index, exportJob = null, fromViewer = false) {
+      if (
+        !this.root ||
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= this.count ||
+        (this.exportJob && this.exportJob !== exportJob)
+      )
+        return;
+      let s;
+      if (exportJob) {
+        this.releaseSurface(this.exportSurface);
+        s = this.exportSurface = this.makeSurface(
+          this.doc,
+          index,
+          this.session.overlay.app.pdfViewer.pagesRotation || 0
+        );
+        s.host.classList.add("dr-native-print-work");
+        this.doc.body.append(s.host);
+        const abort = () => s.controller.abort();
+        exportJob.signal.addEventListener("abort", abort, { once: true });
+        try {
+          await this.compose(s);
+        } finally {
+          exportJob.signal.removeEventListener("abort", abort);
+        }
+      } else {
+        const native = this.native;
+        if (!native?.ready) return;
+        if (!fromViewer) native.navigate(index);
+        if (this.book || this.page?.busy) return;
+        if (this.pageIndex !== index || !this.surface?.page) {
+          this.translateButton.disabled =
+            this.bookButton.disabled =
+            this.retryParse.disabled =
+            this.exportControl.disabled =
+              true;
+          this.status.textContent = tr(`正在显示第 ${index + 1} 页…`, `Loading page ${index + 1}…`);
+        }
+        s = await native.ensure(index);
+        if (native !== this.native || native.active !== index || this.book || this.exportJob) return;
+      }
+      if (!s?.page?.units || s.controller.signal.aborted || !this.root) return;
+      this.surface = s;
+      this.controller = s.controller;
+      this.pageIndex = index;
+      this.page = s.page;
+      this.source = s.source;
+      this.target = s.target;
+      this.extra = s.extra;
+      if (!exportJob) this.updateStatus();
+      return s;
+    }
+
+    async compose(surface) {
+      const { index, controller: token, source, target } = surface;
+      const overlay = this.session.overlay,
+        win = overlay.pdfWin,
+        doc = overlay.app.pdfDocument;
+      const pdfPage = raw(await doc.getPage(index + 1));
+      if (token.signal.aborted) return;
+      const rotation = ((pdfPage.rotate || 0) + surface.rotation) % 360;
+      const viewportAt = (scale) =>
+        raw(pdfPage.getViewport(Components.utils.cloneInto({ scale, rotation }, win)));
+      const viewport = viewportAt(1);
+      const width = viewport.width,
+        height = viewport.height;
+      const rasterScale = Math.min(2, 4096 / Math.max(width, height), Math.sqrt(4500000 / (width * height)));
+      const bitmap = source.canvas;
+      bitmap.width = Math.max(1, Math.ceil(width * rasterScale));
+      bitmap.height = Math.max(1, Math.ceil(height * rasterScale));
+      const renderInto = (canvas, scale) => {
+        const params = raw(Components.utils.createObjectIn(win));
+        params.canvasContext = raw(canvas.getContext("2d"));
+        params.viewport = viewportAt(scale);
+        return raw(pdfPage.render(params));
+      };
+      const task = renderInto(bitmap, rasterScale);
+      const cancel = () => task.cancel();
+      token.signal.addEventListener("abort", cancel, { once: true });
+      const annotationsTask = pdfPage.getAnnotations
+        ? Promise.resolve(pdfPage.getAnnotations(Components.utils.cloneInto({ intent: "display" }, win))).catch(
+            () => []
+          )
+        : [];
+      const [pageData, annotations] = await Promise.all([
+        this.session.pdfAdapter().pdfDocument.getPageData({ pageIndex: index }),
+        annotationsTask,
+        task.promise
+      ]).finally(() => token.signal.removeEventListener("abort", cancel));
+      if (token.signal.aborted) return;
+      const page = (surface.page = {
+        index,
+        width,
+        height,
+        renderInto,
+        transform: Array.from(viewport.transform),
+        view: Array.from(pdfPage.view),
+        chars: pageData.chars || [],
+        fingerprint: Array.from(doc.fingerprints || []).join("/"),
+        language: DeepRead.prefs.language()
+      });
+      const pageAnnotations = JSON.parse(win.JSON.stringify(annotations));
+      page.hasAnnotationArtwork = pageAnnotations.some((a) => a.subtype !== "Link" && a.subtype !== "Popup");
+      page.links = pageAnnotations.filter(
+        (a) => a.subtype === "Link" && a.rect && (a.dest || /^(?:https?:\/\/|mailto:)/i.test(a.url || ""))
+      );
+      target.stage.style.width = width + "px";
+      target.stage.style.height = height + "px";
+      target.canvas.width = bitmap.width;
+      target.canvas.height = bitmap.height;
+      target.canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      const provider = DeepRead.prefs.parserConfig().provider;
+      const existing = this.session.data;
+      if (existing?.resultDir && existing.contentList?.length) {
+        if (this.enriched?.source !== existing.contentList) {
+          this.enriched = {
+            source: existing.contentList,
+            promise: DeepRead.Parser.enrichLayout(existing.resultDir, existing.contentList)
+          };
+        }
+        await this.enriched.promise;
+        if (token.signal.aborted) return;
+      }
+      if (this.parsed?.fingerprint !== page.fingerprint) this.parsed = null;
+      if (provider !== "builtin" && !this.session.data?.contentList && this.parsed?.provider !== provider) {
+        const stored = await DeepRead.Store.comparisonData(
+          this.session.key,
+          page.fingerprint,
+          `parse:${provider}`
+        );
+        if (token.signal.aborted) return;
+        if (stored)
+          this.parsed = {
+            provider,
+            items: Array.isArray(stored) ? stored : stored.items,
+            legacy: Array.isArray(stored),
+            fallback: !!stored.fallback,
+            downloadJob: stored.downloadJob,
+            fingerprint: page.fingerprint
+          };
+      }
+      if (this.needsDocumentParse() || this.parsed?.legacy || this.parsed?.fallback) {
+        page.partial = (await this.partialLayouts(page)).get(index);
+        if (token.signal.aborted) return;
+      }
+      [page.saved, page.styleProfile] = await Promise.all([
+        DeepRead.Store.comparisonData(this.session.key, page.fingerprint, slotFor(index, page.language)),
+        DeepRead.PaperStyles.resolve(this.session),
+        DeepRead.PaperType.ready(surface.doc, page.language),
+        DeepRead.FigureOCR.discover(this, page)
+      ]);
+      if (token.signal.aborted) return;
+      this.prepareUnits(page);
+      this.paintSurface(surface);
+    }
+
+    async openReference(index, old=this.page) {
+      const link = old?.links?.[index];
+      if (!link) return;
       if (/^(?:https?:\/\/|mailto:)/i.test(link.url || "")) {
         Zotero.launchURL(link.url);
         return;
@@ -267,7 +386,7 @@
       const number = Number.isInteger(dest[0])
         ? dest[0]
         : await pdf.getPageIndex(Components.utils.cloneInto({ num: dest[0].num, gen: dest[0].gen }, pdfWin));
-      if (this.root && this.page === old) await this.showPage(number);
+      if (this.root) { this.native.navigate(number); this.native.schedule(); }
     }
 
     needsDocumentParse() {
@@ -346,6 +465,7 @@
       if (signal.aborted) return;
       this.session.hasComparisonCache = !!page.fingerprint;
       if (this.page === page && this.root) this.paint();
+      else this.native?.accept(page);
     }
 
     async prepareTranslation(page, signal, force = false) {
@@ -552,6 +672,7 @@
       catch (error) { if (this.alive(token)) this.status.textContent = tr("本页翻译失败：", "Page translation failed: ") + DeepRead.util.formatError(error); }
       finally {
         page.busy = false;
+        if(this.root)this.native?.schedule();
         if (this.alive(token)) {
           this.translateButton.disabled = this.bookButton.disabled = this.retryParse.disabled = false;
           this.refreshExport();
@@ -569,7 +690,7 @@
       const signal = token.signal;
       this.bookButton.textContent = tr("停止翻译", "Stop translation");
       this.exportControl.disabled=true;
-      this.number.disabled = this.previous.disabled = this.next.disabled = this.translateButton.disabled = true;
+      this.translateButton.disabled = true;
       let visited = 0, originals = 0, fallbackPages = 0, stoppedBy;
       const failures = [];
       try {
@@ -616,6 +737,7 @@
               }
               await this.translateUnits(page, signal, Math.floor(limit / workers),glossary,selection);
               if (signal.aborted) return;
+              this.native?.accept(page);
               if (!page.units.length) originals++;
               if (page.partial ? page.partial.fallback : this.parsed?.fallback) fallbackPages++;
               visited++;
@@ -646,8 +768,8 @@
       finally {
         if (this.book === token) {
           this.book = null; this.bookButton.textContent = tr("翻译全文", "Translate all pages");
-          this.translateButton.disabled = this.number.disabled = this.retryParse.disabled = false;
-          this.previous.disabled = current.index === 0; this.next.disabled = current.index + 1 === this.count;
+          this.translateButton.disabled = this.retryParse.disabled = false;
+          this.native?.schedule();
           this.refreshExport();
           if (signal.aborted) this.status.textContent = tr(`已停止，已处理 ${visited} 页`, `Stopped after processing ${visited} pages`);
         }
@@ -676,7 +798,6 @@
       const exporter = DeepRead.ParallelExport;
       const output = exporter.description(this,indices,layout,translationFirst);
       const token = this.exportJob = new AbortController(), signal = token.signal;
-      const scroll = { top: this.scroll.scrollTop, left: this.scroll.scrollLeft };
       const signatures = [];
       let tmpPath, libraryPath, message = "";
       try {
@@ -703,7 +824,7 @@
         const facing = bilingual ? await DeepRead.ParallelPDF.facingDocument(pdf,this,source,{layout,translationFirst}) : null;
         for (const i of indices) {
           if (signal.aborted) return false;
-          if (this.pageIndex !== i) await this.showPage(i, token);
+          await this.showPage(i, token);
           if (signal.aborted) return false;
           if (!this.page?.units) throw new Error(this.status.textContent);
           if (this.needsParse() || this.page.units.some((u) => !u.translation))
@@ -713,11 +834,7 @@
                 `Page ${i + 1} has untranslated content. Translate it before saving.`
               )
             );
-          this.number.disabled =
-            this.previous.disabled =
-            this.next.disabled =
-            this.translateButton.disabled =
-              true;
+          this.translateButton.disabled = true;
           this.bookButton.disabled = false;
           this.status.textContent = tr(`正在保存第 ${i + 1} 页…`, `Saving page ${i + 1}…`);
           if (toLibrary) signatures.push(await exporter.digest([this.page.index, this.page.view, this.page.transform,
@@ -743,32 +860,30 @@
         if (tmpPath) await IOUtils.remove(tmpPath, { ignoreAbsent: true });
         if (libraryPath) await IOUtils.remove(libraryPath, { ignoreAbsent: true });
         if (this.exportJob === token) {
-          if (this.pageIndex !== start) await this.showPage(start, token);
-          if (this.exportJob === token) {
-            this.exportJob = null;
-            DeepRead.ParallelDetail.refresh(this,this.page);
-            this.bookButton.textContent = tr("翻译全文", "Translate all pages");
-            this.number.disabled = false;
-            this.previous.disabled = start === 0;
-            this.next.disabled = start + 1 === this.count;
-            this.translateButton.disabled = false;
-            this.refreshExport();
-            this.scroll.scrollTop = scroll.top;
-            this.scroll.scrollLeft = scroll.left;
-            if (message || signal.aborted) this.status.textContent = message || tr("已停止导出", "Export stopped");
-          }
+          this.releaseSurface(this.exportSurface);this.exportSurface=null;this.exportJob=null;
+          this.bookButton.textContent=tr("翻译全文","Translate all pages");
+          await this.showPage(this.native.active ?? start,null,true);
+          this.refreshExport();this.native?.schedule();
+          if(message || signal.aborted)this.status.textContent=message || tr("已停止导出","Export stopped");
         }
       }
     }
 
     paint() {
-      const page = this.page, canvas = this.target.canvas;
-      const ctx = canvas.getContext("2d"); ctx.drawImage(this.source.canvas, 0, 0);
-      this.source.stage.replaceChildren(this.source.canvas);
-      this.target.stage.replaceChildren(canvas); this.extra.replaceChildren();
+      if(!this.surface?.page)return;
+      this.paintSurface(this.surface);
+      if(!this.book && !this.exportJob)this.updateStatus();
+    }
+
+    paintSurface(surface) {
+      if(surface.nativeLayer)this.native?.mount(surface);
+      const {page, source, target, extra, doc:hdoc}=surface, canvas=target.canvas;
+      const ctx = canvas.getContext("2d"); ctx.drawImage(source.canvas, 0, 0);
+      page.sharpened=null;
+      target.stage.replaceChildren(canvas); extra.replaceChildren();
       const kx = canvas.width / page.width, ky = canvas.height / page.height;
       const pixels = page.units.some((u) => u.translation) ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
-      const notes = [], frames=[], hdoc = this.doc;
+      const notes = [], frames=[];
       page.supplements=[];
       page.dirtyRects=[];
       for (const u of page.units) {
@@ -778,7 +893,7 @@
         const patches=u.verifiedLabel && u.placed ? u.masks.map(mask=>DeepRead.ParallelInk.labelPatch(pixels,mask,page,u.size)) : [];
         const colors = rects.map((r,i) => u.verifiedLabel ? patches[i]?.color : paperColor(pixels, r, kx, ky));
         const originalFragment = hdoc.importNode(this.session.overlay._translationContent(u, u.translation, page.language), true);
-        let fragment = materialize(hdoc,originalFragment,u,page,this.source.canvas,pixels);
+        let fragment = materialize(hdoc,originalFragment,u,page,source.canvas,pixels);
         if (type?.role.endsWith("Caption")) DeepRead.PaperStyles.captionLabel(fragment);
         if(!u.title && !u.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(fragment,u.modelText);
         const samples=u.linkSamples || [];
@@ -803,9 +918,9 @@
         if (u.markerRect && !type) {
           const m=project(u.markerRect,page.transform), x=Math.max(0,Math.floor(m.left*kx)-1), y=Math.max(0,Math.floor(m.top*ky)-1);
           const w=Math.ceil((m.left+m.width)*kx)-x+1, ht=Math.ceil((m.top+m.height)*ky)-y+1;
-          ctx.drawImage(this.source.canvas,x,y,w,ht,x,y,w,ht);
+          ctx.drawImage(source.canvas,x,y,w,ht,x,y,w,ht);
         }
-        const r = project(u.rect, page.transform);
+        const originalRect = project(u.rect, page.transform), r = {...originalRect};
         const block = h(hdoc, "div", "dr-parallel-text");
         DeepRead.PaperType.apply(block, page.language);
         // Rotate the translated line with the source's writing direction, including
@@ -837,14 +952,14 @@
         if ((u.sans && (u.title || !chinese)) || u.role==="figure_label") block.classList.add("dr-paper-sans");
         if (chinese && u.title && u.allItalic) block.classList.add("dr-paper-subheading");
         if (u.allItalic) block.style.fontStyle='italic';
-        this.target.stage.append(block);
+        target.stage.append(block);
         if (type) layoutUnit={...layoutUnit,allItalic:false,title:type.weight===700,
           boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:["documentTitle","heading","subheading","metadata"].includes(type.role) && u.centered};
         const metrics=DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment,
           u.size*Math.hypot(page.transform[0],page.transform[1]),type);
         frames.push({unit:u,block,angle,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics});
         if (block.dataset.overflow) page.supplements.push(u);
-        this.pair(u,block,false);
+        block.dataset.sourceRect=[originalRect.left,originalRect.top,originalRect.width,originalRect.height].join(" ");
       }
       DeepRead.ParallelFlow.render(frames,page,canvas);
       if (notes.length) {
@@ -858,11 +973,16 @@
           if (type) DeepRead.PaperStyles.apply(translated,type,4/3);
           translated.append(frag);
           row.append(h(hdoc, "div", "", u.source), translated); detail.append(row);
-          this.pair(u,row,true);
+
         }
-        this.extra.append(detail);
+        extra.append(detail);
       }
-      DeepRead.ParallelDetail.refresh(this,page);
+      page.unplaced=notes.length;
+      this.native?.painted(surface);
+    }
+
+    updateStatus() {
+      const page=this.page, notes=page.unplaced || 0;
       const total = page.units.length, translated = page.units.filter((u) => u.translation).length;
       this.refreshExport();
       this.retryParse.hidden = !(page.partial ? page.partial.fallback : this.parsed?.fallback) || !!this.session.data?.contentList?.length;
@@ -875,9 +995,9 @@
       this.translateButton.textContent = this.parsed?.legacy && !page.partial ? tr("补全版面并翻译本页","Refresh layout and translate page")
         : parse ? tr("解析并翻译本页", "Parse and translate page") : tr("翻译本页", "Translate page");
       this.status.textContent = parse ? tr("翻译本页时，解析服务只会收到这一页。", "Translate page sends only this page to your configured parser.")
-        : total ? tr(`第 ${page.index + 1} 页 · 原位 ${translated-notes.length}/${total} 处`, `Page ${page.index + 1} · ${translated-notes.length}/${total} in place`)
-          + (notes.length ? tr(` · 页下 ${notes.length} 处`, ` · ${notes.length} below`) : '')
-          + (page.supplements.length>notes.length ? tr(` · 段内滚动 ${page.supplements.length-notes.length} 处`, ` · ${page.supplements.length-notes.length} scrollable`) : '')
+        : total ? tr(`第 ${page.index + 1} 页 · 原位 ${translated-notes}/${total} 处`, `Page ${page.index + 1} · ${translated-notes}/${total} in place`)
+          + (notes ? tr(` · 单独显示 ${notes} 处`, ` · ${notes} separate`) : '')
+          + (page.supplements.length>notes ? tr(` · 长段全文 ${page.supplements.length-notes} 处`, ` · ${page.supplements.length-notes} full passages`) : '')
           + (total>translated ? tr(` · 待译 ${total-translated} 处`, ` · ${total-translated} pending`) : '')
         : tr("本页保留原图。扫描正文需要可用的 OCR 解析结果。", "Original page shown. Scanned text needs OCR results.");
       if (page.partial ? page.partial.fallback : this.parsed?.fallback) this.status.textContent += pendingDownload
@@ -887,40 +1007,41 @@
       else if (page.imageCandidates?.length) this.status.textContent+=tr(" · 图内文字待识别"," · Figure labels pending");
     }
 
-    pair(unit, target, below) {
-      if (!unit.rect) return;
-      const r = project(unit.rect, this.page.transform),
-        hit = h(this.doc, "button", "dr-parallel-hit");
-      hit.setAttribute(
-        "aria-label",
-        tr("查看对应译文", "Show corresponding translation") + " · " + unit.source.slice(0, 64)
-      );
-      hit.type = "button";
-      for (const [key, v] of Object.entries(r)) hit.style[key] = `${v}px`;
-      this.source.stage.append(hit);
-      const highlight = (on) => {
-        hit.classList.toggle("dr-paired", on);
-        target.classList.toggle("dr-paired", on);
-      };
-      for (const el of [hit, target]) {
-        el.addEventListener("pointerenter", () => highlight(true));
-        el.addEventListener("pointerleave", () => highlight(false));
-        el.addEventListener("focusin", () => highlight(true));
-        el.addEventListener("focusout", () => highlight(false));
+    openPassages(surface) {
+      this.passageDialog?.close();
+      const doc = this.doc,
+        dialog = (this.passageDialog = h(doc, "dialog", "dr-translation-options dr-native-passages"));
+      const title = h(doc, "h2", "", tr("完整译文 · 第 ", "Full passages · Page ") + (surface.index + 1));
+      dialog.setAttribute("aria-label", title.textContent);
+      dialog.append(title);
+      const { page } = surface,
+        canvas = surface.source.canvas;
+      const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+      for (const u of page.supplements) {
+        const body = h(doc, "p");
+        DeepRead.PaperType.apply(body, page.language);
+        const fragment = doc.importNode(
+          this.session.overlay._translationContent(u, u.translation, page.language),
+          true
+        );
+        body.append(materialize(doc, fragment, u, page, canvas, pixels));
+        dialog.append(body);
       }
-      hit.addEventListener("click", () => {
-        if (this.root.classList.contains("dr-single")) {
-          this.root.classList.remove("dr-show-source");
-          this.resize();
-        }
-        if (below) {
-          target.closest("details").open = true;
-          target.scrollIntoView({ block: "center" });
-        }
-        if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
-        target.focus({ preventScroll: true });
-        highlight(true);
-      });
+      const close = h(doc, "button", "", tr("关闭", "Close"));
+      close.onclick = () => dialog.close();
+      dialog.append(close);
+      this.root.append(dialog);
+      dialog.addEventListener(
+        "close",
+        () => {
+          dialog.remove();
+          if (this.passageDialog === dialog) this.passageDialog = null;
+        },
+        { once: true }
+      );
+      dialog.showModal();
+      close.focus();
     }
+
   };
 })();

@@ -283,3 +283,33 @@ assert.equal(fromCards[0].translation,'采用统一术语。');
 fromCards[0].translation='手工改好的新译文。';
 D.ParallelPage.hydrate(fromCards,reconciled);
 assert.equal(fromCards[0].translation,'手工改好的新译文。','a later edit is never replaced by the older terminology correction');
+
+{
+  // Only adjacent legacy slots with matching source/context may be coalesced.
+  const math=(id,source,display=source)=>({id:"⟦D"+id+"⟧",source,display,kind:"math"});
+  const label=(id,source,kind)=>({...math(id,source),kind});
+  const old={source:"S in range",rect:[0,0,90,11],styled:"S in range",language:"zh",marker:"",
+    modelText:"Measure ⟦D0⟧ ⟦D1⟧.",tokens:[math(0,"s ∈"),label(1,"[0, 1]","citation")],translation:"测量 ⟦D0⟧ ⟦D1⟧。"};
+  const next={...old,modelText:"Measure ⟦D0⟧.",tokens:[math(0,"s ∈ [0, 1]")],translation:""};
+  const cached=D.ParallelPage.records([old]);
+  D.ParallelPage.hydrate([next],cached);assert.equal(next.translation,"测量 ⟦D0⟧。");
+  for(const bad of ["⟦D1⟧ 或 ⟦D0⟧","⟦D0⟧ 或 ⟦D1⟧","⟦D0⟧ ⟦D0⟧"]){
+    const copy={...next,translation:""};D.ParallelPage.hydrate([copy],[{...cached[0],text:bad}]);assert.equal(copy.translation,"");
+  }
+  const old2={...old,modelText:"In ⟦D0⟧ point tracker.",tokens:[math(0,"I , a 2D")],translation:"位于 ⟦D0⟧ 点跟踪器。"};
+  const next2={...old2,modelText:"In ⟦D0⟧, a ⟦D1⟧D point tracker.",tokens:[math(0,"I"),label(1,"2","number")],translation:""};
+  D.ParallelPage.hydrate([next2],D.ParallelPage.records([old2]));assert.equal(next2.translation,"位于 ⟦D0⟧，⟦D1⟧D 点跟踪器。");
+}
+console.log("parallelPage: verified interval and dimensional-prose cache migrations passed");
+{
+  const printed=(text,y)=>{
+    const cs=at(text,20,y);cs.at(-1).lineBreakAfter=true;return cs;
+  };
+  const label="Dense point registration", tail="sistent trajectories across keyframes.";
+  const fig={id:11,page_idx:4,type:"image",bbox:[0,0,1000,1000],image_caption:["Fig. 2: Dense point registration yields consistent trajectories across keyframes."]};
+  const chars=[...printed(label,155),...printed("Fig. 2: Dense point registration yields con-",95),...printed(tail,82)];
+  const result=D.ParallelFrames.recover([fig],chars,[0,0,400,200]);
+  const labels=result.items.filter(it=>it.type==="figure_label").map(it=>it.text);
+  assert.ok(labels.includes(label),"an actual figure label may also occur in the caption");
+  assert.ok(!labels.includes(tail),"punctuation after a hyphenated final caption line belongs to the caption");
+}

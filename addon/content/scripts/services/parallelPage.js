@@ -788,6 +788,96 @@
   const identity = (u) => JSON.stringify([u.source, u.styled, u.rect, u.marker]);
   const contract = u => JSON.stringify([u.modelText,(u.tokens || []).map(s=>[s.kind,s.source,s.display]),
     ...(u.context?.length || u.hint ? [u.context || null,u.hint || ""] : [])]);
+  // v1.11 split interval endpoints into citation slots and could include
+  // ", a 2D" in a glyph crop. Move only these verified boundaries in old records.
+  function migrateInlineMath(unit, entry) {
+    let previous;
+    try {
+      previous = JSON.parse(entry.contract);
+    } catch {
+      return "";
+    }
+    if (!Array.isArray(previous) || !Array.isArray(previous[1]) || !previous[1].length) return "";
+    const [oldModel, oldTokens, ...context] = previous;
+    if (
+      typeof oldModel !== "string" ||
+      JSON.stringify(context) !==
+        JSON.stringify(unit.context?.length || unit.hint ? [unit.context || null, unit.hint || ""] : [])
+    )
+      return "";
+    const pattern = /⟦D+\d+⟧/gu,
+      oldIDs = oldModel.match(pattern) || [],
+      tokens = unit.tokens || [];
+    if (
+      oldIDs.length !== oldTokens.length ||
+      !oldTokens.every((t) => Array.isArray(t) && typeof t[1] === "string")
+    )
+      return "";
+    const compact = (t) => t.replace(/\s+/gu, "");
+    const expand = (model, list) => {
+      let i = 0;
+      return compact(model.replace(pattern, () => list[i++] || ""));
+    };
+    if (
+      expand(
+        oldModel,
+        oldTokens.map((t) => t[1])
+      ) !==
+      expand(
+        unit.modelText,
+        tokens.map((t) => t.source)
+      )
+    )
+      return "";
+    const replyIDs = typeof entry.text === "string" ? entry.text.match(pattern) || [] : [];
+    if (replyIDs.length !== oldIDs.length || !oldIDs.every((id) => replyIDs.includes(id))) return "";
+    const ids = new Map(),
+      pairs = new Map();
+    let j = 0;
+    for (let i = 0; i < oldTokens.length; i++, j++) {
+      const [kind, source, display] = oldTokens[i],
+        t = tokens[j];
+      if (!t) return "";
+      if (t.kind === kind && t.source === source && t.display === display) {
+        ids.set(oldIDs[i], t.id);
+        continue;
+      }
+      if (t.kind !== "math" || kind !== "math") return "";
+      const next = oldTokens[i + 1];
+      if (
+        /[∈∉]$/u.test(source.trimEnd()) &&
+        next?.[0] === "citation" &&
+        compact(t.source) === compact(source + next[1])
+      ) {
+        pairs.set(oldIDs[i], oldIDs[i + 1]);
+        ids.set(oldIDs[i], t.id);
+        i++;
+        continue;
+      }
+      const dimension = /,\s*a\s+([23])D$/u.exec(source);
+      if (
+        dimension &&
+        /^zh(?:-|$)/iu.test(unit.language) &&
+        compact(source.slice(0, dimension.index)) === compact(t.source) &&
+        tokens[j + 1]?.kind === "number" &&
+        tokens[j + 1].source === dimension[1]
+      ) {
+        ids.set(oldIDs[i], t.id + "，" + tokens[++j].id + "D");
+        continue;
+      }
+      return "";
+    }
+    if (j !== tokens.length || !entry.text) return "";
+    let text = entry.text;
+    for (const [id, next] of pairs) {
+      const adjacent = new RegExp(id + "\\s*" + next, "u");
+      if (!adjacent.test(text)) return "";
+      text = text.replace(adjacent, id);
+    }
+    text = text.replace(pattern, (id) => ids.get(id) || id);
+    return DeepRead.ParallelInline.valid(unit, text) ? text : "";
+  }
+
   function hydrate(units, entries) {
     const bySource = new Map((entries || []).map((e) => [e.identity, e]));
     // Before protected expressions, style detection and the last punctuation
@@ -823,6 +913,7 @@
         if (cached.replaces) u.termBase=cached.replaces;
       }
       else if (!cached.contract) u.translation=DeepRead.ParallelInline.fromLegacy(u,cached.text);
+      else u.translation=migrateInlineMath(u,cached);
     }
   }
   function records(units) {

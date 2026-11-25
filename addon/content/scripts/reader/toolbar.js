@@ -19,6 +19,7 @@
 .deepread-toolbar .dr-run .dr-run-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--dr-accent, #2459a9); transition: width .3s; }
 .deepread-toolbar .dr-run.dr-ready::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--dr-success, #14664c); }
 .deepread-toolbar .dr-menu-button, .deepread-toolbar .dr-parallel-button, .deepread-toolbar .dr-focus-button, .deepread-toolbar .dr-questions-button { width: auto; padding: 0 8px; gap: 5px; font-size: 12px; white-space: nowrap; }
+.deepread-toolbar .dr-parallel-button[aria-pressed="true"],
 .deepread-toolbar .dr-focus-button[aria-pressed="true"],
 .deepread-toolbar .dr-menu-button[aria-expanded="true"] { color: var(--dr-accent, #2459a9); background: var(--dr-accent-soft, #eaf1fc); }
 .deepread-toolbar .dr-focus-button[hidden], .deepread-toolbar .dr-questions-button[hidden] { display: none; }
@@ -453,8 +454,8 @@
       focusButton.setAttribute("aria-pressed", String(session.focusReading));
     };
     const parallelButton = h(doc, "button", {
-      class: "toolbar-button dr-parallel-button", "aria-haspopup": "dialog",
-      title: DeepRead.bilingual("原文与译文按原页版式对照", "Read the original and translated pages in the same layout"),
+      class: "toolbar-button dr-parallel-button", "aria-controls":"deepread-native-controls",
+      title: DeepRead.bilingual("在原生阅读器中连续对照原文与译文", "Read continuously in Zotero’s split PDF view"),
       onclick: () => {
         session.comparison ||= new DeepRead.ParallelReader(session);
         session.comparison.open(parallelButton).catch((error) => DeepRead.Toast.show(doc, DeepRead.util.formatError(error), "error"));
@@ -465,7 +466,7 @@
     const update = () => {
       const running = session.status === "running";
       parallelButton.disabled = running || session.status === "loading";
-      parallelButton.setAttribute("aria-expanded", String(!!session.comparison?.root));
+      parallelButton.setAttribute("aria-pressed", String(!!session.comparison?.root));
       label.textContent = running
         ? `${DeepRead.bilingual("精读", "Reading")} ${Math.round(session.progress.percent || 0)}%`
         : DeepRead.t("toolbar.run");

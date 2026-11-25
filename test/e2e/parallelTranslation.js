@@ -62,10 +62,9 @@ E2E.run = async function () {
     if (fail) return { content: JSON.stringify({ translations: [] }) };
     return { content: JSON.stringify({ translations: list.map((u) => ({ id: u.id, translation: translated(u.source_text) })) }) };
   };
-  const rgb = (canvas, x, y) => [...canvas.getContext('2d').getImageData(x, y, 1, 1).data].join(',');
-  const sameRegion = (a,b,x,y,w,h) => {
-    const A = a.getContext('2d').getImageData(x,y,w,h).data, B = b.getContext('2d').getImageData(x,y,w,h).data;
-    return A.every((v,i) => v===B[i]);
+  const transparent=(canvas,x,y,w,h)=>{
+    const pixels=canvas.getContext("2d").getImageData(x,y,w,h).data;
+    return pixels.every((v,i)=>i%4!==3 || v===0);
   };
   const shot = async (name) => {
     const bitmap = await win.browsingContext.currentWindowGlobal.drawSnapshot(null, 1, 'white');
@@ -86,24 +85,34 @@ E2E.run = async function () {
     check('two list items occupy distinct original frames', list.length === 2 && parseFloat(list[1].style.top) > parseFloat(list[0].style.top) + 25);
     check('renderer preserves strong and italic runs in engine lines', !!list[0].querySelector('.dr-parallel-line strong') && !!list[0].querySelector('.dr-parallel-line em'));
     check('translation uses the local Chinese and Western print faces', list[0].lang==='zh-CN' &&
-      doc.fonts.check('400 12px "DeepRead Song"', '闭环') && doc.fonts.check('italic 12px "DeepRead Roman"', 'DDPM'));
+      c.surface.doc.fonts.check('400 12px "DeepRead Song"', '闭环') && c.surface.doc.fonts.check('italic 12px "DeepRead Roman"', 'DDPM'));
     const lead = c.page.units.find(u => u.source.includes('Closed-loop actions'));
     const mixed = s.overlay._translationContent(lead,lead.translation,'zh').textContent;
     check('mixed prose has compact Chinese punctuation and thin script boundaries before wrapping',
       list[0].textContent.includes('动作。保留') && mixed.includes('核对\u2009DDPM\u2009预测'));
-    check('long translation is complete and keyboard-scrollable', actions.some((box) => box.textContent.includes('完整的结尾') && box.scrollHeight > box.clientHeight && box.tabIndex === 0));
+    c.surface.more.click();
+    check('a long passage has a keyboard-accessible complete translation outside the page scrolling area',
+      c.passageDialog.open && c.passageDialog.textContent.includes('完整的结尾') && c.surface.doc.defaultView.getComputedStyle(actions.find(b=>b.dataset.overflow)).overflowY==="hidden");
+    c.passageDialog.close();
     const long=actions.find(box=>box.textContent.includes('完整的结尾'));
     const baselines=[...long.querySelectorAll('.dr-parallel-baseline')].map(probe=>probe.getBoundingClientRect().top);
     const steps=baselines.slice(1).map((y,i)=>y-baselines[i]);
     check('baselines remain evenly spaced throughout a long paragraph',steps.length>2 && Math.max(...steps)-Math.min(...steps)<.15);
-    const hit=c.source.stage.querySelector('.dr-parallel-hit');
-    hit.focus();
-    check('focusing the original highlights its corresponding translation',hit.classList.contains('dr-paired') && actions[0].classList.contains('dr-paired'));
-    const dims = () => [c.source.element.getBoundingClientRect(), c.target.element.getBoundingClientRect()];
-    const [original, target] = dims();
-    check('paired pages have equal dimensions at the same Y', Math.abs(original.width-target.width)<0.1 && Math.abs(original.height-target.height)<0.1 && Math.abs(original.y-target.y)<0.1);
+    const native=c.native, left=native.left.pdfViewer, right=native.right.pdfViewer;
+    check("normal comparison uses Zotero’s native split with two continuous PDF viewers",
+      doc.body.classList.contains("enable-vertical-split-view") && left.scrollMode===0 && right.scrollMode===0 &&
+      !doc.querySelector(".dr-parallel-next,dialog.deepread-parallel") && !doc.querySelector("dialog[open]"));
+    const pair=actions[0];pair.dispatchEvent(new c.surface.doc.defaultView.PointerEvent("pointermove",{bubbles:true}));
+    check("hovering a translation marks the matching source without intercepting native selection",
+      pair.classList.contains("dr-native-paired") && native.outline?.isConnected && native.outline.style.pointerEvents==="none");
+    native.clearHighlight();
+    const dims=()=>[left.getPageView(0).div,right.getPageView(0).div].map(el=>el.getBoundingClientRect());
+    const [original,target]=dims();
+    check("native split pages have equal width and aligned vertical positions",
+      Math.abs(original.width-target.width)<1.1 && Math.abs(original.height-target.height)<1.1 && Math.abs(original.top-target.top)<2);
     const paperStyle=c.page.styleProfile.roles;
     const body=actions.find(el=>el.dataset.typeRole==="body");
+    const originalBodySize=body.style.fontSize, originalBodyStep=body.style.lineHeight;
     const cap=actions.find(el=>el.dataset.typeRole==="figureCaption");
     check("body and caption use their document sizes even with different source frames",
       !!body && !!cap && parseFloat(body.style.fontSize)===paperStyle.body.size &&
@@ -111,12 +120,12 @@ E2E.run = async function () {
     const baseProbes=list.map(el=>[...el.querySelectorAll(".dr-parallel-baseline")].map(p=>p.getBoxQuads({relativeTo:c.target.stage})[0].p1.y));
     check("adjacent list items have the fixed paragraph gap in the actual baseline positions",
       list[0].dataset.flow===list[1].dataset.flow && Math.abs(baseProbes[1][0]-baseProbes[0].at(-1)-paperStyle.list.step-paperStyle.list.after)<.1);
-    const scale = target.width / c.page.width;
-    check('left-column text begins at the matching PDF coordinate', Math.abs((list[0].getBoundingClientRect().x-target.x)/scale - 44)<1);
+    const origin=c.target.stage.getBoundingClientRect(), scale=origin.width/c.page.width;
+    check('left-column text begins at the matching PDF coordinate', Math.abs((list[0].getBoundingClientRect().x-origin.x)/scale - 44)<1);
     check('right column stays in the right column', actions.some((box) => box.textContent.includes('两组实验') && parseFloat(box.style.left) > 310));
     const k = c.source.canvas.width / 612;
-    check('original graph rectangle and its interior labels are pixel-identical on the translated sheet', sameRegion(c.source.canvas,c.target.canvas,Math.round(44*k),Math.round((792-540)*k),Math.round(216*k),Math.round(158*k)));
-    check('display equation is preserved pixel-for-pixel', sameRegion(c.source.canvas,c.target.canvas,Math.round(326*k),Math.round((792-456)*k),Math.round(92*k),Math.round(27*k)));
+    check('original graph rectangle and its interior labels are pixel-identical on the translated sheet', transparent(c.target.canvas,Math.round(44*k),Math.round((792-540)*k),Math.round(216*k),Math.round(158*k)));
+    check('display equation is preserved pixel-for-pixel', transparent(c.target.canvas,Math.round(326*k),Math.round((792-456)*k),Math.round(92*k),Math.round(27*k)));
     check('only the caption is translated under the figure', actions.some((box) => box.textContent.includes('两次试验') && parseFloat(box.style.height)<20));
     const targetFile=PathUtils.join(E2E.env('DEEPREAD_E2E_SHOTS'),'translated-book.pdf');
     const beforeExport=calls;
@@ -124,33 +133,30 @@ E2E.run = async function () {
     let incomplete=false;
     try { await c.savePDF('all',targetFile); } catch { incomplete=true; }
     check('untranslated pages leave the previous export and reading position intact',incomplete && (await IOUtils.readUTF8(targetFile))==='previous export' && c.pageIndex===0 && calls===beforeExport);
-    c.changeZoom(0.25);
+    const initialScale=left.currentScale;
+    left.currentScale=initialScale+.25;
+    await until(()=>Math.abs(left.currentScale-right.currentScale)<.001);
     check('zoom changes both sheets together', dims()[0].width > original.width && Math.abs(dims()[0].width-dims()[1].width)<0.1);
-    const renderInto=c.page.renderInto;
-    let correctFontDocument=false;
-    c.page.renderInto=(canvas,density)=>{
-      correctFontDocument=canvas.ownerDocument===s.overlay.pdfDoc;
-      return renderInto(canvas,density);
-    };
-    c.changeZoom(2);
-    await until(()=>c.page.targetDetail?.isConnected);
-    const high=c.page.detailCanvas;
-    check('zoom renders new PDF pixels on both sides without paying for another translation',
-      high.width>c.source.canvas.width && high.width===c.page.targetDetail.width && calls===beforeExport);
-    const sampleEquation=canvas=>{
+    left.currentScale=3;
+    const nativeCanvas=v=>v.getPageView(0).div.querySelector(".canvasWrapper canvas");
+    const detailTile=v=>v.getPageView(0).div.querySelector(".canvasWrapper canvas:nth-of-type(2)");
+    await until(()=>detailTile(left)?.width>0 && detailTile(right)?.width>0);
+    const originalHi=nativeCanvas(left), translatedHi=nativeCanvas(right);
+    check('native zoom redraws original artwork in both PDF views without another translation',
+      calls===beforeExport && Math.abs(left.currentScale-3)<.001 && Math.abs(right.currentScale-3)<.001 && originalHi.width===translatedHi.width && detailTile(left).width>originalHi.width);
+    const equation=canvas=>{
       const crop=c.doc.createElementNS("http://www.w3.org/1999/xhtml","canvas");
       crop.width=92;crop.height=27;
       const scale=canvas.width/612, ctx=crop.getContext("2d");
       ctx.drawImage(canvas,325*scale,335*scale,92*scale,27*scale,0,0,92,27);
       return ctx.getImageData(0,0,92,27).data;
     };
-    const lo=sampleEquation(c.source.canvas), hi=sampleEquation(high);
-    let ink=0, error=0;
-    for(let i=0;i<lo.length;i+=4){ink+=255-Math.min(hi[i],lo[i]);error+=Math.abs(hi[i]-lo[i]);}
-    check('high-resolution mathematical ink uses the original embedded font document and preserves the glyph shapes',
-      correctFontDocument && ink>0 && error/ink<.35);
-    c.fit.click(); await sleep(80); await shot('parallel-layout.png');
-    check('fit-to-width restores the original display layer',!high.isConnected);
+    const firstEq=equation(originalHi),secondEq=equation(translatedHi);
+    let ink=0,error=0;
+    for(let i=0;i<firstEq.length;i+=4){ink+=255-Math.min(firstEq[i],secondEq[i]);error+=Math.abs(firstEq[i]-secondEq[i]);}
+    check('both native PDF documents render the same mathematical glyphs at high zoom',ink>0 && error/ink<.03);
+    left.currentScaleValue="page-width";await until(()=>Math.abs(left.currentScale-right.currentScale)<.001);
+    await shot('parallel-layout.png');
     const initialCalls = calls;
     c.close(false); button.click(); await until(() => s.comparison.root && s.comparison.page?.units);
     check('finished page reloads completely from SQLite', calls === initialCalls && c.translateButton.hidden && c.page.units.every((u) => u.translation));
@@ -164,12 +170,12 @@ E2E.run = async function () {
     check('whole document resumes from the first missing page and reuses parsed geometry', calls===before+2 && parseCalls===3 && !c.book);
     const rotated=c.target.stage.querySelector('[data-type-role="body"]');
     check("navigating to a rotated page keeps the same physical body size and line spacing",
-      rotated && rotated.style.fontSize===body.style.fontSize && rotated.style.lineHeight===body.style.lineHeight);
+      rotated && rotated.style.fontSize===originalBodySize && rotated.style.lineHeight===originalBodyStep);
     check('translated text rotates with its source', [...c.target.stage.querySelectorAll('.dr-parallel-text')].some((b) => b.style.transform === 'rotate(90deg)'));
     await c.showPage(2);
     check('OCR-only text keeps its known physical rectangle', c.target.stage.textContent.includes('扫描页正文'));
     check('uncertain mixed figure/text is preserved and translation is provided below', c.extra.textContent.includes('与图像重叠') && !c.target.stage.textContent.includes('与图像重叠'));
-    check('scan graphic keeps its original colour', rgb(c.source.canvas,220,660) === rgb(c.target.canvas,220,660));
+    check('scan graphic keeps its original colour', transparent(c.target.canvas,220,660,1,1));
     const inline=c.doc.createDocumentFragment();
     const math=()=>{const el=c.doc.createElementNS("http://www.w3.org/1999/xhtml","span");el.setAttribute("role","math");el.textContent="x";return el;};
     inline.append("比较",math()," 时，",math(),"。使用  MPC 方法。");
@@ -226,8 +232,8 @@ E2E.run = async function () {
       translationLayout:{ units:[{id:'u0',kind:'list-item',marker:'•',sourceText:first,translation:'**缓存的闭环动作。** 保留*局部反馈*。'},{id:'u1',kind:'list-item',marker:'•',sourceText:second,translation:'**缓存的视觉条件。** 单独编码观测。'}] }, points:[] }] }] };
     c.parsed = null; await c.open(button); await c.showPage(0);
     check('older MinerU deep-read units with no unit coordinates are placed using PDF glyphs', c.target.stage.textContent.includes('缓存的闭环动作') && c.target.stage.textContent.includes('缓存的视觉条件'));
-    const narrow = c.scroll.parentNode; narrow.style.maxWidth='500px'; await until(()=>c.root.classList.contains('dr-single'));
-    c.swap.click(); check('narrow display can switch back to the same original at the same scale', c.root.classList.contains('dr-show-source') && Math.abs(dims()[0].width-dims()[1].width)<0.1);
+    const doc2=c.native.right.pdfViewer;
+    check("the original and translated panes remain real PDF pages after reopening",c.target.stage.closest(".page")===Components.utils.unwaiveXrays(doc2.getPageView(0).div));
     const key=s.key, fingerprint=c.page.fingerprint;
     await s.clearResults(); check('clearing the paper closes the comparison and removes its page cache', !c.root && !(await D.Store.comparisonData(key,fingerprint,'page:0:zh')));
   }

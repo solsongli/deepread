@@ -1,23 +1,22 @@
 /* Physical page coordinates are in PDF viewport units. The same outer scale
  * is applied to the original raster and the translated sheet. AGPL-3.0-or-later */
-.deepread-parallel[open] { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 0;
-  box-sizing: border-box; width: 100%; max-width: none; height: 100%; max-height: none; padding: 0; margin: 0;
-  color: var(--dr-text); background: var(--dr-canvas); border: 0; font: 13px/1.45 var(--dr-font, sans-serif); }
-.deepread-parallel [hidden] { display: none !important; }
-.dr-parallel-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 7px 12px; background: var(--dr-surface); }
-.dr-parallel-bar strong { margin-inline-end: auto; }
-.dr-parallel-nav { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
-.deepread-parallel button, .dr-parallel-page-number, .dr-parallel-export { font: inherit; color: var(--dr-text); background: var(--dr-surface); padding: 3px 8px;
-  border: 1px solid var(--dr-border); border-radius: var(--dr-control-radius); min-height: 26px; box-sizing: border-box; }
-.deepread-parallel button { cursor: pointer; }
-.deepread-parallel button:disabled { opacity: 0.5; cursor: default; }
-.deepread-parallel button:not(:disabled):hover, .deepread-parallel .dr-parallel-translate { background: var(--dr-accent-soft); color: var(--dr-accent); }
-.dr-parallel-page-number { width: 4.6em; }
-.dr-parallel-status { background: var(--dr-surface); border-bottom: 1px solid var(--dr-border); padding: 0 12px 5px; color: var(--dr-muted); }
-.dr-parallel-scroll { flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.dr-parallel-sheets { box-sizing: border-box; display: flex; gap: 12px; justify-content: center; width: max-content; min-width: 100%; padding: 12px; align-items: flex-start; }
-.dr-parallel-sheet { position: relative; flex: none; overflow: hidden; background: white; box-shadow: 0 1px 5px #0003; }
-.dr-parallel-label { font-weight: 600; color: var(--dr-muted); margin-bottom: 5px; }
+#split-view.dr-native-active { padding-top: var(--dr-native-bar, 32px); box-sizing: border-box; }
+.dr-native-tools { position: absolute; z-index: 8; inset: 0 0 auto; padding: 0; margin: 0;
+  color: var(--dr-text); background: var(--dr-surface); font: 12px/1.4 var(--dr-font, sans-serif); }
+.deepread-parallel [hidden], .dr-native-more[hidden] { display:none !important; }
+.dr-parallel-bar { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; padding:4px 9px; border-bottom:1px solid var(--dr-border); }
+.dr-parallel-status { flex:1 1 14em; min-width:0; color:var(--dr-muted); }
+.deepread-parallel button, .dr-parallel-export, .dr-native-more { font:inherit; color:var(--dr-text); background:var(--dr-surface);
+  padding:3px 8px; border:1px solid var(--dr-border); border-radius:var(--dr-control-radius,4px); cursor:pointer; }
+.deepread-parallel button:disabled {opacity:.5;cursor:default;}
+.deepread-parallel button:focus-visible,.dr-native-more:focus-visible {outline:2px solid var(--dr-accent,#3975a3);}
+.dr-native-page { position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden; }
+.dr-native-page :is(.dr-parallel-text,.dr-native-more) {pointer-events:auto;}
+.dr-native-page:not([data-translated]) > .dr-parallel-stage {opacity:0;pointer-events:none;}
+.dr-native-page:not([data-translated]) .dr-parallel-text {pointer-events:none;}
+.dr-native-more {position:absolute;bottom:4px;right:8px;z-index:2;color:#24384c;background:#fff;font:12px sans-serif;}
+.dr-native-print-work {position:fixed;left:-30000px;top:0;right:auto;bottom:auto;width:1200px;height:1400px;overflow:visible;}
+.dr-native-paired {outline:1.5px solid #387ab2;}
 .dr-parallel-stage { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; }
 .dr-parallel-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .dr-parallel-text { position: absolute; box-sizing: border-box; margin: 0; padding: 0; overflow: hidden;
@@ -32,9 +31,6 @@
 .dr-parallel-marker { position: absolute; inset-inline-start: 0; top: 0; }
 .dr-parallel-text a[data-source-link] { text-decoration: none; cursor: pointer; }
 .dr-parallel-text a[data-source-link]:hover { text-decoration: underline; }
-.deepread-parallel button.dr-parallel-hit { position: absolute; min-height: 0; padding: 0; margin: 0; background: transparent; border: 0; border-radius: 0; }
-.deepread-parallel button.dr-parallel-hit:hover { background: transparent; }
-.deepread-parallel .dr-paired { outline: 1.5px solid var(--dr-accent); outline-offset: 1px; }
 .dr-parallel-text.dr-parallel-title { font-weight: bold; }
 .dr-parallel-heading { overflow: visible; }
 .dr-parallel-heading-number { display: inline-block; }
@@ -42,15 +38,12 @@
 .dr-parallel-text p { margin: 0; }
 .dr-parallel-text[data-type-role] .dr-parallel-copy > p + p { margin-block-start: var(--dr-paragraph-gap); }
 .deepread-parallel :is(button,input,summary,[tabindex]):focus-visible { outline: 2px solid var(--dr-accent); outline-offset: -2px; }
-.deepread-parallel.dr-single:not(.dr-show-source) .dr-parallel-column:first-child,
-.deepread-parallel.dr-single.dr-show-source .dr-parallel-column:last-child { visibility: hidden; position: absolute; left: -100000px; }
 .dr-parallel-extra { margin: 0 12px 12px; max-width: 70em; }
 .dr-parallel-unplaced { padding: 6px 12px; background: var(--dr-surface); border-radius: var(--dr-control-radius); }
 .dr-parallel-unplaced summary { cursor: pointer; }
 .dr-parallel-passage { padding-block: 8px; overflow-wrap: anywhere; }
 .dr-parallel-passage > div:first-child { color: var(--dr-muted); }
 
-.dr-parallel-stage > .dr-parallel-detail { pointer-events: none; }
 
 .dr-translation-options[open] { box-sizing: border-box; width: min(26rem, 94vw); max-height: 88vh;
   overflow: auto; margin: auto; padding: 1.25rem; color: var(--dr-text); background: var(--dr-surface);
@@ -64,3 +57,6 @@
 .dr-options-status { margin: 1em 0; min-height: 1.45em; color: var(--dr-muted); }
 .dr-options-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .5em; }
 .dr-options-actions button:first-child { margin-inline-end: auto; }
+
+.dr-native-page .dr-parallel-text[data-overflow] {overflow:hidden;scrollbar-width:none;}
+.dr-native-passages p {line-height:1.65;}

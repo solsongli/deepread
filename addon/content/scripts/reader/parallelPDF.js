@@ -53,9 +53,8 @@
 
   function withCanvases(doc, original) {
     const copy = doc.importNode(original, true);
-    for (const detail of copy.querySelectorAll(".dr-parallel-detail")) detail.remove();
     const canvases = [...copy.querySelectorAll("canvas")];
-    [...original.querySelectorAll("canvas:not(.dr-parallel-detail)")].forEach((src, i) =>
+    [...original.querySelectorAll("canvas")].forEach((src, i) =>
       canvases[i].getContext("2d").drawImage(src, 0, 0)
     );
     return copy;
@@ -86,7 +85,7 @@
     const style = element(doc, "style");
     style.textContent = `@page {size:${page.width}pt ${page.height}pt;margin:0} html,body {margin:0;padding:0;color:#171717;background:white} * {print-color-adjust:exact}
       .sheet {position:relative;width:${page.width}pt;height:${page.height}pt;overflow:hidden;margin:0;break-inside:avoid}
-      .dr-parallel-stage {transform:scale(1.3333333333)!important;transform-origin:0 0!important} .dr-paired {outline:none!important}
+      .dr-parallel-stage {transform:scale(1.3333333333)!important;transform-origin:0 0!important} .dr-native-paired {outline:none!important}
       .supplement {break-before:page;padding:24pt;font-size:11pt;line-height:1.55;overflow-wrap:anywhere} .supplement p {margin:.6em 0}
       .dr-parallel-text[data-type-role]:not([data-overflow]) {overflow:visible}
       .dr-parallel-line a {color:inherit;text-decoration:none} .dr-parallel-text[data-overflow] {overflow:hidden;scrollbar-width:none}`;
@@ -94,7 +93,6 @@
     const sheet = element(doc, "div");
     sheet.className = "sheet";
     const stage = withCanvases(doc, target.stage);
-    stage.classList.remove("dr-paired");
     for (const link of stage.querySelectorAll("a")) {
       const annotation = page.links?.[Number(link.dataset.sourceLink)];
       if (/^(?:https?:\/\/|mailto:)/i.test(annotation?.url || "")) link.href = annotation.url;
@@ -144,9 +142,27 @@
     doc.documentElement.getBoundingClientRect();
     await doc.fonts.ready;
     for (const {paragraph,type} of supplementStyles) DeepRead.ParallelTypeset.fitMath(paragraph,paragraph,type,4/3);
-    if (doc.querySelector("canvas[data-math-crop]")) {
+    const equations=(page.equations || []).filter(r=>r.width>0 && r.height>0 &&
+      !page.dirtyRects.some(b=>r.left < b.left+b.width && r.left+r.width > b.left &&
+        r.top < b.top+b.height && r.top+r.height > b.top));
+    if (equations.length || doc.querySelector("canvas[data-math-crop]")) {
       const detail=await DeepRead.ParallelDetail.raster(reader,page,4,signal);
-      if (detail && !signal.aborted) DeepRead.ParallelInk.sharpen(doc.body,detail,page);
+      if (detail && !signal.aborted) {
+        // Display equations remain in the original PDF in the native reader.
+        // At print time give these untouched regions the same density as inline math.
+        const sx=detail.width/page.width, sy=detail.height/page.height;
+        for (const r of equations) {
+          const x=Math.max(0,Math.floor(r.left*sx)), y=Math.max(0,Math.floor(r.top*sy));
+          const w=Math.min(detail.width,Math.ceil((r.left+r.width)*sx))-x;
+          const h=Math.min(detail.height,Math.ceil((r.top+r.height)*sy))-y;
+          if(w<=0 || h<=0)continue;
+          const crop=element(doc,"canvas");crop.width=w;crop.height=h;
+          Object.assign(crop.style,{position:"absolute",left:x/sx+"px",top:y/sy+"px",width:w/sx+"px",height:h/sy+"px"});
+          crop.getContext("2d").drawImage(detail,x,y,w,h,0,0,w,h);
+          stage.firstElementChild.after(crop);
+        }
+        DeepRead.ParallelInk.sharpen(doc.body,detail,page);
+      }
     }
   }
 

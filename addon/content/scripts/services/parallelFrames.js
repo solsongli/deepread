@@ -542,8 +542,11 @@
             ...(fig.chart_caption || []),
             ...(fig.captionFrames || []).map((frame) => frame.text)
           ]
-            .filter((s) => typeof s === "string")
-            .map(norm);
+            .filter((s) => typeof s === "string");
+          // A graphic's estimated box can enclose its caption. Match visible
+          // letters; locate() excludes trailing punctuation from its range.
+          const captionSpans = captions.map(text=>locate({...fig,text})).filter(Boolean);
+          const captionKeys = captions.map(norm);
           for (const cell of labels) {
             const first = cell.findIndex(
               (c) => /[A-Za-z]/u.test(glyph(c)) && !/math|symbol/iu.test(c.fontName || "")
@@ -554,7 +557,10 @@
               rect = union(run),
               x = (rect[0] + rect[2]) / 2,
               y = (rect[1] + rect[3]) / 2;
-            if (/^(?:Fig(?:ure)?\.?|Chart|Table)\s+\d+\b/iu.test(label) || captions.includes(norm(label)))
+            const lastLetter=run.findLast(c=>norm(glyph(c)));
+            if (/^(?:Fig(?:ure)?\.?|Chart|Table)\s+\d+\b/iu.test(label) ||
+                captionSpans.some(s=>ids.get(run[0])>=s.start && ids.get(lastLetter)<s.end) ||
+                captionKeys.includes(norm(label)))
               continue;
             if (
               x < box[0] - 3 ||

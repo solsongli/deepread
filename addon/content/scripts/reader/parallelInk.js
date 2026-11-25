@@ -145,10 +145,48 @@
     }
     return -1;
   }
+  // Gecko lays out native MathML at the surrounding text size. OCR expressions
+  // have no source pixels; use the bundled TeX parser for these only.
+  function typesetFormula(doc, display) {
+    const tex = display
+      .trim()
+      .replace(/^\$+|\$+$/gu, "")
+      .replace(/^\\\(|\\\)$/gu, "");
+    try {
+      const markup = DeepRead.Markdown.libs().katex.renderToString(tex, {
+        output: "mathml",
+        displayMode: false,
+        throwOnError: true,
+        trust: false
+      });
+      const tree = new DOMParser().parseFromString(markup, "application/xml");
+      const math = tree.getElementsByTagNameNS("http://www.w3.org/1998/Math/MathML", "math")[0];
+      if (math) {
+        const node = doc.importNode(math, true);
+        for (const source of node.querySelectorAll("annotation, annotation-xml")) source.remove();
+        node.setAttribute("aria-label", tex);
+        return node;
+      }
+    } catch {
+      /* Unrecognised notation retains its printed characters. */
+    }
+    const span = node(doc, "span"),
+      script = /([_^])(?:\{([^{}]*)\}|([\p{L}\d]))/gu;
+    let from = 0;
+    for (const part of tex.matchAll(script)) {
+      span.append(tex.slice(from, part.index));
+      const mark = node(doc, part[1] === "_" ? "sub" : "sup");
+      mark.textContent = part[2] ?? part[3];
+      span.append(mark);
+      from = part.index + part[0].length;
+    }
+    span.append(tex.slice(from));
+    return span;
+  }
   function formula(doc, token, unit, page, source, pixels) {
     const { x0, y0, x1, y1, kx, ky } = sampleBounds(token.clip, page, pixels);
     const tight = sampleBounds(token.rect, page, pixels);
-    if (x1 <= x0 || y1 <= y0) return doc.createTextNode(token.display);
+    if (x1 <= x0 || y1 <= y0) return typesetFormula(doc,token.display);
     // Trim only paper-coloured margins. Missing Unicode parentheses and radical
     // strokes inside this bounded region must remain part of the original symbol.
     const at = (y0 * pixels.width + x0) * 4,
@@ -197,12 +235,13 @@
     span.setAttribute("role", "math");
     span.setAttribute("aria-label", token.display);
     Object.assign(span.dataset, { widthEm, heightEm, depthEm });
-    Object.assign(span.style, { width: widthEm + "em", height: heightEm + "em", verticalAlign: -depthEm + "em" });
+    // Backing pixels change with zoom / device density. The inline box always
+    // occupies the same physical space, including in an unstyled print frame.
+    Object.assign(span.style, { display:"inline-block", position:"relative", lineHeight:"0",
+      width:widthEm+"em", height:heightEm+"em", verticalAlign:-depthEm+"em" });
+    Object.assign(bitmap.style, {display:"block",position:"absolute",inset:"0",width:"100%",height:"100%"});
     bitmap.setAttribute("aria-hidden", "true");
-    const accessible = node(doc, "span");
-    accessible.className = "dr-parallel-atom-text";
-    accessible.textContent = token.display;
-    span.append(bitmap, accessible);
+    span.append(bitmap);
     return span;
   }
   function drawCrop(bitmap, source, left, top, w, h, angle) {
@@ -247,10 +286,8 @@
           filled.append(formula(doc, token, unit, page, source, pixels));
           continue;
         }
-        if (token.kind === "tex") {
-          const tex = token.display.replace(/^\$|\$$|^\\\(|\\\)$/gu, "").trim();
-          filled.append(DeepRead.Overlay.inlineMarkdown(doc, "\\(" + tex + "\\)"));
-          continue;
+        if (token.kind==="tex" || token.kind==="math" || (token.kind==="literal" && /[_^]/u.test(token.display))) {
+          filled.append(typesetFormula(doc,token.display));continue;
         }
         const link = sourceLink(token, page),
           el = node(doc, link >= 0 ? "a" : "span");
