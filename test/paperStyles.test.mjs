@@ -28,7 +28,10 @@ assert.equal(role("Experimental design", { title: true, headingLevel: 3, size: 1
 assert.equal(role("2 Data", { title: true, headingLevel: 2 }), "heading");
 assert.equal(role("B.4 Preparation", { title: true }), "subheading");
 assert.equal(role("I. INTRODUCTION", { title: true }), "heading");
-assert.equal(role("C. Benefits of Action-Sequence Prediction", { title: true, allItalic: true }), "subheading");
+assert.equal(
+  role("C. Benefits of Action-Sequence Prediction", { title: true, allItalic: true }),
+  "subheading"
+);
 assert.equal(role("Observations", { title: true, headingLevel: 2 }), "heading");
 assert.equal(
   role("Table 2 summarizes the results.", { styled: "**Table 2** summarizes the results." }),
@@ -87,17 +90,25 @@ const a = paragraph(40),
   c = paragraph(143, 1),
   other = paragraph(40, 2, { rect: geometry(40, 210) });
 F.arrange([a, other, b, c], page, () => false);
-assert.equal(b.top - a.top - a.metrics.height, 4.5);
-assert.equal(c.top - b.top - b.metrics.height, 4.5);
-assert.equal(a.group, b.group);
-assert.notEqual(other.group, a.group);
+assert.deepEqual(
+  [a.top, b.top, c.top, other.top],
+  [40, 90, 143, 40],
+  "a shorter translation leaves the following paragraph at its source position in each column"
+);
 assert.equal(a.overflow, false);
 assert.equal(c.overflow, false);
-const above = paragraph(20, 2),
-  below = paragraph(77, 2),
-  rule = geometry(66, 20, 160, 2);
-F.arrange([above, below], page, (r) => r.top < 68 && r.top + r.height > 66);
-assert.notEqual(above.group, below.group, "a display rule separates the two text areas");
+const above = paragraph(20, 4, {
+  metrics: {
+    height: 60,
+    inkHeight: 57,
+    wide: false,
+    lines: [0, 15, 30, 45].map((top) => ({ left: 0, top, width: 160, height: 12 }))
+  }
+});
+const below = paragraph(82);
+F.arrange([above, below], page, (r) => r.top < 70 && r.top + r.height > 66);
+assert.equal(below.top, 82, "text below fixed artwork keeps its own source position");
+assert.ok(above.overflow && above.top + above.height <= 66, "the final row cannot paint across a rule");
 const huge = paragraph(40, 60);
 F.arrange([huge], page, () => false);
 assert.equal(huge.overflow, true);
@@ -120,7 +131,11 @@ const centered = paragraph(30, 1, {
 });
 const insetBody = paragraph(57);
 F.arrange([centered, insetBody], page, () => false);
-assert.equal(centered.group, insetBody.group, "a centered heading stays with the correct column");
+assert.equal(
+  centered.paintRect.left + centered.paintRect.width / 2,
+  insetBody.paintRect.left + insetBody.paintRect.width / 2
+);
+assert.equal(insetBody.top, 57, "a short heading does not pull its paragraph upward");
 
 const gridLine = (baseline) => ({ size: 10, ux: 1, uy: 0, left: 8, right: 140, baseline });
 const anchorsForPrint = [gridLine(20), gridLine(35)];
@@ -142,15 +157,66 @@ assert.equal(
 );
 
 function narrowHeading() {
-  const entry = paragraph(35,2,{style:style.heading,rect:geometry(35,20,48,14),
-    unit:{source:"2 Score",rects:[[]]}});
-  entry.metrics.lines=[{},{}];
-  entry.metrics.rewrap=width=>({height:15,inkHeight:12,wide:false,lines:[{left:0,top:0,width,height:12}]});
+  const entry = paragraph(35, 2, {
+    style: style.heading,
+    rect: geometry(35, 20, 48, 14),
+    unit: { source: "2 Score", rects: [[]] }
+  });
+  entry.metrics.lines = [{}, {}];
+  entry.metrics.rewrap = (width) => ({
+    height: 15,
+    inkHeight: 12,
+    wide: false,
+    lines: [{ left: 0, top: 0, width, height: 12 }]
+  });
   return entry;
 }
-const narrow=narrowHeading();
-F.arrange([narrow,paragraph(62)],page,()=>false);
-assert.equal(narrow.metrics.lines.length,1,"a one-line heading uses available column width at its original font size");
-const blocked=narrowHeading();
-F.arrange([blocked,paragraph(62)],page,r=>r.left>=68 && r.top===35);
-assert.equal(blocked.frame.width,48,"a figure or rule beside the heading keeps its original area");
+const narrow = narrowHeading();
+F.arrange([narrow, paragraph(62)], page, () => false);
+assert.equal(
+  narrow.metrics.lines.length,
+  1,
+  "a one-line heading uses available column width at its original font size"
+);
+const blocked = narrowHeading();
+F.arrange([blocked, paragraph(62)], page, (r) => r.left >= 68 && r.top === 35);
+assert.equal(blocked.frame.width, 48, "a figure or rule beside the heading keeps its original area");
+
+// The same baseline anchor applies after crop offsets and quarter-turn rotation.
+const rotatedSource = geometry(30, 170, 25, 80);
+const rotated = paragraph(0, 1, {
+  rect: rotatedSource,
+  sourceRect: rotatedSource,
+  angle: 1,
+  unit: { source: "Rotated prose.", rect: [0, 0, 80, 30], sourceBaseline: 23, rects: [[]] },
+  metrics: {
+    height: 15,
+    inkHeight: 12,
+    firstBaseline: 9,
+    wide: false,
+    lines: [{ top: 0, left: 0, width: 66, height: 12 }]
+  }
+});
+F.arrange([rotated], { ...page, transform: [0, 1, 1, 0, 0, 0] }, () => false);
+assert.equal(rotated.top + 9, page.width - (170 + 25) + 7);
+const wide = paragraph(52, 2, { rect: geometry(52, 20, 320, 35) });
+const narrowBody = paragraph(10, 2, { rect: geometry(10, 20, 130, 39) });
+const afterFloat = paragraph(102, 2, { rect: geometry(102, 20, 320, 35) });
+F.arrange([afterFloat, wide, narrowBody], page, () => false);
+assert.deepEqual(
+  [narrowBody.top, wide.top, afterFloat.top],
+  [10, 52, 102],
+  "the column transition and next paragraph retain their own anchors"
+);
+const pitches = new Map(),
+  sample = [0, 1, 2, 3, 4, 5].flatMap((i) =>
+    line("A long line of normal size text for this paragraph", 10).map((c, j) => ({
+      ...c,
+      rect: [j * 5, 280 - i * 12, j * 5 + 5, 290 - i * 12],
+      baseline: 282 - i * 12
+    }))
+  );
+S.countPage(sample, 1, new Map(), pitches);
+assert.equal(pitches.get(10).get(12), 5);
+assert.equal(S.make(10, 12).roles.body.step, 14);
+assert.equal(S.make(10, 12).roles.list.step, S.make(10, 12).roles.body.step);

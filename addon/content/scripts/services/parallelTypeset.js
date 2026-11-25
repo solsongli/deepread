@@ -124,44 +124,97 @@
     return line;
   }
 
-  function justifyChinese(content, width, firstInset, nextInset, size) {
-    const doc = content.ownerDocument;
-    for (const [i, row] of [...content.children].slice(0, -1).entries()) {
+  function justifyChinese(content, width, firstInset, nextInset, continues) {
+    const rows = Array.from(content.children);
+    for (const [i, row] of rows.entries()) {
+      const last = i === rows.length - 1;
+      if (last && !continues) break;
       const ink = row.firstChild,
-        slack = width - (i ? nextInset : firstInset) - ink.offsetWidth;
-      if (slack < 1 || slack > size * 1.35) continue;
-      const walker = doc.createTreeWalker(ink, 4),
-        runs = [];
-      let count = 0;
-      while (walker.nextNode()) {
-        const node = walker.currentNode;
-        if (node.parentElement.closest("a, code, .dr-paper-code, [role=math]")) continue;
-        const matches = [...node.data.matchAll(/\p{Script=Han}{2,}/gu)];
-        if (matches.length) runs.push({ node, matches });
-        for (const m of matches) count += [...m[0]].length - 1;
-      }
-      if (count < 5 || slack / count > size * 0.075) continue;
-      const spacing = (slack - 0.6) / count;
-      const touched = [];
-      for (const { node, matches } of runs) {
-        const frag = doc.createDocumentFragment();
-        let start = 0;
-        for (const m of matches) {
-          const chars = [...m[0]],
-            last = chars.pop(),
-            span = h(doc, "span");
-          span.style.letterSpacing = spacing + "px";
-          span.textContent = chars.join("");
-          frag.append(node.data.slice(start, m.index), span, last);
-          touched.push(span);
-          start = m.index + m[0].length;
-        }
-        frag.append(node.data.slice(start));
-        node.replaceWith(frag);
-      }
-      if (ink.offsetWidth + (i ? nextInset : firstInset) > width + 0.5)
-        for (const span of touched) span.style.letterSpacing = "";
+        room = width - (i ? nextInset : firstInset);
+      // Keep genuinely short tails and unbreakable math/identifiers natural.
+      if (room <= 0 || ink.offsetWidth > room + 0.6 || (last && ink.offsetWidth < room * 0.65)) continue;
+      // The zero-width baseline probe is an inline object. If it participates
+      // in justification, Gecko puts a gap before the very first Chinese glyph.
+      const text = h(content.ownerDocument, "span");
+      const children = Array.from(ink.childNodes);
+      if (children[0]?.classList?.contains("dr-parallel-baseline")) children.shift();
+      text.append(...children);
+      Object.assign(text.style, {
+        display: "inline-block",
+        width: room + "px",
+        whiteSpace: "nowrap",
+        verticalAlign: "baseline",
+        textAlign: "justify",
+        textAlignLast: "justify",
+        textJustify: "auto"
+      });
+      ink.append(text);
     }
+  }
+
+  // Match the source span when the text can fill that many lines comfortably.
+  // A fragment beside a float can end with a full line in mid-paragraph.
+  function sourceLinesFor(engine, p, size, width, indent, hang, sourceSpan, step, greedy, continues) {
+    const desired = 1 + Math.round(sourceSpan / step);
+    if (
+      greedy.length < 2 ||
+      (!continues && desired <= greedy.length) ||
+      greedy.length > desired + 1 ||
+      greedy.slice(0, -1).some((line) => line.mandatory)
+    )
+      return greedy;
+    // Use full browser glyph advances: the DOM does not apply the line
+    // breaker's optional punctuation compression or extra CJK tracking.
+    const advance = new Float64Array(p.n + 1),
+      trim = new Uint32Array(p.n + 1);
+    for (let i = 0; i < p.n; i++) {
+      advance[i + 1] = advance[i] + (p.boxes.get(i)?.widthEm ?? p.nat[i]) * size;
+      trim[i + 1] = /\s/u.test(p.text[i]) ? trim[i] : i + 1;
+    }
+    const total = advance[p.n];
+    const minTail = Math.min(width * 0.2, size * 7);
+    const readable = continues
+      ? Math.floor(total / (width * 0.82))
+      : 1 + Math.floor((total - minTail) / (width * 0.84));
+    const count = Math.max(greedy.length, Math.min(desired, readable));
+    if (!continues && count === greedy.length) return greedy;
+    const breaks = [
+      0,
+      ...engine
+        .breakOpportunities(p.text, !!(indent || hang))
+        .map((b) => b.position)
+        .filter((n) => n > 0)
+    ];
+    const last = breaks.length - 1;
+    let states = new Map([[0, { cost: 0 }]]);
+    for (let row = 0; row < count; row++) {
+      const next = new Map(),
+        room = width - (row ? hang : indent),
+        remaining = count - row - 1;
+      for (const [from, state] of states) {
+        for (let to = remaining ? from + 1 : last; to <= last; to++) {
+          if (remaining && to === last) break;
+          const start = breaks[from],
+            end = breaks[to];
+          const ink = advance[Math.max(start, trim[end])] - advance[start];
+          if (ink > room + 0.1) break;
+          const terminal = !continues && !remaining;
+          const rest = total - advance[end];
+          if (remaining && rest < Math.max(0, remaining - 1) * width * 0.72) break;
+          if (ink < (terminal ? minTail : room * 0.72) || rest > (width + 0.5) * remaining + size) continue;
+          const gaps = engine.justifiableGaps(p, start, end);
+          const spread = terminal ? 0 : (room - ink) / Math.max(1, gaps);
+          if (spread > size * (continues ? 0.3 : 0.22)) continue;
+          const cost = state.cost + spread * spread;
+          if (!next.has(to) || next.get(to).cost > cost) next.set(to, { start, end, cost, previous: state });
+        }
+      }
+      if (!next.size) return greedy;
+      states = next;
+    }
+    const result = [];
+    for (let line = states.get(last); line?.previous; line = line.previous) result.push(line);
+    return result.length === count ? result.reverse() : greedy;
   }
 
   function inlineMath(box, fragment, type, ascent) {
@@ -211,7 +264,10 @@
     const doc = box.ownerDocument,
       api = engine(),
       original = type?.size || Math.max(1, sourceSize);
-    let width = parseFloat(box.style.width);
+    const scale=unit.size>0 ? sourceSize/unit.size : 1;
+    let width=parseFloat(box.style.width);
+    if (type && unit.justified && Number.isFinite(unit.columnRight))
+      width=Math.min(width,(unit.columnRight-unit.rect[0])*scale);
     const height = parseFloat(box.style.height);
     const ascent=type ? .84*original+.24*(type.step-original) : 0;
     if (type) {
@@ -234,7 +290,14 @@
     const content = h(doc, "div");
     content.className = "dr-parallel-copy";
     let marker;
-    if (unit.marker) {
+    // A printed subfigure tag can already be the first protected math object
+    // in an older translation. Leave that single tag at the source indent.
+    const token=unit.marker && unit.tokens?.[0];
+    const normMarker=value=>String(value || "").normalize("NFKC").replace(/^\(/u,"").trim();
+    const hasPrintedTag=token && /^\(?[A-Za-z0-9]{1,3}\)$/u.test(token.display) &&
+      normMarker(token.display)===normMarker(unit.marker) &&
+      unit.translation?.trimStart().replace(/^\*+/u,"").startsWith(token.id);
+    if (unit.marker && !(type && hasPrintedTag)) {
       marker = h(doc, "span");
       marker.className = "dr-parallel-marker";
       marker.textContent = unit.marker;
@@ -242,13 +305,14 @@
       box.append(marker);
     }
     box.append(content);
-    const markerInset = unit.marker ? (unit.markerIndent ?? (unit.hanging || 1.2)) * original : 0;
+    const markerInset = marker ? (unit.markerIndent ?? (unit.hanging || 1.2)) * original : 0;
     const nextInset = unit.marker
       ? (unit.hanging || unit.markerIndent || 1.2) * original
       : unit.role === "ref_text"
         ? unit.hanging * original
         : 0;
-    const firstInset = unit.marker ? markerInset : (unit.indent || 0) * original;
+    const firstInset = unit.marker ? markerInset : type?.role==="body" && unit.matched && unit.direction[0]>.99
+      ? Math.max(0,unit.rects[0][0]-unit.rect[0])*scale : (unit.indent || 0)*original;
     const sourceLines = unit.rects?.length || 1;
     let headingSize = original;
     if (!type && unit.documentTitle && unit.titleInsets && simple && /^zh(?:-|$)/i.test(box.lang)) {
@@ -304,6 +368,12 @@
     if (!simple) content.append(fragment);
     const cjkBody =
       !unit.title && !unit.caption && /\p{Script=Han}/u.test(material?.prepared.text || content.textContent);
+    const justify = !unit.centered && unit.justified && /^zh(?:-|$)/iu.test(box.lang) &&
+      /\p{Script=Han}/u.test(material?.prepared.text || content.textContent) &&
+      (!type || ["body","list","figureCaption","tableCaption","algorithmCaption"].includes(type.role));
+    const owner = unit.context?.findIndex(text=>text.trim()===unit.source.trim()) ?? -1;
+    const continues = justify && (unit.after || (owner>=0 && owner+1<unit.context.length)) &&
+      Math.abs(unit.rects.at(-1)[2]-unit.columnRight)<=unit.size*.3;
     const sourcePitch = Math.min(
       1.5,
       Math.max(1.05, (unit.caption || unit.title ? unit.pitch : unit.bodyPitch) || 1.2)
@@ -321,12 +391,13 @@
     const compactStep = Math.min(standardStep, original * Math.max(1.14, sourcePitch));
 
     let dimensions;
-    function paint(size, requestedStep) {
+    function paint(size, requestedStep, matchSourceHeight=true) {
       box.style.fontSize = size + "px";
       box.style.lineHeight = requestedStep + "px";
       if (!material) {
         content.style.paddingInlineStart = nextInset + "px";
         content.style.textIndent = firstInset - nextInset + "px";
+        if (justify) {content.style.textAlign="justify";content.style.textAlignLast="start";}
         const natural=content.offsetHeight;
         dimensions={height:natural,inkHeight:natural,wide:content.scrollWidth>width+1};
         return !dimensions.wide && natural<=height+.5;
@@ -334,7 +405,7 @@
 
       let measureWidth = width,
         rows = [],
-        excess = 0;
+        excess = 0, addedRow=false;
       if (unit.title && unit.centered && sourceLines > 1 && sourceLines <= 3) {
         // Balance the Chinese title across the source's line count, keeping
         // complete Western words and the original heading size.
@@ -349,10 +420,12 @@
         measureWidth = Math.min(width, hi + size * 0.4);
       }
       for (let pass = 0; pass < (type ? 8 : 4); pass++) {
-        const { lines } = api.TextLinebreak.layout(material.prepared, size, measureWidth, {
-          indent: firstInset,
-          hang: nextInset
-        });
+        let {lines}=api.TextLinebreak.layout(material.prepared,size,measureWidth,{indent:firstInset,hang:nextInset});
+        if (matchSourceHeight && justify && type?.role==="body" && sourceLines>1) {
+          const sourceSpan=(unit.rects[0][3]-unit.rects.at(-1)[3])*scale, normalCount=lines.length;
+          lines=sourceLinesFor(api.TextLinebreak,material.prepared,size,measureWidth,firstInset,nextInset,sourceSpan,requestedStep,lines,continues);
+          addedRow=lines.length>normalCount;
+        }
         rows = lines
           .filter((l) => l.end > l.start)
           .map((range, i) => {
@@ -396,6 +469,7 @@
       let step = requestedStep;
       if (!type) for (let i = 1; i < extents.length; i++) step = Math.max(step, extents[i - 1].below + extents[i].above);
       const occupied = first + Math.max(0, rows.length - 1) * step + last;
+      if (justify) justifyChinese(content,width,firstInset,nextInset,continues);
       const baselines = rows.map((row) => {
         const ink = row.firstChild,
           probe = ink.firstChild;
@@ -408,17 +482,16 @@
         row.firstChild.style.top = first - baselines[i] + "px";
         if (unit.centered) row.firstChild.style.left = Math.max(0, (width - row.firstChild.offsetWidth) / 2) + "px";
       });
-      dimensions={height:rows.length*step,inkHeight:occupied,wide:excess>1,excess,
+      dimensions={height:rows.length*step,inkHeight:occupied,firstBaseline:first,wide:excess>1,excess,addedRow,
         lines:rows.map((row,i)=>({left:i===0 && marker ? 0 : parseFloat(row.firstChild.style.left)||0,
-          top:i*step,width:row.firstChild.offsetWidth+(i===0 && marker ? firstInset : 0),
-          height:first+extents[i].below}))};
+          top:i*step+first-extents[i].above,width:row.firstChild.offsetWidth+(i===0 && marker ? firstInset : 0),
+          height:extents[i].above+extents[i].below}))};
       return !dimensions.wide && occupied<=height+.4;
     }
     if (type) {
-      const rewrap=newWidth=>{
+      const rewrap=(newWidth,matchSourceHeight=true)=>{
         width=newWidth;box.style.width=width+"px";
-        paint(type.size,type.step);
-        if (material && cjkBody && type.role==="body" && !unit.centered) justifyChinese(content,width,firstInset,nextInset,type.size);
+        paint(type.size,type.step,matchSourceHeight);
         return {...dimensions,rewrap};
       };
       return rewrap(width);
@@ -443,9 +516,6 @@
           : floor;
         fits = paint(chosen, compactStep);
       }
-    }
-    if (fits && material && cjkBody && unit.justified && !unit.centered) {
-      justifyChinese(content, width, firstInset, nextInset, parseFloat(box.style.fontSize));
     }
     if (!fits) markOverflow(box);
   }

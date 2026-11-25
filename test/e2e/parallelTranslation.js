@@ -103,8 +103,15 @@ E2E.run = async function () {
       doc.body.classList.contains("enable-vertical-split-view") && left.scrollMode===0 && right.scrollMode===0 &&
       !doc.querySelector(".dr-parallel-next,dialog.deepread-parallel") && !doc.querySelector("dialog[open]"));
     const pair=actions[0];pair.dispatchEvent(new c.surface.doc.defaultView.PointerEvent("pointermove",{bubbles:true}));
-    check("hovering a translation marks the matching source without intercepting native selection",
-      pair.classList.contains("dr-native-paired") && native.outline?.isConnected && native.outline.style.pointerEvents==="none");
+    const relative=o=>{
+      const div=o.parentNode,b=o.getBoundingClientRect(),p=div.getBoundingClientRect();
+      return [(b.left-p.left-div.clientLeft)/div.clientWidth*c.page.width,(b.top-p.top-div.clientTop)/div.clientHeight*c.page.height,
+        b.width/div.clientWidth*c.page.width,b.height/div.clientHeight*c.page.height];
+    };
+    const sourceRect=pair.dataset.sourceRect.split(" ").map(Number);
+    check("both hover outlines use the full physical source rectangle without blocking selection",
+      native.marked===pair && native.outlines?.length===2 && native.outlines.every(o=>o.isConnected &&
+        o.style.pointerEvents==="none" && relative(o).every((v,i)=>Math.abs(v-sourceRect[i])<.1)));
     native.clearHighlight();
     const dims=()=>[left.getPageView(0).div,right.getPageView(0).div].map(el=>el.getBoundingClientRect());
     const [original,target]=dims();
@@ -118,11 +125,39 @@ E2E.run = async function () {
       !!body && !!cap && parseFloat(body.style.fontSize)===paperStyle.body.size &&
       parseFloat(cap.style.fontSize)===paperStyle.figureCaption.size && parseFloat(body.style.lineHeight)===paperStyle.body.step);
     const baseProbes=list.map(el=>[...el.querySelectorAll(".dr-parallel-baseline")].map(p=>p.getBoxQuads({relativeTo:c.target.stage})[0].p1.y));
-    check("adjacent list items have the fixed paragraph gap in the actual baseline positions",
-      list[0].dataset.flow===list[1].dataset.flow && Math.abs(baseProbes[1][0]-baseProbes[0].at(-1)-paperStyle.list.step-paperStyle.list.after)<.1);
+    const listUnits=c.page.units.filter(u=>u.marker==="•");
+    check("the first baseline of each translated list item stays on its own original line", listUnits.length===2 &&
+      listUnits.every((u,i)=>Math.abs(baseProbes[i][0]-(c.page.transform[3]*u.sourceBaseline+c.page.transform[5]))<.1));
     const origin=c.target.stage.getBoundingClientRect(), scale=origin.width/c.page.width;
     check('left-column text begins at the matching PDF coordinate', Math.abs((list[0].getBoundingClientRect().x-origin.x)/scale - 44)<1);
     check('right column stays in the right column', actions.some((box) => box.textContent.includes('两组实验') && parseFloat(box.style.left) > 310));
+    const typesetDoc=c.surface.doc,stage=c.target.stage;
+    function sampleMargins(justified){
+      const box=typesetDoc.createElementNS("http://www.w3.org/1999/xhtml","div");
+      box.className="dr-parallel-text";box.style.cssText="left:0;top:0;width:149px;height:240px;visibility:hidden";
+      D.PaperType.apply(box,"zh");stage.append(box);
+      try{
+        const sample=typesetDoc.createDocumentFragment();
+        sample.append("中文段落对齐时保留");
+        const link=typesetDoc.createElementNS("http://www.w3.org/1999/xhtml","a");link.dataset.sourceLink="0";link.textContent="GridNet";sample.append(link);
+        sample.append("的引用和原文字重。可见的行尾使用同一栏宽，各个段落依然从自己的位置起排。最后一行自然收尾。");
+        const unit={source:"A printed passage.",matched:true,justified,columnRight:149,
+          direction:[1,0],rect:[0,0,149,90],rects:[[0,80,149,90],[0,68,149,78],[0,56,78,66]],size:10,typeRole:"body"};
+        D.ParallelTypeset.draw(box,unit,sample,10,paperStyle.body);
+        const base=box.getBoundingClientRect(), scale=base.width/149;
+        const edges=Array.from(box.querySelectorAll(".dr-parallel-grid-line"),row=>{
+          const walker=typesetDoc.createTreeWalker(row,4), leaves=[],range=typesetDoc.createRange();
+          while(walker.nextNode()){if(!walker.currentNode.data.trim())continue;range.selectNodeContents(walker.currentNode);leaves.push(range.getBoundingClientRect());}
+          return [(Math.min(...leaves.map(r=>r.left))-base.left)/scale,(base.right-Math.max(...leaves.map(r=>r.right)))/scale];
+        });
+        return {edges,link:box.querySelector("a")?.textContent};
+      }finally{box.remove();}
+    }
+    const flush=sampleMargins(true),ragged=sampleMargins(false);
+    check("real Chinese glyph runs reach both margins of source-justified lines, with a natural final line",
+      flush.edges.length>=3 && flush.edges.slice(0,-1).every(([l,r])=>Math.abs(l)<.15 && Math.abs(r)<.15) &&
+      flush.edges.at(-1)[1]>1 && flush.link==="GridNet");
+    check("a ragged source keeps natural line endings",ragged.edges.slice(0,-1).some(([,end])=>end>1));
     const k = c.source.canvas.width / 612;
     check('original graph rectangle and its interior labels are pixel-identical on the translated sheet', transparent(c.target.canvas,Math.round(44*k),Math.round((792-540)*k),Math.round(216*k),Math.round(158*k)));
     check('display equation is preserved pixel-for-pixel', transparent(c.target.canvas,Math.round(326*k),Math.round((792-456)*k),Math.round(92*k),Math.round(27*k)));

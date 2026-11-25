@@ -16,7 +16,6 @@
 .dr-native-page:not([data-translated]) .dr-parallel-text {pointer-events:none;}
 .dr-native-more {position:absolute;bottom:4px;right:8px;z-index:2;color:#24384c;background:#fff;font:12px sans-serif;}
 .dr-native-print-work {position:fixed;left:-30000px;top:0;right:auto;bottom:auto;width:1200px;height:1400px;overflow:visible;}
-.dr-native-paired {outline:1.5px solid #387ab2;}
 .dr-parallel-stage { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; }
 .dr-parallel-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .dr-parallel-text { position: absolute; box-sizing: border-box; margin: 0; padding: 0; overflow: hidden;
@@ -29,6 +28,7 @@
 .dr-parallel-baseline { display: inline-block; width: 0; height: 0; padding: 0; margin: 0; vertical-align: baseline; }
 .dr-parallel-copy { padding: 0; margin: 0; }
 .dr-parallel-marker { position: absolute; inset-inline-start: 0; top: 0; }
+.dr-parallel-line .dr-paper-code { white-space: pre; }
 .dr-parallel-text a[data-source-link] { text-decoration: none; cursor: pointer; }
 .dr-parallel-text a[data-source-link]:hover { text-decoration: underline; }
 .dr-parallel-text.dr-parallel-title { font-weight: bold; }

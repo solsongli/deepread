@@ -244,6 +244,8 @@
     }
     painted(s) {
       if (!this.ready || this.pages.get(s.index) !== s) return;
+      if (this.marked && (Components.utils.isDeadWrapper(this.marked) || !this.marked.isConnected))
+        this.clearHighlight();
       // The real PDF.js page beneath the overlay owns figures, display
       // equations, annotations and zoom. Keep just the erased English ink
       // and local label patches in our backing canvas.
@@ -322,48 +324,52 @@
       else surface.promise?.then(apply).catch(() => {});
     }
     clearHighlight() {
-      this.outline?.remove();
-      this.outline = null;
-      if (this.marked && !Components.utils.isDeadWrapper(this.marked))
-        this.marked.classList.remove("dr-native-paired");
+      for (const outline of this.outlines || [])
+        if (!Components.utils.isDeadWrapper(outline)) outline.remove();
+      this.outlines = null;
       this.marked = null;
     }
     highlight(side, event) {
       const node = event.target.closest?.(".page[data-page-number]");
       const index = Number(node?.dataset.pageNumber) - 1,
         s = this.pages.get(index);
-      if (!s?.page) {
+      if (!s?.page || !node.clientWidth || !node.clientHeight) {
         this.clearHighlight();
         return;
       }
-      const left = this.left.pdfViewer.getPageView(index)?.div;
-      if (!left) return;
-      let block;
-      if (side === 1) block = event.target.closest?.(".dr-parallel-text[data-source-rect]");
-      else {
-        const r = left.getBoundingClientRect(),
-          x = ((event.clientX - r.left - left.clientLeft) * s.page.width) / left.clientWidth,
-          y = ((event.clientY - r.top - left.clientTop) * s.page.height) / left.clientHeight;
+      let block = side === 1 && event.target.closest?.(".dr-parallel-text[data-source-rect]");
+      if (!block) {
+        const rect = node.getBoundingClientRect(),
+          x = ((event.clientX - rect.left - node.clientLeft) * s.page.width) / node.clientWidth,
+          y = ((event.clientY - rect.top - node.clientTop) * s.page.height) / node.clientHeight;
         block = [...s.target.stage.querySelectorAll("[data-source-rect]")].find((b) => {
           const [l, t, w, h] = b.dataset.sourceRect.split(" ").map(Number);
           return x >= l && x <= l + w && y >= t && y <= t + h;
         });
       }
-      if (block === this.marked) return;
+      if (block && block === this.marked && this.outlines?.every((o) => o.isConnected)) return;
       this.clearHighlight();
       if (!block) return;
       const [x, y, w, h] = block.dataset.sourceRect.split(" ").map(Number);
-      const outline = (this.outline = element(left.ownerDocument, "div", ""));
-      outline.style.cssText = "position:absolute;pointer-events:none;z-index:5;outline:1.5px solid #387ab2;";
-      Object.assign(outline.style, {
-        left: (x / s.page.width) * 100 + "%",
-        top: (y / s.page.height) * 100 + "%",
-        width: (w / s.page.width) * 100 + "%",
-        height: (h / s.page.height) * 100 + "%"
-      });
-      left.append(outline);
+      const pages = [this.left.pdfViewer,this.right.pdfViewer].map(v=>v.getPageView(index)?.div);
+      if (!pages.every(Boolean)) return;
+      const outlines = [];
+      for (const div of pages) {
+        const outline = element(div.ownerDocument, "div", "dr-native-outline");
+        outline.setAttribute("aria-hidden", "true");
+        outline.style.cssText =
+          "position:absolute;pointer-events:none;z-index:5;outline:1.5px solid #387ab2;";
+        Object.assign(outline.style, {
+          left: (x / s.page.width) * 100 + "%",
+          top: (y / s.page.height) * 100 + "%",
+          width: (w / s.page.width) * 100 + "%",
+          height: (h / s.page.height) * 100 + "%"
+        });
+        div.append(outline);
+        outlines.push(outline);
+      }
+      this.outlines = outlines;
       this.marked = block;
-      block.classList.add("dr-native-paired");
     }
     close(restore = true) {
       this.closed = true;

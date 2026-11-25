@@ -89,6 +89,24 @@
     return rects;
   }
 
+  function firstBaseline(chars, line, size) {
+    if (!line) return;
+    // A superscript or an inline fraction may precede the first word.
+    // Use normal-size glyphs on this physical line to recover its writing baseline.
+    const values = chars
+      .filter(
+        (c) =>
+          valid(c.rect) &&
+          Number.isFinite(c.baseline) &&
+          c.fontSize >= size * 0.84 &&
+          c.fontSize <= size * 1.2 &&
+          inside(line, (c.rect[0] + c.rect[2]) / 2, (c.rect[1] + c.rect[3]) / 2, 0.25)
+      )
+      .map((c) => c.baseline)
+      .sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+  }
+
   function markerLength(chars, marker) {
     if (!marker) return 0;
     let i = 0, prefix = "";
@@ -587,6 +605,7 @@
           rects,
           size,
           direction: [Math.cos(angle), Math.sin(angle)],
+          sourceBaseline: !orient ? firstBaseline(bodyChars,rects[0],size) : undefined,
           pitch: pitches[Math.floor(pitches.length / 2)],
           title: type === "title",
           caption,
@@ -763,10 +782,15 @@
               ];
               return obstructed(mask, 0) ? line : mask;
             });
-        const textLines = unit.rects.slice(0, -1);
-        unit.justified =
-          textLines.length >= 2 &&
-          textLines.filter((line) => r[2] - line[2] < unit.size).length > textLines.length / 2;
+        // The column measure is the common edge of full lines. Optical
+        // punctuation can protrude slightly beyond it; the last line is free.
+        const ends = unit.rects.slice(0,-1).map(line=>line[2]).sort((a,b)=>a-b);
+        const edge = ends[Math.floor((ends.length-1)/2)];
+        const tolerance = unit.size*0.30;
+        unit.justified = ends.length>=2 && unit.direction[0]>.99 &&
+          r[2]-edge<=unit.size*.55 && ends.filter(x=>Math.abs(x-edge)<=tolerance).length>ends.length/2;
+        if (unit.justified) unit.columnRight=edge;
+
       }
     }
     const bodyPitches = new Map();

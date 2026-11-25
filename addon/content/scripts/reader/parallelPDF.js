@@ -85,7 +85,7 @@
     const style = element(doc, "style");
     style.textContent = `@page {size:${page.width}pt ${page.height}pt;margin:0} html,body {margin:0;padding:0;color:#171717;background:white} * {print-color-adjust:exact}
       .sheet {position:relative;width:${page.width}pt;height:${page.height}pt;overflow:hidden;margin:0;break-inside:avoid}
-      .dr-parallel-stage {transform:scale(1.3333333333)!important;transform-origin:0 0!important} .dr-native-paired {outline:none!important}
+      .dr-parallel-stage {transform:scale(1.3333333333)!important;transform-origin:0 0!important}
       .supplement {break-before:page;padding:24pt;font-size:11pt;line-height:1.55;overflow-wrap:anywhere} .supplement p {margin:.6em 0}
       .dr-parallel-text[data-type-role]:not([data-overflow]) {overflow:visible}
       .dr-parallel-line a {color:inherit;text-decoration:none} .dr-parallel-text[data-overflow] {overflow:hidden;scrollbar-width:none}`;

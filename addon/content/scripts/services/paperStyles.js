@@ -7,7 +7,7 @@
   const captionLead =
     /^(fig(?:ure)?\.?|tab(?:le)?\.?|chart|algorithm|图|圖|表|算法)\s*(?:[A-Z]?\d+(?:[.\-]\d+)*[a-z]?|[IVXLCDM]+)(?=[\s.:：、—–-]|[\u3400-\u9fff]|$)/iu;
 
-  function make(base = 10) {
+  function make(base = 10, proseStep) {
     const rows = {
       body: [1.025, 1.5, 0.45, 0.45],
       list: [1.025, 1.5, 0.25, 0.25],
@@ -34,15 +34,25 @@
         weight
       };
     }
+    if (proseStep) {
+      // Keep one rhythm for prose across the paper. In tightly set Latin
+      // text reserve a fifth of an em of leading for Chinese and inline math.
+      const step=Math.max(proseStep,Math.min(roles.body.step,proseStep+base*.2));
+      roles.body.step=roles.list.step=quarter(step);
+    }
     return { base, roles };
   }
   const fallback = make();
 
-  function countPage(chars, scale, counts) {
-    let line = [];
+  function countPage(chars, scale, counts, leading) {
+    let line = [],
+      previous;
     function finish() {
       const letters = line.filter((c) => /[\p{L}]/u.test(c.u || c.c || ""));
-      if (letters.length < 22 || line.some((c) => c.rotation || c.diagonal)) return;
+      if (letters.length < 22 || line.some((c) => c.rotation || c.diagonal)) {
+        previous = null;
+        return;
+      }
       const sizes = new Map();
       for (const c of letters) {
         const size = quarter(c.fontSize * scale);
@@ -52,6 +62,26 @@
       if (dominant && dominant[1] >= letters.length * 0.55) {
         const [size, n] = dominant;
         counts.set(size, (counts.get(size) || 0) + Math.min(65, n));
+        if (leading) {
+          const prose = letters.filter(
+            (c) => quarter(c.fontSize * scale) === size && c.rect && Number.isFinite(c.baseline)
+          );
+          if (!prose.length) {
+            previous = null;
+            return;
+          }
+          const y = prose.map((c) => c.baseline * scale).sort((a, b) => a - b)[Math.floor(prose.length / 2)];
+          const left = prose[0].rect[0] * scale;
+          if (previous?.size === size && Math.abs(previous.left - left) < size * 1.7) {
+            const step = Math.round((previous.y - y) * 100) / 100;
+            if (step >= size * 1.04 && step <= size * 1.85) {
+              if (!leading.has(size)) leading.set(size, new Map());
+              const votes = leading.get(size);
+              votes.set(step, (votes.get(step) || 0) + 1);
+            }
+          }
+          previous = { size, y, left };
+        }
       }
     }
     for (const c of chars) {
@@ -76,7 +106,8 @@
       [0, 1, 2, 3, Math.floor(count * 0.32), Math.floor(count * 0.58)].filter((i) => i < count)
     );
     state.promise = (async () => {
-      const counts = new Map();
+      const counts = new Map(),
+        leading = new Map();
       for (const index of pages) {
         try {
           const [data, page] = await Promise.all([
@@ -84,13 +115,15 @@
             adapter.getPage(index + 1)
           ]);
           const t = page.getViewport({ scale: 1 }).transform;
-          countPage(data.chars || [], Math.hypot(t[0], t[1]), counts);
+          countPage(data.chars || [], Math.hypot(t[0], t[1]), counts, leading);
         } catch (error) {
           DeepRead.log?.("No type sample on page " + (index + 1), String(error));
         }
       }
       const winner = [...counts].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
-      return (state.profile = make(winner?.[0] || 10));
+      const size = winner?.[0] || 10;
+      const pitch = [...(leading.get(size) || [])].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+      return (state.profile = make(size, pitch?.[1] >= 4 ? pitch[0] : null));
     })();
     sessions.set(session, state);
     return state.promise;

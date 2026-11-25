@@ -961,7 +961,7 @@
           boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:["documentTitle","heading","subheading","metadata"].includes(type.role) && u.centered};
         const metrics=DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment,
           u.size*Math.hypot(page.transform[0],page.transform[1]),type);
-        frames.push({unit:u,block,angle,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics});
+        frames.push({unit:u,block,angle,sourceRect:originalRect,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics});
         if (block.dataset.overflow) page.supplements.push(u);
         block.dataset.sourceRect=[originalRect.left,originalRect.top,originalRect.width,originalRect.height].join(" ");
       }
