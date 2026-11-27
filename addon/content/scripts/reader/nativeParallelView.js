@@ -225,8 +225,14 @@
       this.pages.set(index, surface);
       this.mount(surface);
       surface.promise = this.reader.compose(surface).then(() => {
-        if (!surface.controller.signal.aborted) this.mount(surface);
+        if (surface.controller.signal.aborted) return null;
+        this.mount(surface);
         return surface;
+      }, (error) => {
+        // A page leaves the render window when the split changes scale or
+        // the reader jumps. PDF.js rejects that render, but the split is open.
+        if (surface.controller.signal.aborted) return null;
+        throw error;
       });
       return surface.promise;
     }

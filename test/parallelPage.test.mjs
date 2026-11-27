@@ -330,3 +330,66 @@ console.log("parallelPage: verified interval and dimensional-prose cache migrati
   assert.equal(requests[0].reasoningEffort,"low");
   assert.match(u.translation,/即使该点置信度很高/);
 }
+
+{
+  const printedLine = (text, x, y) => {
+    const result = at(text, x, y);
+    result.at(-1).lineBreakAfter = true;
+    return result;
+  };
+  const diagram = D.ParallelPage.plan({
+    view: [0, 0, 300, 240],
+    items: [
+      {
+        type: "image",
+        page_idx: 0,
+        bbox: [90, 120, 930, 735],
+        image_caption: ["Figure 2. A diagram with two labels."]
+      }
+    ],
+    chars: [
+      ...printedLine("Model input", 35, 160),
+      ...printedLine("Model output", 170, 160),
+      ...printedLine("Figure 2. A diagram with two labels.", 32, 72)
+    ],
+    nativeParser: true
+  });
+  const label = diagram.find((u) => u.source === "Model input");
+  assert.equal(label?.visualOwner, "item:0");
+  assert.ok(label.placed, "a PDF-native diagram label is allowed inside its own image");
+  const makeRow = (cells, y) => {
+    const glyphs = cells.flatMap((value, i) => at(value, [28, 142, 268][i], y));
+    glyphs.at(-1).lineBreakAfter = true;
+    return glyphs;
+  };
+  const caption = "Table 1. Runtime and memory results for the measured methods.";
+  const table = D.ParallelPage.plan({
+    view: [0, 0, 360, 260],
+    items: [{ type: "table", page_idx: 0, bbox: [60, 400, 940, 715], table_caption: [caption] }],
+    chars: [
+      ...makeRow(["Method", "Runtime", "Memory"], 218),
+      ...makeRow(["Baseline", "1.70", "24.8"], 203),
+      ...makeRow(["Proposed", "1.40", "18.2"], 188),
+      ...printedLine(caption, 27, 148)
+    ],
+    nativeParser: true
+  });
+  const headers = table.filter((u) => u.role === "table_label");
+  assert.deepEqual(
+    Array.from(headers, (u) => u.source),
+    ["Method", "Runtime", "Memory"]
+  );
+  assert.ok(headers.every((u) => u.placed && u.visualOwner === "item:0"));
+  assert.ok(
+    !table.some((u) => u.source === "1.70" || u.source === "24.8"),
+    "keep numeric table cells verbatim"
+  );
+}
+
+{
+  const source = "User: In what year was the singer who popularized ‘I’ll Keep the Lovelight Burning’ born?";
+  const unit = {source,modelText:"**User**"+source.slice(4),language:"zh",tokens:[]};
+  assert.ok(D.ParallelInline.valid(unit,"**用户**：唱红《I’ll Keep the Lovelight Burning》的歌手出生于哪一年？"));
+  assert.ok(!D.ParallelInline.valid(unit,"**User**: In what year was the singer who popularized ‘I’ll Keep the Lovelight Burning’ born?"));
+  assert.ok(!D.ParallelInline.valid(unit,"**用户**：In what year was the singer who popularized《I’ll Keep the Lovelight Burning》出生？"));
+}

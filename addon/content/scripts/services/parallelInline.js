@@ -467,6 +467,12 @@
     const fold = str => str.toLowerCase().replace(/[^a-z'-]+/gu, " ").trim();
     const haystack = " " + fold(source) + " ";
     const hasHan = /\p{Script=Han}/u.test(target);
+    const quotedTitles = hasHan
+      ? Array.from(source.matchAll(/[“"]([^“"\n]{2,120})[”"]|‘([^\n]{2,120}?)’(?=[\s.,!?;:)\]]|$)/gu),
+          match => match[1] || match[2])
+          .filter(title => (title.match(/\b[A-Z][a-z]+/g)?.length || 0) >= 3)
+          .map(title => " " + fold(title) + " ")
+      : [];
     for (const match of target.matchAll(phrase)) {
       // Official publication names are normally retained in bibliographies.
       const venue = /\b(?:Journal|Conference|Proceedings|Transactions|Symposium|Workshop|Press)\b/u.test(match[0]) &&
@@ -474,6 +480,7 @@
       if (venue) continue;
       const words = fold(match[0]);
       if (!haystack.includes(" " + words + " ") || !common.test(words)) continue;
+      if (quotedTitles.some(title => title.includes(" " + words + " "))) continue;
       const count = words.split(" ").length;
       if ((!hasHan && (count >= 2 || words === fold(source))) || (count >= 5 && /\b(?:the|is|are|that|we|our|was|were|with|this|these|can|have|has|which)\b/iu.test(words))) return true;
     }

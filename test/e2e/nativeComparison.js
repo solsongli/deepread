@@ -16,6 +16,21 @@ E2E.run = async function () {
   const D = Zotero.DeepRead;
   D.prefs.set("parser.provider", "builtin");
   D.prefs.set("llm.concurrency", 6);
+  // PDF.js rejects a paint after a jump removes the page from the viewport.
+  const abortedSurface = { controller: new (Zotero.getMainWindow().AbortController)(), index: 0 };
+  let rejectPaint;
+  const disposedSource = new D.NativeParallelView({
+    makeSurface: () => abortedSurface,
+    compose: () =>
+      new Promise((_, reject) => {
+        rejectPaint = reject;
+      })
+  });
+  disposedSource.right = { pdfViewer: { pagesRotation: 0, getPageView: () => null } };
+  const cancelled = disposedSource.ensure(0);
+  abortedSurface.controller.abort();
+  rejectPaint({ name: "RenderingCancelledException" });
+  check("discarding a virtual PDF page does not reject the comparison opening", (await cancelled) === null);
   const pdf = await D.ParallelPDF.create(),
     italic = await pdf.embedFont("Times-Italic"),
     roman = await pdf.embedFont("Times-Roman");
@@ -43,14 +58,17 @@ E2E.run = async function () {
   const doc = s.overlay.readerDoc,
     button = doc.querySelector(".dr-parallel-button");
   const original = D.LLM.complete;
-  let calls=0, inFlight=0, peak=0, resume;
+  let calls = 0,
+    inFlight = 0,
+    peak = 0,
+    resume;
   const gate = new Promise((resolve) => {
     resume = resolve;
   });
   D.LLM.complete = async (args) => {
     const rows = JSON.parse(args.messages[0].content.split("\n").slice(1).join("\n"));
     calls++;
-    peak=Math.max(peak,++inFlight);
+    peak = Math.max(peak, ++inFlight);
     await gate;
     inFlight--;
     return {
@@ -74,10 +92,10 @@ E2E.run = async function () {
       "opening the native reader incurs no model requests",
       calls === 0 && internal._state.splitType === "vertical"
     );
-    await D.Store.saveComparisonData(s.key,c.page.fingerprint,"terms:v1:zh",[]);
+    await D.Store.saveComparisonData(s.key, c.page.fingerprint, "terms:v1:zh", []);
     const translation = c.translateBook();
-    await wait(()=>inFlight===6,"six page requests run together");
-    check("whole translation can fill the configured request budget across short pages",peak===6);
+    await wait(() => inFlight === 6, "six page requests run together");
+    check("whole translation can fill the configured request budget across short pages", peak === 6);
     left.currentPageNumber = 5;
     await wait(
       () => right.currentPageNumber === 5 && n.pages.get(4)?.page?.units,
@@ -202,7 +220,7 @@ E2E.run = async function () {
       "Zotero can end comparison through its own split menu",
       !doc.querySelector(".dr-native-tools") && !internal._state.splitType
     );
-    return {checks:E2E.result.steps.length,calls,peak};
+    return { checks: E2E.result.steps.length, calls, peak };
   } finally {
     resume();
     D.LLM.complete = original;

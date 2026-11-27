@@ -439,7 +439,10 @@
     saved = []
   }) {
     chars = DeepRead.ParallelFrames.repairScripts(DeepRead.Typography.composeAccents(chars));
-    const recovered = DeepRead.ParallelFrames.recover(items, chars, view);
+    // Direct text-layer results have no service ids. Bind every recovered
+    // figure label and caption to its actual visual owner on this page.
+    const physicalItems = items.map((item,index) => item.id == null ? {...item,id:"item:"+index} : item);
+    const recovered = DeepRead.ParallelFrames.recover(physicalItems, chars, view);
     items = recovered.items;
     paragraphs = paragraphs.filter(p => !recovered.replaced.has(p.minerUid));
     const units = [],

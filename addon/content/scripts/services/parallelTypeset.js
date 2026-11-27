@@ -416,6 +416,7 @@
     const cjkBody =
       !unit.title && !unit.caption && /\p{Script=Han}/u.test(material?.prepared.text || content.textContent);
     const chinese = /^zh(?:-|$)/iu.test(box.lang) && /\p{Script=Han}/u.test(material?.prepared.text || content.textContent);
+    const tableRows = chinese && unit.verifiedLabel && unit.role === "table_label" && sourceLines>1;
     const preserveRows = chinese && type && sourceLines > 1 &&
       ["body","list","figureCaption","tableCaption","algorithmCaption","documentTitle","heading","subheading"].includes(type.role);
     const justify = !unit.centered && unit.justified && chinese &&
@@ -467,6 +468,11 @@
               firstInset,nextInset,desired,type.weight>=700 ? 3 : 4);
             if (balanced?.length>lines.length) {lines=balanced;compact=true;}
           }
+        }
+        if (matchSourceHeight && tableRows && normalCount <= sourceLines) {
+          const balanced=compactSourceLines(api.TextLinebreak,material.prepared,size,measureWidth,
+            firstInset,nextInset,sourceLines,2);
+          if (balanced && balanced.length>=lines.length) {lines=balanced;compact=true;}
         }
         addedRow=lines.length>normalCount;
         rows = lines

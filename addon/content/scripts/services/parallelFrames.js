@@ -142,7 +142,7 @@
       }
       return cells;
     };
-    function linedUp(a, b) {
+    function linedUp(a, b, inKnownTable = false) {
       if (!a || !b || a.cells.length < 3 || b.cells.length < 3) return false;
       const em = a.row[0].fontSize || 9;
       if (Math.abs(a.row[0].rect[1] - b.row[0].rect[1]) > em * 2.7) return false;
@@ -161,7 +161,7 @@
         /^\d+[.)]?$|^#$/u.test(text(a.cells[0])) &&
         /^\d+[.)]?$|^#$/u.test(text(b.cells[0])) &&
         aa[1][0] - aa[0][2] > em * 0.75;
-      return aligned >= 3 && (gutters >= 2 || (gutters >= 1 && numbered));
+      return aligned >= 3 && (inKnownTable || gutters >= 2 || (gutters >= 1 && numbered));
     }
     const printedRows = DeepRead.ParallelVisual.lines(chars);
     const claimedLabels = new Set();
@@ -170,6 +170,7 @@
     recoverContents();
     recoverPrintedLabels();
     recoverTables();
+    recoverMissingTableHeadings();
     recoverFigureLabels();
     recoverEquationNotes();
     splitWrappedParagraphs();
@@ -491,6 +492,86 @@
               continue;
             addFrame(run, s.item, "table_label", "cell-" + ids.get(run[0]));
           }
+      }
+    }
+
+    function recoverMissingTableHeadings() {
+      // The PDF text parser may keep a caption but drop small table cells.
+      // Recover only the header of a nearby aligned grid, preserving its data.
+      const alreadyOwned = new Set(additions.flatMap((frame) => frame.inlineGlyphs || []));
+      for (const table of items) {
+        if (table.type !== "table" || table.table_body || !table.bbox || !table.table_caption?.length) continue;
+        const cap = locate({ ...table, text: table.table_caption.join(" ") });
+        if (!cap) continue;
+        const box = union(chars.slice(cap.start, cap.end));
+        const candidates = printedRows
+          .map((row) => {
+            const inside = row.filter((c) => c.rect[0] >= box[0] - 8 && c.rect[2] <= box[2] + 8);
+            const cells = splitCells(inside);
+            return cells.length >= 3 ? { row: inside, cells, rect: union(inside) } : null;
+          })
+          .filter(Boolean);
+        let heading,
+          firstData,
+          distance = Infinity;
+        for (const [i, header] of candidates.entries()) {
+          if (header.cells.filter((cell) => /[a-z]{3}/iu.test(text(cell)) && !/\d/u.test(text(cell))).length < 2)
+            continue;
+          let j = i;
+          while (linedUp(candidates[j], candidates[j + 1], true)) j++;
+          if (j === i) continue;
+          const end = candidates[j];
+          const data = candidates
+            .slice(i + 1, j + 1)
+            .some((row) => row.cells.filter((cell) => /\d|[✓×≤≥±]|O\s*\(/u.test(text(cell))).length >= 2);
+          if (!data) continue;
+          const gap =
+            header.rect[3] < box[1]
+              ? box[1] - header.rect[3]
+              : end.rect[1] > box[3]
+                ? end.rect[1] - box[3]
+                : Infinity;
+          if (gap < distance && gap <= (header.row[0].fontSize || 8) * 4) {
+            heading = header;
+            firstData = candidates[i + 1];
+            distance = gap;
+          }
+        }
+        if (!heading) continue;
+        const extensions = printedRows
+          .filter((row) => {
+            const box = union(row);
+            return box[3] <= heading.rect[1] + 1 && box[1] >= firstData.rect[3] - 1;
+          })
+          .flatMap(splitCells);
+        for (const cell of heading.cells) {
+          const label = text(cell);
+          if (!/^[\p{L}\p{N}][\p{L}\p{N} .,()/-]*$/u.test(label) || !/[a-z]{3}/iu.test(label)) continue;
+          const box = union(cell);
+          const extra = extensions.find((run) => {
+            const b = union(run);
+            return (
+              /^[A-Za-z][A-Za-z -]+$/u.test(text(run)) &&
+              Math.abs(box[0] + box[2] - b[0] - b[2]) < cell[0].fontSize
+            );
+          });
+          const glyphs = extra ? [...cell, ...extra] : cell;
+          if (
+            glyphs.some(
+              (c) =>
+                alreadyOwned.has(c) ||
+                streams.some((s) => s && !replaced.has(s.id) && ids.get(c) >= s.start && ids.get(c) < s.end)
+            )
+          )
+            continue;
+          const joined = extra
+            ? [...cell.slice(0, -1), { ...cell.at(-1), lineBreakAfter: true }, ...extra]
+            : cell;
+          const frame = addFrame(joined, table, "table_label", "header-" + ids.get(cell[0]));
+          frame.visualOwner = table.id;
+          frame.flushLeft = !extra;
+          glyphs.forEach((c) => alreadyOwned.add(c));
+        }
       }
     }
 
