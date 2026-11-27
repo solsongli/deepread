@@ -811,6 +811,22 @@
                 Math.min(view[2], line[2] + pad),
                 Math.min(view[3], line[3] + pad)
               ];
+              // Some embedded fonts report a box for just the middle of the
+              // letters. Keep the text anchor, but erase the caps and descenders
+              // that fall outside the narrow box on the PDF canvas.
+              if (
+                pad && unit.direction[0] > 0.99 && !unit.verifiedLabel &&
+                (unit.role === "text" || unit.title || unit.caption) &&
+                line[3] - line[1] < unit.size * 0.58
+              ) {
+                const extent = [
+                  mask[0],
+                  Math.max(view[1], line[1] - unit.size * 0.28),
+                  mask[2],
+                  Math.min(view[3], line[3] + unit.size * 0.39)
+                ];
+                if (!obstructed(extent, 0)) return extent;
+              }
               return obstructed(mask, 0) ? line : mask;
             });
         // The column measure is the common edge of full lines. Optical

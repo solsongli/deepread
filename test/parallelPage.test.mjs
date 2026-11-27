@@ -97,6 +97,16 @@ console.log('parallelPage: inline PDF and OCR formulas, protected semantics, num
 // separate source position even when small capitals have two different sizes.
 const hv=[0,0,200,200];
 const at=(str,x,y)=>glyphs(str).map((c,i)=>({...c,rect:[x+i*5,y,x+i*5+5,y+10],baseline:y+2}));
+const shallowText='Capitals and descenders.';
+const shallowChars=at(shallowText,30,100).map(c=>({...c,rect:[c.rect[0],100,c.rect[2],104.5],baseline:100}));
+const shallowBlock={type:'text',page_idx:1,text:shallowText,bbox:[140,470,790,505]};
+const shallowPlan=items=>D.ParallelPage.plan({view:hv,items,chars:shallowChars})[0];
+const shallow=shallowPlan([shallowBlock]);
+assert.ok(shallow.placed && shallow.matched && shallow.masks[0][1]<98 && shallow.masks[0][3]>108);
+assert.deepEqual(Array.from(shallow.rects[0]),[30,100,150,104.5],'expanded erase mask keeps the source line anchor');
+const closeEquation={type:'equation',page_idx:1,bbox:[150,448,410,465]};
+const protectedLine=shallowPlan([shallowBlock,closeEquation]);
+assert.ok(protectedLine.placed && protectedLine.masks[0][3]<107,'an expanded erase mask does not touch the equation');
 const ht=at('II. METHODS',50,100);
 for (let i=5;i<ht.length;i++) ht[i].fontSize=7.9;
 const boxes=[
