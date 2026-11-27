@@ -158,6 +158,25 @@ E2E.run = async function () {
       flush.edges.length>=3 && flush.edges.slice(0,-1).every(([l,r])=>Math.abs(l)<.15 && Math.abs(r)<.15) &&
       flush.edges.at(-1)[1]>1 && flush.link==="GridNet");
     check("a ragged source keeps natural line endings",ragged.edges.slice(0,-1).some(([,end])=>end>1));
+    const shortText="考虑预测的不确定性，我们先验证模型的假设，再分析实验产生的误差。";
+    for(const typeRole of ["body","figureCaption","heading"]){
+      const box=typesetDoc.createElementNS("http://www.w3.org/1999/xhtml","div");
+      box.className="dr-parallel-text";box.style.cssText="left:0;top:0;width:480px;height:70px;visibility:hidden";
+      D.PaperType.apply(box,"zh");stage.append(box);
+      const sample=typesetDoc.createDocumentFragment();sample.append(shortText);
+      const type=paperStyle[typeRole], step=type.step;
+      const unit={source:"Source on three lines",matched:true,size:type.size,typeRole,direction:[1,0],
+        rect:[0,0,480,2*step+type.size],rects:[[0,2*step,480,2*step+type.size],[0,step,480,step+type.size],[0,0,340,type.size]]};
+      D.ParallelTypeset.draw(box,unit,sample,type.size,type);
+      const rows=Array.from(box.querySelectorAll(".dr-parallel-grid-line"));
+      check(typeRole+" uses three readable lines and keeps the full translation at the role font size",
+        rows.length===3 && rows.every(row=>row.textContent.length>=4 && row.firstChild.offsetWidth<box.clientWidth*.72) &&
+        rows.map(row=>row.textContent).join("")===shortText && parseFloat(box.style.fontSize)===type.size);
+      box.remove();
+    }
+    check("bundled serif and sans-serif typefaces are loaded for translation and export",
+      typesetDoc.fonts.check('400 12px "DeepRead Song"',"论文") &&
+      typesetDoc.fonts.check('700 12px "DeepRead Hei"',"论文"));
     const k = c.source.canvas.width / 612;
     check('original graph rectangle and its interior labels are pixel-identical on the translated sheet', transparent(c.target.canvas,Math.round(44*k),Math.round((792-540)*k),Math.round(216*k),Math.round(158*k)));
     check('display equation is preserved pixel-for-pixel', transparent(c.target.canvas,Math.round(326*k),Math.round((792-456)*k),Math.round(92*k),Math.round(27*k)));

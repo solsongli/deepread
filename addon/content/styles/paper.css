@@ -34,15 +34,17 @@
   unicode-range: U+00B7, U+2018-201D, U+2026, U+3000-303F, U+3400-9FFF, U+FF01-FF60;
   font-weight: 700;
 }
-/* A Kai face sets Chinese emphasis. The bundled heavier Song retains emphasis
-   where no Kai face is installed. Western italics belong to STIX Two Text. */
 @font-face {
-  font-family: "DeepRead Song";
-  src: local("Kaiti SC Regular"), local("STKaiti"), local("KaiTi"), local("AR PL UKai CN"),
-       url("../lib/paper-fonts/song-bold.woff2") format("woff2");
-  font-style: italic;
+  font-family: "DeepRead Hei";
+  src: url("../lib/paper-fonts/hei-text.woff2") format("woff2");
   font-weight: 400;
-  unicode-range: U+00B7, U+2018-201D, U+2026, U+2E80-9FFF, U+F900-FAFF, U+FF01-FF60, U+20000-323AF;
+  font-style: normal;
+}
+@font-face {
+  font-family: "DeepRead Hei";
+  src: url("../lib/paper-fonts/hei-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
 }
 .dr-paper {
   --dr-paper-code: "Liberation Mono", Consolas, Menlo, "Courier New", monospace;
@@ -60,7 +62,7 @@
   font-family: "DeepRead Roman", "Source Han Serif TC", "Noto Serif CJK TC", "Songti TC", "PMingLiU", serif;
 }
 .dr-paper.dr-paper-sans {
-  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "Liberation Sans", sans-serif;
+  font-family: "DeepRead Hei", "Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "Liberation Sans", sans-serif;
 }
 .dr-paper.dr-paper-sans:lang(zh-TW), .dr-paper.dr-paper-sans:lang(zh-Hant) {
   font-family: "Noto Sans CJK TC", "Source Han Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;

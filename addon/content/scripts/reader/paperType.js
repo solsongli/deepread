@@ -34,7 +34,10 @@
       const loading = state.sheet.then(() => {
         const styles = ["normal", "bold", "italic", "italic bold"];
         const loads = styles.map(style => doc.fonts.load(style + ' 12px "DeepRead Roman"', "Aa1"));
-        if (simplified) for (const style of styles) loads.push(doc.fonts.load(style + ' 12px "DeepRead Song"', "论文"));
+        for(const weight of ["400","700"]) {
+          loads.push(doc.fonts.load(weight+' 12px "DeepRead Hei"',simplified ? "论文Aa" : "Aa"));
+          if(simplified) loads.push(doc.fonts.load(weight+' 12px "DeepRead Song"',"论文"));
+        }
         return Promise.all(loads);
       }).catch(error => DeepRead.log("paper font unavailable; using the local fallback", String(error)));
       state.loads.set(simplified, loading);

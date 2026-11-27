@@ -304,6 +304,16 @@
     }
   }
 
+  const contactLabels = { homepage: "主页", correspondence: "通信作者", date: "日期" };
+  function contactTranslation(modelText, source, language) {
+    if (!/^zh(?:-CN|-Hans)?$/iu.test(language)) return "";
+    const prefix = /^\s*\*{0,3}(Homepage|Correspondence|Date)\s*:(?:\*{1,3})?\s*/iu.exec(modelText);
+    if (!prefix) return "";
+    const mail = /^Correspondence\s*:\s*[\w.%+'-]+@[\w.-]+\.[A-Za-z]{2,}\s*$/iu.test(source);
+    if (!mail && !/^(?:⟦D+\d+⟧\s*)+[.。]?$/u.test(modelText.slice(prefix[0].length))) return "";
+    return modelText.replace(prefix[1], contactLabels[prefix[1].toLowerCase()]).replace(/:/u, "：");
+  }
+
   function splitFrontmatter(sources, chars, view, authorArea, saved) {
     const physicalSources = [];
     for (const p of sources) {
@@ -351,20 +361,35 @@
           /@|\s·\s/u.test(p.paragraphText) && !p.translationLayout?.units?.some(u=>u.translation) &&
           !p.points?.some(point=>point.translation)) {
         const bounded = charactersIn(fromPermille(p.bbox, view), chars);
-        const run = match(bounded, p.paragraphText.replace(/\s·\s/gu," "));
+        const pieces = p.paragraphText.split(/\s·\s/u);
+        let run = match(bounded,pieces.join(" "));
+        // Some first-page fields sit on opposite sides of the abstract.
+        // Their merged parser box spans unrelated prose in between.
+        if (!run.length && pieces.length>1) {
+          const fields=pieces.map(part=>match(bounded,part));
+          const assigned=fields.flat();
+          if (fields.every(field=>field.length) && new Set(assigned).size===assigned.length) run=assigned;
+        }
         const text = normalized(glyphStream(run).text);
         const cached = run.length && saved?.some(record=>{
           try { return record.text && normalized(JSON.parse(record.identity)[0]) === text; }
           catch { return false; }
         });
         const lines = linesOf(run);
-        if (!cached && lines.length > 1) {
+        const hasContactFields = /(?:Homepage|Correspondence|Date)\s*:/iu.test(p.paragraphText);
+        if ((!cached || hasContactFields) && lines.length > 1) {
           const fields = lines.map(rect=>charactersIn(rect,run));
           const assigned = fields.flat();
           if (fields.every(field=>field.length) && assigned.length===run.length && new Set(assigned).size===run.length) {
-            for (const [i,field] of fields.entries()) physicalSources.push({...p, paragraphText:glyphStream(field).text.trim(),
-              inlineGlyphs:field, rects:[lines[i]], frontMatterLine:true,
-              minerUid:String(p.minerUid)+":byline:"+i, translationLayout:null, points:[]});
+            for (const [i,field] of fields.entries()) {
+              const text=glyphStream(field).text.trim();
+              // The source identifies these as author names and affiliations.
+              // Keep the original name spellings and markers in the PDF.
+              const names=text.match(/\p{Lu}[\p{L}.'’\-]+\s+\p{Lu}[\p{L}.'’\-]+\s*[∗†‡*\d,]/gu);
+              if (hasContactFields && names?.length>=3) continue;
+              physicalSources.push({...p,paragraphText:text,inlineGlyphs:field,rects:[lines[i]],frontMatterLine:true,
+                minerUid:String(p.minerUid)+":byline:"+i,translationLayout:null,points:[]});
+            }
             continue;
           }
         }
@@ -595,6 +620,7 @@
         }
         const bodyChars = local.filter((c) => glyphText(c).trim());
         const primaryFace = bodyChars.find((c) => c.fontSize >= size * 0.85)?.fontName || "";
+        const fontFamily = DeepRead.PaperStyles?.sourceFamily(primaryFace);
         const block = {
           source,
           ...inline,
@@ -609,7 +635,8 @@
           pitch: pitches[Math.floor(pitches.length / 2)],
           title: type === "title",
           caption,
-          sans: /sans|NimbusSan|Helvetica|Arial|OptimisticDisp/i.test(primaryFace),
+          fontFamily,
+          sans: fontFamily === "sans",
           allItalic: bodyChars.length > 0 && bodyChars.every(DeepRead.Typography.italic),
           boldTitle: !bodyChars.length || bodyChars.filter(DeepRead.Typography.bold).length > bodyChars.length / 2,
           owner: p.minerUid,
@@ -636,7 +663,7 @@
           block.verifiedLabel = true;
         }
         if (type === "algorithm_step" && rects.length === 1) block.verifiedLabel = true;
-        if (type === "code_comment" || type === "figure_label")
+        if (block.title || type === "code_comment" || type === "figure_label")
           block.styleSamples = local
             .filter((c) => valid(c.rect))
             .slice(0, 15)
@@ -705,9 +732,10 @@
           if (rects.length > 1) block.hanging = Math.max(0, (rects[1][0] - rect[0]) / size);
         }
         const old = reuse ? (single && fragment) || u.translation || (single ? pointTranslation : "") : "";
-        const fixed =
-          type === "table_label" &&
-          DeepRead.ParallelVisual.compactLabel(source, language, p.languagePairs, inline.modelText);
+        const contact=(p.frontMatterLine || authorArea(p)) && contactTranslation(inline.modelText,source,language);
+        if (contact) block.verbatim=true;
+        const fixed = contact || (type === "table_label" &&
+          DeepRead.ParallelVisual.compactLabel(source, language, p.languagePairs, inline.modelText));
         block.translation =
           fixed || (block.verbatim ? inline.modelText : DeepRead.ParallelInline.fromLegacy(block, old));
         units.push(block);
@@ -980,7 +1008,29 @@
     }
   }
 
-  async function translate(units, { language, signal, request, context, concurrency = 1, onProgress }) {
+  function coversProse(unit, text) {
+    if (
+      !/^zh(?:-|$)/iu.test(unit.language || "") ||
+      unit.title ||
+      unit.verbatim ||
+      (unit.role &&
+        !["text", "text_with_equation", "list", "caption", "image", "table", "figure", "chart"].includes(
+          unit.role
+        ))
+    )
+      return true;
+    // Detect a paragraph returned as a short abstract. Test only unlocked
+    // prose, since a long formula or bibliography entry may remain verbatim.
+    const prose = (unit.modelText || unit.source || "").replace(/⟦D+\d+⟧/gu, " ");
+    const words = prose.match(/\b[A-Za-z][A-Za-z'-]+\b/gu)?.length || 0;
+    if (words < 24) return true;
+    const output = text.replace(/⟦D+\d+⟧/gu, " ");
+    const han = output.match(/\p{Script=Han}/gu)?.length || 0;
+    const retained = output.match(/\b[A-Za-z0-9][A-Za-z0-9'-]*\b/gu)?.length || 0;
+    return han + Math.min(retained, words / 4) >= words * 0.58;
+  }
+
+  async function translate(units, { language, signal, request, context, concurrency = 1, onProgress, preview=false }) {
     setContext(units,context);
     const copies = new Map(), pending = [];
     for (const u of units) {
@@ -1009,6 +1059,8 @@
       const rows = group.map((u, i) => ({
         id: i + ":u0", kind: u.marker ? "list-item" : (u.role || "paragraph"),
         source_text: u.modelText || u.styled || u.source,
+        ...(u.rects?.length>=2 && (u.title || u.caption || u.role==="text") ? {source_lines:u.rects.length} : {}),
+        ...(u.title ? {kind:"heading"} : {}),
         ...(u.hint ? {source_context:u.hint} : {}),
         ...(!repair && u.before ? {preceding_context:u.before} : {}),
         ...(!repair && u.after ? {following_context:u.after} : {}),
@@ -1019,7 +1071,7 @@
       for (const [i,u] of group.entries()) {
         const candidates = replies.filter(r => r.id === rows[i].id);
         const text = candidates.length === 1 && candidates[0].translation;
-        if (!DeepRead.ParallelInline.valid(u, text)) { missing.push(u); continue; }
+        if (!DeepRead.ParallelInline.valid(u,text) || !coversProse(u,text)) {missing.push(u);continue;}
         const cleaned = DeepRead.TranslationLayout.accept({units:[{id:"u0",marker:u.marker}]}, [{unit_id:"u0",translation:text}]).units[0].translation;
         for (const copy of matches.get(u)) {
           accepted.set(copy, cleaned);
@@ -1054,7 +1106,7 @@
         }
       }
       const text=parts.join("");
-      return DeepRead.ParallelInline.valid(u,text) ? text : "";
+      return DeepRead.ParallelInline.valid(u,text) && coversProse(u,text) ? text : "";
     }
     let next = 0, failure, incomplete = 0;
     async function worker() {
@@ -1062,7 +1114,7 @@
         const group = batches[next++];
         try {
           const missing = await attempt(group, false);
-          if (!missing.length) continue;
+          if (!missing.length || preview) continue;
           const remaining = await attempt(missing,true);
           for (const u of remaining) {
             const recovered = await recoverParts(u);

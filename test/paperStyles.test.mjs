@@ -218,5 +218,11 @@ const pitches = new Map(),
   );
 S.countPage(sample, 1, new Map(), pitches);
 assert.equal(pitches.get(10).get(12), 5);
-assert.equal(S.make(10, 12).roles.body.step, 14);
+assert.equal(S.make(10, 12).roles.body.step, 12.5);
+assert.equal(S.make(10, 15).roles.body.step, 15);
+assert.equal(S.sourceFamily("NUMK+NimbusSanL-Bold"), "sans");
+assert.equal(S.sourceFamily("NUMK+Helvetica-Bold"), "sans");
+assert.equal(S.sourceFamily("ABCDEF+CMR10"), "serif");
+assert.equal(S.styleFor({typeRole:"documentTitle",fontFamily:"serif"},profile).family,"serif");
+assert.equal(S.styleFor({typeRole:"body",fontFamily:"sans"},profile).family,"serif");
 assert.equal(S.make(10, 12).roles.list.step, S.make(10, 12).roles.body.step);

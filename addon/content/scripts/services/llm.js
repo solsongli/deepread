@@ -6,6 +6,7 @@ DeepRead.LLM = (function () {
   const MODES = ["json_schema", "json_object", "none"];
   // Session cache of downgraded json modes, keyed by "baseURL\nmodel".
   const modeCache = new Map();
+  const unsupportedEffort = new Set();
 
   function cfgOf(config) {
     return config || DeepRead.prefs.llmConfig();
@@ -116,6 +117,7 @@ DeepRead.LLM = (function () {
   async function request({ body, config, signal, timeoutMs, responseFormat }, handle) {
     const url = `${config.baseURL}/chat/completions`;
     const headers = buildHeaders(config);
+    const modelKey = `${config.baseURL}\n${config.model}`;
     let mode = effectiveMode(config);
     let netRetries = 0;
     let rateRetries = 0;
@@ -125,6 +127,7 @@ DeepRead.LLM = (function () {
       if (signal && signal.aborted) throw abortError();
       const rf = formatFor(mode, responseFormat);
       const payload = Object.assign({}, body);
+      if (unsupportedEffort.has(modelKey)) delete payload.reasoning_effort;
       if (rf) payload.response_format = rf;
 
       const controller = new AbortController();
@@ -174,6 +177,11 @@ DeepRead.LLM = (function () {
       cleanup();
 
       const status = failure.status;
+      if ((status === 400 || status === 422) && payload.reasoning_effort &&
+          /reasoning[ _-]?effort/i.test(failure.body || "")) {
+        unsupportedEffort.add(modelKey);
+        continue;
+      }
       if ((status === 400 || status === 422) && rf
         && /response_format|json_schema|json_object/i.test(failure.body || "")) {
         const next = MODES[MODES.indexOf(mode) + 1];
@@ -202,7 +210,7 @@ DeepRead.LLM = (function () {
     }
   }
 
-  function baseBody(config, { messages, system, temperature, maxTokens }, stream) {
+  function baseBody(config, { messages, system, temperature, maxTokens, reasoningEffort }, stream) {
     const body = {
       model: config.model,
       messages: buildMessages(messages, system),
@@ -211,6 +219,10 @@ DeepRead.LLM = (function () {
     };
     if (body.temperature === undefined) delete body.temperature;
     if (maxTokens) body.max_tokens = maxTokens;
+    if (reasoningEffort && /^(?:gpt-(?:5|6)(?:[-.]|$)|o[134](?:[-.]|$))/i.test(config.model)) {
+      body.reasoning_effort = reasoningEffort;
+      delete body.temperature;
+    }
     return body;
   }
 

@@ -184,6 +184,7 @@
       messages: [{ role: "user", content: JSON.stringify(input) }],
       responseFormat: { type: "json_object" },
       temperature: 0.1,
+      reasoningEffort: "low",
       signal
     });
     if (signal.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });

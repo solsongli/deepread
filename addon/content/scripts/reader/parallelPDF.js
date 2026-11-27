@@ -125,7 +125,7 @@
         );
         const content=DeepRead.ParallelInk.materialize(doc, translated, unit, page, canvas, pixels);
         if(!unit.title && !unit.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(content,unit.modelText);
-        const type=styles?.[unit.typeRole] || styles?.body;
+        const type=DeepRead.PaperStyles.styleFor(unit,page.styleProfile) || styles?.body;
         if (type) {
           DeepRead.PaperType.apply(paragraph,page.language);
           DeepRead.PaperStyles.apply(paragraph,type,4/3);

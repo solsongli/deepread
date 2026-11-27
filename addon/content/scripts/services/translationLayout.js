@@ -128,8 +128,24 @@
     const messages = [{ role: "user", content: `Source layout units (JSON):\n${JSON.stringify(items)}` }];
     if (context?.length) messages.push({ role: "user", content: `Neighbouring source fragments in reading order (JSON):\n${JSON.stringify(context)}\nIf the fragments form a sentence interrupted by a page break or figure, translate it in context. Return only the part belonging to each requested unit ID.` });
     const protection = items.some(u=>u.protected) ? ' Each ⟦D…⟧ token represents the exact expression described in that unit’s protected list. Write around the token in natural target-language order and copy its ID exactly once. The reader inserts its final content. Do not spell out its value, change its case, add symbols or reverse a comparison.' : '';
-    const response = await request({ system: `Translate source units into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. Translate only source_text. A physical frame can start or end mid-sentence. preceding_context, following_context and source_context are read-only. Never complete the thought or borrow facts, numbers or translations from those fields. Return exactly one translation per id. For table_label and figure_label return a short conventional label that fits the original cell or legend, preserving language-pair direction, abbreviations and symbols. For ref_text keep author names, years and page ranges in source order, translate the work title, and retain venue emphasis. For code_comment translate the comment only. Preserve the association between authors, affiliations, dates and field labels. Never merge units, move sentences between units, or drop content. Preserve **bold**, *italic*, formulas, references and qualifiers.${protection}${repair ? ' Correct the missing or untranslated text. Check each ID, protected token and emphasis span. Translate all ordinary prose, including headings, captions and clauses alongside formulas.' : ''} Omit leading list markers; the renderer restores them. Use concise faithful wording, not a summary. Return a JSON object with a translations array of {id,translation} objects. Copy each requested id verbatim.`,
-      messages, responseFormat: { type: "json_object" }, temperature: 0.1, signal });
+    const simplified = /^(?:zh|zh-CN|zh-Hans)$/iu.test(targetLang);
+    const style = simplified
+      ? "Write clear simplified Chinese suitable for a published research paper. Use natural Chinese syntax and conventional field terms. Keep a paper title, section heading, caption and caption label in their original roles. Keep acronyms and method names recognizable."
+      : "";
+    const roboticsTerms = simplified && items.some(u=>/receding[-‐‑ ]horizon control/iu.test(u.source_text))
+      ? "Use 滚动时域控制 for receding-horizon control." : "";
+    const system = [
+      `Translate source_text into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. ${style}`,
+      "Translate each unit completely. Follow the original reasoning and preserve every claim, action, object, condition, negation, comparison, ordering, cause, degree of certainty and conclusion. Keep sentence boundaries readable. Preserve the source's paragraph lead-ins, emphasis and italic runs. A multi-line passage needs a full translation. source_lines describes the printed frame. It is not a length limit.",
+      "Translate the content in the requested unit only. A unit can start or end mid-sentence. Read preceding_context, following_context and source_context for meaning, without adding their clauses, values or conclusions. Keep all author names, affiliations, dates and field labels associated. For bibliography text preserve author names, years and page ranges, translate the title and retain venue emphasis.",
+      "For table_label and figure_label, use a short conventional label that fits its own region, preserving direction, acronyms, units and symbols. For code_comment translate the comment only. Omit list markers, which the renderer restores. Keep bold as **bold** and italic as *italic*.",
+      protection,
+      roboticsTerms,
+      repair ? "The previous reply was incomplete or violated a protected expression. Translate each missing unit again in full and check every ID, qualifier, premise and placeholder before returning it." : "",
+      "Return only JSON with a translations array of objects with id and translation. Return each requested id exactly once, verbatim."
+    ].filter(Boolean).join("\n");
+    const response = await request({system,messages,responseFormat:{type:"json_object"},temperature:0.1,
+      reasoningEffort:repair ? undefined : "low",signal});
     if (signal?.aborted) { const e = new Error("Aborted"); e.name = "AbortError"; throw e; }
     const text = String(response?.content || "").replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "").replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
     let translations;

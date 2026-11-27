@@ -313,3 +313,20 @@ console.log("parallelPage: verified interval and dimensional-prose cache migrati
   assert.ok(labels.includes(label),"an actual figure label may also occur in the caption");
   assert.ok(!labels.includes(tail),"punctuation after a hyphenated final caption line belongs to the caption");
 }
+
+{
+  const source="The robot selects keypoints using both their confidence scores and their distance from previously selected points. If the measured distance falls below the threshold, the selection rejects that candidate even when its confidence is high.";
+  const u={source,modelText:source,language:"zh",role:"text",rects:[[],[],[]]};
+  const requests=[];
+  await D.ParallelPage.translate([u],{language:"zh",request:async args=>{
+    requests.push(args);
+    const rows=JSON.parse(args.messages[0].content.split("\n")[1]);
+    assert.equal(rows[0].source_lines,3);
+    const translation=requests.length===1 ? "机器人选择关键点。" :
+      "机器人根据候选点的置信度以及它与已选点的距离来选择关键点。如果测得距离低于阈值，即使该点置信度很高，也会拒绝这个候选点。";
+    return {content:JSON.stringify({translations:[{id:rows[0].id,translation}]})};
+  }});
+  assert.equal(requests.length,2);
+  assert.equal(requests[0].reasoningEffort,"low");
+  assert.match(u.translation,/即使该点置信度很高/);
+}

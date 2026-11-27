@@ -60,3 +60,5 @@
 
 .dr-native-page .dr-parallel-text[data-overflow] {overflow:hidden;scrollbar-width:none;}
 .dr-native-passages p {line-height:1.65;}
+
+.dr-options-check {display:flex;align-items:center;gap:.5em;}

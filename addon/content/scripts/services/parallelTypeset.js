@@ -65,7 +65,7 @@
       } else {
         segments.push({ type: "text", value: r.text });
         const family=r.mono ? style.getPropertyValue("--dr-paper-code").trim() || "monospace" : style.fontFamily;
-        ctx.font = `${r.italic ? "italic" : "normal"} ${r.bold ? "bold" : style.fontWeight} 100px ${family}`;
+        ctx.font = `${r.italic || style.fontStyle==="italic" ? "italic" : "normal"} ${r.bold ? "bold" : style.fontWeight} 100px ${family}`;
         for (const ch of r.text) {
           widths.push(ctx.measureText(ch).width / 100);
           if (ch.length === 2) widths.push(0);
@@ -132,7 +132,7 @@
       const ink = row.firstChild,
         room = width - (i ? nextInset : firstInset);
       // Keep genuinely short tails and unbreakable math/identifiers natural.
-      if (room <= 0 || ink.offsetWidth > room + 0.6 || (last && ink.offsetWidth < room * 0.65)) continue;
+      if (room <= 0 || ink.offsetWidth > room + 0.6 || ink.offsetWidth < room * 0.77) continue;
       // The zero-width baseline probe is an inline object. If it participates
       // in justification, Gecko puts a gap before the very first Chinese glyph.
       const text = h(content.ownerDocument, "span");
@@ -150,6 +150,53 @@
       });
       ink.append(text);
     }
+  }
+
+  const chineseWords =
+    typeof Intl.Segmenter === "function" ? new Intl.Segmenter("zh", { granularity: "word" }) : null;
+
+  // Short Chinese passages can fit into one physical line even when the
+  // original has several. Use natural breaks and the original height, leaving
+  // the short physical lines ragged so their spacing stays readable.
+  function compactSourceLines(engine, prepared, size, width, indent, hang, desired, minimum) {
+    const breaks = [
+      0,
+      ...engine
+        .breakOpportunities(prepared.text, !!(indent || hang))
+        .map((point) => point.position)
+        .filter((position) => position > 0)
+    ];
+    const last = breaks.length - 1;
+    const whole = engine.naturalWidth(prepared, size);
+    const count = Math.min(desired, Math.floor(whole / (size * minimum)));
+    if (count < 2) return null;
+    const ideal = whole / count;
+    const boundary = new Set(
+      chineseWords ? Array.from(chineseWords.segment(prepared.text), (word) => word.index) : []
+    );
+    let states = new Map([[0, { cost: 0 }]]);
+    for (let row = 0; row < count; row++) {
+      const next = new Map(),
+        remaining = count - row - 1,
+        room = width - (row ? hang : indent);
+      for (const [from, prior] of states) {
+        for (let to = remaining ? from + 1 : last; to <= last - remaining; to++) {
+          const start = breaks[from],
+            end = breaks[to];
+          const line = engine.lineWidthEm(prepared, start, end, to === last, !!(indent || hang)) * size;
+          if (line > room + 0.1 || line > ideal * 1.7) break;
+          if (line < ideal * 0.52) continue;
+          const middleOfWord = boundary.size && to !== last && !boundary.has(end);
+          const cost = prior.cost + ((line - ideal) / ideal) ** 2 + (middleOfWord ? 0.35 : 0);
+          if (!next.has(to) || next.get(to).cost > cost) next.set(to, { cost, start, end, previous: prior });
+        }
+      }
+      if (!next.size) return null;
+      states = next;
+    }
+    const rows = [];
+    for (let line = states.get(last); line?.previous; line = line.previous) rows.push(line);
+    return rows.length === count ? rows.reverse() : null;
   }
 
   // Match the source span when the text can fill that many lines comfortably.
@@ -368,8 +415,10 @@
     if (!simple) content.append(fragment);
     const cjkBody =
       !unit.title && !unit.caption && /\p{Script=Han}/u.test(material?.prepared.text || content.textContent);
-    const justify = !unit.centered && unit.justified && /^zh(?:-|$)/iu.test(box.lang) &&
-      /\p{Script=Han}/u.test(material?.prepared.text || content.textContent) &&
+    const chinese = /^zh(?:-|$)/iu.test(box.lang) && /\p{Script=Han}/u.test(material?.prepared.text || content.textContent);
+    const preserveRows = chinese && type && sourceLines > 1 &&
+      ["body","list","figureCaption","tableCaption","algorithmCaption","documentTitle","heading","subheading"].includes(type.role);
+    const justify = !unit.centered && unit.justified && chinese &&
       (!type || ["body","list","figureCaption","tableCaption","algorithmCaption"].includes(type.role));
     const owner = unit.context?.findIndex(text=>text.trim()===unit.source.trim()) ?? -1;
     const continues = justify && (unit.after || (owner>=0 && owner+1<unit.context.length)) &&
@@ -403,29 +452,23 @@
         return !dimensions.wide && natural<=height+.5;
       }
 
-      let measureWidth = width,
-        rows = [],
-        excess = 0, addedRow=false;
-      if (unit.title && unit.centered && sourceLines > 1 && sourceLines <= 3) {
-        // Balance the Chinese title across the source's line count, keeping
-        // complete Western words and the original heading size.
-        let lo = (width / sourceLines) * 0.65,
-          hi = width;
-        for (let i = 0; i < 7; i++) {
-          const mid = (lo + hi) / 2;
-          const count = api.TextLinebreak.layout(material.prepared, size, mid, { indent: 0, hang: 0 }).lines.length;
-          if (count > sourceLines) lo = mid;
-          else hi = mid;
-        }
-        measureWidth = Math.min(width, hi + size * 0.4);
-      }
-      for (let pass = 0; pass < (type ? 8 : 4); pass++) {
+      let measureWidth=width, rows=[], excess=0, addedRow=false, compact=false;
+      const sourceSpan = preserveRows ? (unit.rects[0][3]-unit.rects.at(-1)[3])*scale : 0;
+      const desired = Math.min(sourceLines,1+Math.round(sourceSpan/requestedStep));
+      for (let pass=0;pass<(type ? 8 : 4);pass++) {
         let {lines}=api.TextLinebreak.layout(material.prepared,size,measureWidth,{indent:firstInset,hang:nextInset});
-        if (matchSourceHeight && justify && type?.role==="body" && sourceLines>1) {
-          const sourceSpan=(unit.rects[0][3]-unit.rects.at(-1)[3])*scale, normalCount=lines.length;
-          lines=sourceLinesFor(api.TextLinebreak,material.prepared,size,measureWidth,firstInset,nextInset,sourceSpan,requestedStep,lines,continues);
-          addedRow=lines.length>normalCount;
+        const normalCount=lines.length;
+        compact=false;
+        if (matchSourceHeight && preserveRows) {
+          if (justify && type.role==="body" && normalCount>1)
+            lines=sourceLinesFor(api.TextLinebreak,material.prepared,size,measureWidth,firstInset,nextInset,sourceSpan,requestedStep,lines,continues);
+          if (normalCount<=2 && lines.length<desired && !lines.slice(0,-1).some(line=>line.mandatory)) {
+            const balanced = compactSourceLines(api.TextLinebreak,material.prepared,size,measureWidth,
+              firstInset,nextInset,desired,type.weight>=700 ? 3 : 4);
+            if (balanced?.length>lines.length) {lines=balanced;compact=true;}
+          }
         }
+        addedRow=lines.length>normalCount;
         rows = lines
           .filter((l) => l.end > l.start)
           .map((range, i) => {
@@ -469,7 +512,7 @@
       let step = requestedStep;
       if (!type) for (let i = 1; i < extents.length; i++) step = Math.max(step, extents[i - 1].below + extents[i].above);
       const occupied = first + Math.max(0, rows.length - 1) * step + last;
-      if (justify) justifyChinese(content,width,firstInset,nextInset,continues);
+      if (justify && !compact) justifyChinese(content,width,firstInset,nextInset,continues);
       const baselines = rows.map((row) => {
         const ink = row.firstChild,
           probe = ink.firstChild;

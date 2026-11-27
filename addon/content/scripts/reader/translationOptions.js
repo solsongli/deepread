@@ -51,6 +51,12 @@
       ["file", tr("保存文件", "Save to file")],
       ["library", tr("Zotero 文库并打开", "Zotero library and open")]
     ]);
+    const redo = el("input", "");
+    redo.type = "checkbox";
+    redo.name = "retranslate";
+    const redoLabel = el("label", "dr-options-check");
+    redoLabel.append(redo, tr("用新版重译已完成的段落", "Retranslate completed passages"));
+    fields.append(redoLabel);
     const status = el("p", "dr-options-status");
     status.setAttribute("role", "status");
     const actions = el("div", "dr-options-actions");
@@ -75,6 +81,7 @@
     function refresh() {
       custom.hidden = scope.value !== "range";
       order.parentElement.hidden = layout.value === "mono";
+      translate.textContent=redo.checked ? tr("重译所选页","Retranslate selected pages") : tr("翻译所选页","Translate selected pages");
       if (busy) return;
       try {
         const indices = pages();
@@ -129,7 +136,7 @@
             panel.close();
             await Zotero.Reader.open(result.id);
           }
-        } else await reader.translateBook(indices);
+        } else await reader.translateBook(indices,{revise:redo.checked});
       } catch (error) {
         message = DeepRead.util.formatError(error);
         if (reader.root) reader.status.textContent = message;

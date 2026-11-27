@@ -12,8 +12,8 @@
       body: [1.025, 1.5, 0.45, 0.45],
       list: [1.025, 1.5, 0.25, 0.25],
       documentTitle: [1.8, 2.12, 0.8, 0.55, "sans", 700],
-      heading: [1.25, 1.52, 0.7, 0.4, "sans", 700],
-      subheading: [1.05, 1.32, 0.55, 0.35, "sans", 700],
+      heading: [1.25, 1.52, 0.7, 0.4, "serif", 700],
+      subheading: [1.05, 1.32, 0.55, 0.35, "serif", 700],
       figureCaption: [0.9, 1.15, 0.25, 0.25],
       tableCaption: [0.9, 1.15, 0.25, 0.25],
       algorithmCaption: [0.9, 1.15, 0.25, 0.25],
@@ -35,9 +35,9 @@
       };
     }
     if (proseStep) {
-      // Keep one rhythm for prose across the paper. In tightly set Latin
-      // text reserve a fifth of an em of leading for Chinese and inline math.
-      const step=Math.max(proseStep,Math.min(roles.body.step,proseStep+base*.2));
+      // Keep one rhythm for prose across the paper. Reserve at least a
+      // quarter-em between Chinese baselines for punctuation and math.
+      const step=Math.max(proseStep,roles.body.size*1.23);
       roles.body.step=roles.list.step=quarter(step);
     }
     return { base, roles };
@@ -392,16 +392,34 @@
     }
   }
 
+  function styleFor(unit, profile) {
+    const style = profile?.roles[unit.typeRole];
+    if (!style || !["documentTitle", "heading", "subheading"].includes(style.role)) return style;
+    const family = unit.fontFamily || style.family;
+    return family === style.family && !unit.allItalic ? style : { ...style, family, italic: !!unit.allItalic };
+  }
+
+  function sourceFamily(name) {
+    if (
+      /sans|NimbusSan|Helvetica|Arial|OptimisticDisp|CMSS|LMSans|Calibri|Aptos|Roboto|Inter(?=[-_.]|$)|Gothic/iu.test(
+        name
+      )
+    )
+      return "sans";
+    if (/serif|Times|TeXGyreTermes|NimbusRom|STIX|Palatino|CMR|CMBX|LMRoman|SFRM|SFBX|Mincho/iu.test(name))
+      return "serif";
+  }
+
   function apply(node, style, scale = 1) {
     node.dataset.typeRole = style.role;
     node.style.setProperty("--dr-paragraph-gap", style.after * scale + "px");
     node.style.fontSize = style.size * scale + "px";
     node.style.lineHeight = style.step * scale + "px";
     node.style.fontWeight = String(style.weight);
-    node.style.fontStyle = "normal";
+    node.style.fontStyle = style.italic ? "italic" : "normal";
     node.classList.toggle("dr-paper-sans", style.family === "sans");
   }
-  DeepRead.PaperStyles = {
+  DeepRead.PaperStyles = {styleFor,sourceFamily,
     make,
     resolve,
     peek: (session) => sessions.get(session)?.profile || fallback,

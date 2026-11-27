@@ -46,6 +46,8 @@ const server = http.createServer((req, res) => {
     const ok = (content = "OK") => json(200, { choices: [{ message: { content } }], usage: { total_tokens: 3 } });
     switch (behavior) {
       case "normal": return ok("hello");
+      case "reasoning400":
+        return body.reasoning_effort ? json(400,{error:{message:"Unsupported reasoning_effort"}}) : ok("hello");
       case "think": return ok("<think>hmm</think>\nanswer");
       case "schema400":
         if (body.response_format?.type === "json_schema") {
@@ -179,6 +181,22 @@ test("jsonMode downgrade all the way to none", async () => {
   assert.equal(r.content, "{}");
   assert.equal(requests.length, 3);
   assert.equal("response_format" in requests[2].body, false);
+});
+
+test("low translation effort falls back once on an incompatible reasoning endpoint", async () => {
+  reset("reasoning400",{model:"gpt-6.1-sol"});
+  const options={messages:msgs,reasoningEffort:"low",responseFormat:schemaFormat};
+  assert.equal((await LLM.complete(options)).content,"hello");
+  assert.equal(requests[0].body.reasoning_effort,"low");
+  assert.equal(requests[0].body.temperature,undefined);
+  assert.equal(requests[1].body.reasoning_effort,undefined);
+  await LLM.complete(options);
+  assert.equal(requests.length,3);
+  assert.equal(requests[2].body.reasoning_effort,undefined);
+  reset("normal",{model:"custom"});
+  await LLM.complete(options);
+  assert.equal(requests[0].body.reasoning_effort,undefined);
+  assert.equal(requests[0].body.temperature,.5);
 });
 
 test("429 with Retry-After 0 twice then success", async () => {

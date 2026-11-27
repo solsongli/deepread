@@ -212,6 +212,30 @@ E2E.run = async function () {
       "standalone PDFs keep their library and collections",
       other.libraryID === libraryID && !other.parentItemID && other.getCollections().includes(collection.id)
     );
+    await c.showPage(0);
+    panel=options();
+    const checkbox=panel.querySelector('[name="retranslate"]');
+    const translate=panel.querySelector('[name="translate"]');
+    const cached=await record(0);
+    const intercepted=D.LLM.complete;
+    try {
+      D.LLM.complete=async()=>({content:JSON.stringify({translations:[]})});
+      checkbox.checked=true;
+      checkbox.dispatchEvent(event());
+      translate.click();
+      await wait(()=>!panel.querySelector("fieldset").disabled);
+      check("incomplete retranslation leaves the existing passage and cache intact",
+        JSON.stringify(await record(0))===JSON.stringify(cached) && c.page.units.some(u=>u.translation));
+      D.LLM.complete=async args=>{
+        const rows=JSON.parse(args.messages[0].content.split("\n").slice(1).join("\n"));
+        return {content:JSON.stringify({translations:rows.map(row=>({id:row.id,
+          translation:"重新核对的译文"+(row.source_text.match(/⟦D+\d+⟧/gu)||[]).join(" ")+"。"}))})};
+      };
+      translate.click();
+      await wait(()=>!panel.querySelector("fieldset").disabled);
+      check("the explicit option replaces valid selected translations and reuses parsing",
+        (await record(0)).some(row=>row.text.includes("重新核对的译文")) && parsed.length===2 && !(await record(1)));
+    } finally {D.LLM.complete=intercepted;panel.querySelector('[name="close"]').click();await wait(()=>!c.optionsDialog);}
     // A result for pages 2–3 becomes available after the reader has reopened.
     // Retry page 3 through the actual parser, cache and local page-index map.
     D.Parser.parsePDF = parse;
