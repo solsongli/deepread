@@ -482,6 +482,11 @@ DeepRead.Parser = {
           const req = new (Zotero.getMainWindow().XMLHttpRequest)({ mozAnon:true });
           const abort = () => req.abort();
           req.open("GET",url,true);
+          // Some DNS and proxy routes drop the TLS handshake with the official
+          // result CDN. Use Gecko's secure DNS for this retry on that host.
+          if (/^https:\/\/cdn-mineru\.openxlab\.org\.cn\//i.test(url)) {
+            req.channel?.setTRRMode(Components.interfaces.nsIRequest.TRR_ONLY_MODE);
+          }
           req.responseType="arraybuffer";
           req.onload = () => req.status>=200 && req.status<300 ? resolve(new Uint8Array(req.response))
             : reject(new Error(`MinerU ${step} failed: HTTP ${req.status}`));

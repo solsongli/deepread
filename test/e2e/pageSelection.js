@@ -213,29 +213,79 @@ E2E.run = async function () {
       other.libraryID === libraryID && !other.parentItemID && other.getCollections().includes(collection.id)
     );
     await c.showPage(0);
-    panel=options();
-    const checkbox=panel.querySelector('[name="retranslate"]');
-    const translate=panel.querySelector('[name="translate"]');
-    const cached=await record(0);
+    const cached = await record(0), otherPage = await record(2);
+    const previousData = s.data, contentList = c.page.partial.items;
+    const paragraph = contentList.find(item => item.text.includes("estimate"));
+    const inherited = "精读旧译文";
+    s.data = { language: "zh", contentList, hierarchicalData: [{ pageIndex: 0, paragraphs: [{
+      pageIndex: 0, paragraphIndex: 1, minerUid: paragraph.id, bbox: paragraph.bbox,
+      paragraphText: paragraph.text, paragraphType: "text",
+      translationLayout: { units: [{ sourceText: paragraph.text, translation: inherited }] }
+    }] }] };
+    c.prepareUnits(c.page);
+    check("the paper can normally reuse a previous deep-read translation", c.page.units.some(u => u.translation === inherited));
+    await D.Store.saveComparisonData(s.key, fp, "terms:v1:zh", [{ source: "estimate", target: "旧术语" }]);
     const intercepted=D.LLM.complete;
     try {
-      D.LLM.complete=async()=>({content:JSON.stringify({translations:[]})});
-      checkbox.checked=true;
-      checkbox.dispatchEvent(event());
-      translate.click();
-      await wait(()=>!panel.querySelector("fieldset").disabled);
-      check("incomplete retranslation leaves the existing passage and cache intact",
-        JSON.stringify(await record(0))===JSON.stringify(cached) && c.page.units.some(u=>u.translation));
-      D.LLM.complete=async args=>{
-        const rows=JSON.parse(args.messages[0].content.split("\n").slice(1).join("\n"));
-        return {content:JSON.stringify({translations:rows.map(row=>({id:row.id,
-          translation:"重新核对的译文"+(row.source_text.match(/⟦D+\d+⟧/gu)||[]).join(" ")+"。"}))})};
+      c.retranslateButton.click();
+      panel = c.optionsDialog;
+      const translate = panel.querySelector('[name="translate"]');
+      check("the toolbar opens a dedicated retranslation dialog with page, range and paper scope",
+        panel.open && panel.querySelector('[name="save"]').hidden &&
+          [...panel.querySelector('[name="scope"]').options].map(o => o.value).join() === "current,range,all");
+      const sent = [];
+      const rowsOf = args => JSON.parse(args.messages[0].content.split("\n").slice(1).join("\n"));
+      D.LLM.complete = async args => {
+        const rows = rowsOf(args);
+        if (!sent.length) {
+          const blank = await record(0);
+          check("retranslation clears the selected cache and removes old text before requesting the model",
+            !!blank.generation && blank.translations.length === 0 &&
+              c.page.units.every(u => !u.translation || u.verbatim));
+        }
+        sent.push(...rows.map(row => row.source_text));
+        return { content: JSON.stringify({ translations: rows
+          .filter(row => row.source_text.includes("Layout comparison"))
+          .map(row => ({ id: row.id, translation: "本轮新版标题" })) }) };
       };
       translate.click();
       await wait(()=>!panel.querySelector("fieldset").disabled);
-      check("the explicit option replaces valid selected translations and reuses parsing",
-        (await record(0)).some(row=>row.text.includes("重新核对的译文")) && parsed.length===2 && !(await record(1)));
-    } finally {D.LLM.complete=intercepted;panel.querySelector('[name="close"]').click();await wait(()=>!c.optionsDialog);}
+      const partial = await record(0);
+      check("fresh requests cover both old translations and only save the passages accepted in this run",
+        sent.some(s => s.includes("Layout comparison")) && sent.some(s => s.includes("estimate")) &&
+          partial.translations.length === 1 && partial.translations[0].text === "本轮新版标题" &&
+          c.page.units.some(u => !u.translation) && !c.translateButton.hidden &&
+          !(await D.Store.comparisonData(s.key, fp, "terms:v1:zh")));
+      check("a previous run cannot add cached translations to a restarted page",
+        !(await D.Store.mergeComparisonTranslations(s.key, fp, "page:0:zh", cached, cached)) &&
+          JSON.stringify(await record(0)) === JSON.stringify(partial));
+      panel.querySelector('[name="close"]').click();
+      await wait(() => !c.optionsDialog);
+      c.close(false);
+      button.click();
+      await wait(() => c.root && c.page?.units);
+      await c.showPage(0);
+      check("opening the reader again shows only the new title and a pending body passage",
+        c.page.units.some(u => u.translation === "本轮新版标题") &&
+          c.page.units.some(u => u.source.includes("estimate") && !u.translation));
+      const resumed = [];
+      D.LLM.complete = async args => {
+        const rows = rowsOf(args);
+        resumed.push(...rows.map(row => row.source_text));
+        return { content: JSON.stringify({ translations: rows.map(row => ({ id: row.id, translation: "本轮续译正文。" })) }) };
+      };
+      c.translateButton.click();
+      await wait(() => !c.page.busy);
+      const finished = await record(0);
+      check("continuing uses only the new run, reuses parsing and preserves pages outside the selection",
+        resumed.length > 0 && resumed.every(s => !s.includes("Layout comparison")) &&
+          finished.generation === partial.generation && finished.translations.some(row => row.text === "本轮续译正文。") &&
+          parsed.length === 2 && !(await record(1)) && JSON.stringify(await record(2)) === JSON.stringify(otherPage));
+    } finally {
+      D.LLM.complete = intercepted;
+      s.data = previousData;
+      if (c.optionsDialog) c.optionsDialog.close();
+    }
     // A result for pages 2–3 becomes available after the reader has reopened.
     // Retry page 3 through the actual parser, cache and local page-index map.
     D.Parser.parsePDF = parse;

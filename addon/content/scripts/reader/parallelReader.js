@@ -81,6 +81,7 @@
       };
       this.status = h(doc, "span", "dr-parallel-status");
       this.status.setAttribute("role", "status");
+      this.status.addEventListener("pointerenter", () => { this.status.title = this.status.textContent; });
       bar.append(this.status);
       this.translateButton = button(bar, "dr-parallel-translate", tr("翻译本页", "Translate page"), () =>
         this.translatePage()
@@ -98,6 +99,10 @@
         "英译中时按论文统一术语，补译缺失或用词不一致的段落",
         "For Chinese, choose paper-specific terms and translate missing or inconsistent passages"
       );
+      this.retranslateButton = button(bar, "dr-parallel-retranslate", tr("重新翻译…", "Retranslate…"), () =>
+        DeepRead.TranslationOptions.open(this, { retranslate: true })
+      );
+      this.retranslateButton.disabled = true;
       this.exportControl = h(doc, "select", "dr-parallel-export");
       this.exportControl.setAttribute(
         "aria-label",
@@ -271,6 +276,7 @@
           this.translateButton.disabled =
             this.bookButton.disabled =
             this.retryParse.disabled =
+            this.retranslateButton.disabled =
             this.exportControl.disabled =
               true;
           this.status.textContent = tr(`正在显示第 ${index + 1} 页…`, `Loading page ${index + 1}…`);
@@ -472,8 +478,9 @@
       items = PLAN.restoreRunningTitle(page,items,cover);
       page.vectorPanelRegions = items.filter(item=>item.type==="image" && item.bbox &&
         item.image_caption?.some(text=>/^Fig(?:ure)?\.?\s+\d+/iu.test(text)));
-      page.units = PLAN.plan({ paragraphs, items, nativeParser:!source?.length || (usePartial ? page.partial.fallback : !!this.parsed?.fallback) || DeepRead.prefs.parserConfig().provider==="builtin", chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels, clippedLabels:page.clippedLabels, panelColors:page.panelColors, saved:page.saved,
-        reuse: (!s.data?.language || s.data.language === page.language), continuationFor: (p) => s.continuationFor(p) });
+      const saved = page.saved?.translations ?? page.saved;
+      page.units = PLAN.plan({ paragraphs, items, nativeParser:!source?.length || (usePartial ? page.partial.fallback : !!this.parsed?.fallback) || DeepRead.prefs.parserConfig().provider==="builtin", chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels, clippedLabels:page.clippedLabels, panelColors:page.panelColors, saved,
+        reuse: !page.saved?.generation && (!s.data?.language || s.data.language === page.language), continuationFor: (p) => s.continuationFor(p) });
       const count = page.units.filter(u=>u.layoutPart!=="runningTitle").length;
       const bibliography = (structure?.referenceBoxes.get(page.index) || [])
         .map(bbox => PLAN.fromPermille(bbox, page.view)).filter(Boolean);
@@ -490,7 +497,7 @@
       page.context = PLAN.interruptedContext(source?.length ? source : items, page.index);
       page.localItems = source?.length ? null : items;
       PLAN.setContext(page.units,page.context);
-      PLAN.hydrate(page.units, page.saved);
+      PLAN.hydrate(page.units, saved);
       if (page.styleProfile) {
         styles.classify(page.units,page.styleProfile,structure,page.view,Math.hypot(page.transform[0],page.transform[1]));
         page.equations=items.filter(it=>["equation","formula","interline_equation"].includes(it.type))
@@ -526,9 +533,11 @@
 
     async checkpoint(page, changed, signal) {
       if (signal.aborted) return;
-      page.saved = await DeepRead.Store.mergeComparisonTranslations(this.session.key, page.fingerprint,
-        slotFor(page.index, page.language), PLAN.records(changed));
+      const saved = await DeepRead.Store.mergeComparisonTranslations(this.session.key, page.fingerprint,
+        slotFor(page.index, page.language), PLAN.records(changed), page.saved);
       if (signal.aborted) return;
+      if (!saved) throw new Error(tr("另一阅读窗口已重新翻译本页。", "Translation of this page restarted in another reader."));
+      page.saved = saved;
       this.session.hasComparisonCache = !!page.fingerprint;
       if (this.page === page && this.root) this.paint();
       else this.native?.accept(page);
@@ -695,7 +704,7 @@
       }
     }
 
-    async translateUnits(page, signal, concurrency, glossary, selection, request, revise = false) {
+    async translateUnits(page, signal, concurrency, glossary, selection, request) {
       if (page.bibliographyOnly) return;
       await this.preparePanelColors(page,signal);
       if (signal.aborted) return;
@@ -707,7 +716,7 @@
         }
       });
       const [text] = await Promise.allSettled([
-        this.translatePageText(page, signal, concurrency, glossary, selection, request, revise),
+        this.translatePageText(page, signal, concurrency, glossary, selection, request),
         artwork
       ]);
       if (signal.aborted) return;
@@ -720,8 +729,8 @@
       } else if (text.status === "rejected") throw text.reason;
     }
 
-    async translatePageText(page, signal, concurrency, glossary, selection, request, revise = false) {
-      if (!revise && !page.units.some((u) => !u.translation) && !glossary?.length) return;
+    async translatePageText(page, signal, concurrency, glossary, selection, request) {
+      if (!page.units.some((u) => !u.translation) && !glossary?.length) return;
       if (page.localItems?.length && this.count > 1) {
         const pdf = this.session.pdfAdapter().pdfDocument;
         const neighbours = [page.index - 1, page.index + 1].filter(
@@ -739,7 +748,7 @@
         const ordered = [...page.localItems, ...edges.flat()].sort((a, b) => a.page_idx - b.page_idx);
         page.context = PLAN.interruptedContext(ordered, page.index);
         PLAN.setContext(page.units, page.context);
-        PLAN.hydrate(page.units, page.saved);
+        PLAN.hydrate(page.units, page.saved?.translations ?? page.saved);
       }
       glossary ??= await this.paperTerms(page, signal, false, request);
       if (signal.aborted) return;
@@ -758,16 +767,15 @@
       const originals = new Map(),
         local = [];
       const work = page.units.map((unit) => {
-        const candidate = revise && unit.translation && !unit.verbatim ? { ...unit, translation: "" } : unit;
-        const bound = DeepRead.ParallelTerms.constrain(candidate, glossary);
-        if (!bound && !selection && candidate === unit) return unit;
+        const bound = DeepRead.ParallelTerms.constrain(unit, glossary);
+        if (!bound && !selection) return unit;
         if (bound?.ready) {
           unit.termBase ||= unit.translation;
           unit.translation = bound.ready;
           local.push(unit);
           return unit;
         }
-        const item = bound?.work || { ...candidate };
+        const item = bound?.work || { ...unit };
         if (selection)
           Object.assign(item, {
             context: undefined,
@@ -775,7 +783,7 @@
             after: undefined,
             foreignNumbers: undefined
           });
-        originals.set(item, { unit, restore: bound?.restore, replaces: revise || !!bound });
+        originals.set(item, { unit, restore: bound?.restore });
         return item;
       });
       if (local.length) await this.checkpoint(page, local, signal);
@@ -797,7 +805,7 @@
           const accepted = changed.map((u) => {
             const entry = originals.get(u);
             if (!entry) return u;
-            if (entry.replaces) entry.unit.termBase ||= entry.unit.translation;
+            if (entry.restore) entry.unit.termBase ||= entry.unit.translation;
             entry.unit.translation = entry.restore ? entry.restore(u.translation) : u.translation;
             return entry.unit;
           });
@@ -813,7 +821,8 @@
       const limit = Math.floor(DeepRead.prefs.llmConfig().concurrency);
       const request = translationTransport(limit, token.signal);
       page.busy = true;
-      this.translateButton.disabled = this.bookButton.disabled = this.exportControl.disabled = true;
+      this.translateButton.disabled = this.bookButton.disabled = this.retryParse.disabled = true;
+      this.refreshExport();
       try {
         if (forceParse || this.needsParse(page) || (this.parsed?.legacy && !page.partial)) {
           if (!DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
@@ -851,7 +860,7 @@
       }
     }
 
-    async translateBook(indices, { revise = false } = {}) {
+    async translateBook(indices, { restart = false } = {}) {
       if (this.book) {
         this.book.abort();
         return;
@@ -867,14 +876,31 @@
       const limit = Math.floor(DeepRead.prefs.llmConfig().concurrency);
       const request = translationTransport(limit, signal);
       this.bookButton.textContent = tr("停止翻译", "Stop translation");
-      this.exportControl.disabled = true;
-      this.translateButton.disabled = true;
+      this.translateButton.disabled = this.retryParse.disabled = true;
+      this.refreshExport();
       let visited = 0,
         originals = 0,
         fallbackPages = 0,
         stoppedBy;
       const failures = [];
       try {
+        if (restart) {
+          if (!DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
+          this.status.textContent = tr("正在准备从头翻译所选页…", "Preparing to retranslate the selected pages…");
+          const saved = await DeepRead.Store.restartComparisonTranslations(
+            this.session.key, current.fingerprint, current.language, selected
+          );
+          if (this.book !== token) return false;
+          this.termCache = null;
+          for (const index of selected) {
+            if (index === current.index) {
+              current.saved = saved;
+              this.prepareUnits(current);
+              this.paint();
+            } else this.native?.accept({ index, saved });
+          }
+        }
+        if (signal.aborted) return false;
         let partials;
         const missingDocument = this.needsDocumentParse() || this.parsed?.legacy;
         if (missingDocument && !DeepRead.LLM.isConfigured()) throw new Error(DeepRead.t("error.noLLM"));
@@ -914,7 +940,7 @@
         const glossary = await this.paperTerms(current, signal, !restricted, request);
         if (signal.aborted) return false;
         const adapter = this.session.pdfAdapter();
-        const order = selected.includes(current.index)
+        const order = !restart && selected.includes(current.index)
           ? [current.index, ...selected.filter((i) => i !== current.index)]
           : selected;
         const selection = restricted ? new Map(selected.map((i) => [i, partials?.get(i)])) : null;
@@ -952,7 +978,7 @@
                 };
                 this.prepareUnits(page);
               }
-              await this.translateUnits(page, signal, pageConcurrency, glossary, selection, request, revise);
+              await this.translateUnits(page, signal, pageConcurrency, glossary, selection, request);
               if (signal.aborted) return;
               this.native?.accept(page);
               if (!page.units.length) originals++;
@@ -992,23 +1018,23 @@
               : tr("翻译未完成：", "Translation incomplete: ")) + DeepRead.util.formatError(error);
       } finally {
         if (this.book === token) {
+          const message = this.status.textContent;
           this.book = null;
           this.bookButton.textContent = tr("翻译全文", "Translate all pages");
-          this.translateButton.disabled = this.retryParse.disabled = false;
+          this.updateStatus();
           this.native?.schedule();
-          this.refreshExport();
-          if (signal.aborted)
-            this.status.textContent = tr(
-              `已停止，已处理 ${visited} 页`,
-              `Stopped after processing ${visited} pages`
-            );
+          this.status.textContent = signal.aborted ? tr(
+            `已停止，已处理 ${visited} 页`,
+            `Stopped after processing ${visited} pages`
+          ) : message;
         }
       }
     }
 
     refreshExport() {
       const units = this.page?.units;
-      this.exportControl.disabled = !units || !!this.book || !!this.exportJob || !!this.page?.busy;
+      this.retranslateButton.disabled = this.exportControl.disabled =
+        !units || !!this.book || !!this.exportJob || !!this.page?.busy;
       const incomplete = !units || this.needsParse() || units.some(u => !u.translation);
       for (const option of this.exportControl.options) {
         if (option.value && option.value !== "options") option.disabled = incomplete;
@@ -1028,6 +1054,7 @@
       const exporter = DeepRead.ParallelExport;
       const output = exporter.description(this,indices,layout,translationFirst);
       const token = this.exportJob = new AbortController(), signal = token.signal;
+      this.refreshExport();
       const signatures = [];
       let tmpPath, libraryPath, message = "";
       try {
@@ -1255,10 +1282,12 @@
       this.retryParse.textContent = pendingDownload ? tr("重试结果下载","Retry result download") : tr("重试解析服务","Retry parser");
       this.retryParse.disabled = !!this.book || !!this.exportJob || !!page.busy;
       const parse = this.needsParse();
+      const saved = page.saved?.translations ?? page.saved;
       this.translateButton.hidden = translated === total && !parse && (!this.parsed?.legacy || page.partial) && !page.imageCandidates?.length;
       this.translateButton.disabled = !!this.book || !!this.exportJob || !!page.busy; this.bookButton.disabled = !!page.busy;
       this.translateButton.textContent = this.parsed?.legacy && !page.partial ? tr("补全版面并翻译本页","Refresh layout and translate page")
-        : parse ? tr("解析并翻译本页", "Parse and translate page") : tr("翻译本页", "Translate page");
+        : parse ? tr("解析并翻译本页", "Parse and translate page")
+        : page.saved?.generation || saved?.length ? tr("继续翻译本页", "Resume page translation") : tr("翻译本页", "Translate page");
       this.status.textContent = parse ? tr("先翻译可定位的正文，同时解析本页。", "Verified text can translate while the parser processes this page.")
         : total ? tr(`第 ${page.index + 1} 页 · 原位 ${translated-notes}/${total} 处`, `Page ${page.index + 1} · ${translated-notes}/${total} in place`)
           + (notes ? tr(` · 单独显示 ${notes} 处`, ` · ${notes} separate`) : '')

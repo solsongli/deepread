@@ -5,7 +5,8 @@
   color: var(--dr-text); background: var(--dr-surface); font: 12px/1.4 var(--dr-font, sans-serif); }
 .deepread-parallel [hidden], .dr-native-more[hidden] { display:none !important; }
 .dr-parallel-bar { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; padding:4px 9px; border-bottom:1px solid var(--dr-border); }
-.dr-parallel-status { flex:1 1 14em; min-width:0; color:var(--dr-muted); }
+.dr-parallel-status { flex:1 1 14em; min-width:0; color:var(--dr-muted);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .deepread-parallel button, .dr-parallel-export, .dr-native-more { font:inherit; color:var(--dr-text); background:var(--dr-surface);
   padding:3px 8px; border:1px solid var(--dr-border); border-radius:var(--dr-control-radius,4px); cursor:pointer; }
 .deepread-parallel button:disabled {opacity:.5;cursor:default;}

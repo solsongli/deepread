@@ -6,7 +6,7 @@
  *
  * License: AGPL-3.0-or-later
  */
-/* global DeepRead, Zotero, PathUtils, IOUtils */
+/* global DeepRead, Zotero, PathUtils, IOUtils, crypto */
 
 DeepRead.Store = {
   SCHEMA_VERSION: 1,
@@ -187,16 +187,32 @@ DeepRead.Store = {
     return this.comparisonData(key,fingerprint,slot);
   },
 
-  async mergeComparisonTranslations(key, fingerprint, slot, accepted) {
-    if (!fingerprint) return accepted;
-    let merged;
-    await this.db.executeTransaction(async () => {
-      const existing = await this.comparisonData(key, fingerprint, slot);
-      const byFrame = new Map((existing || []).map(row => [row.identity, row]));
-      for (const row of accepted) byFrame.set(row.identity, row);
-      merged = [...byFrame.values()];
-      await this.saveComparisonData(key, fingerprint, slot, merged);
+  async restartComparisonTranslations(key, fingerprint, language, indices) {
+    const state = { generation: crypto.randomUUID(), translations: [] };
+    if (fingerprint) await this.db.executeTransaction(async () => {
+      for (const index of indices)
+        await this.saveComparisonData(key, fingerprint, `page:${index}:${language}`, state);
+      await this.db.queryAsync("DELETE FROM comparison_cache WHERE attachment_key=? AND fingerprint=? AND slot=?",
+        [key, fingerprint, "terms:v1:" + language]);
     });
+    return state;
+  },
+
+  async mergeComparisonTranslations(key, fingerprint, slot, accepted, previous) {
+    let merged = null;
+    const write = async () => {
+      const existing = fingerprint ? await this.comparisonData(key, fingerprint, slot) : previous;
+      const generation = previous?.generation;
+      // A late reply in another reader must not repopulate a restarted page.
+      if (existing?.generation !== generation) return;
+      const byFrame = new Map((existing?.translations ?? existing ?? []).map(row => [row.identity, row]));
+      for (const row of accepted) byFrame.set(row.identity, row);
+      const translations = [...byFrame.values()];
+      merged = generation ? { generation, translations } : translations;
+      await this.saveComparisonData(key, fingerprint, slot, merged);
+    };
+    if (fingerprint) await this.db.executeTransaction(write);
+    else await write();
     return merged;
   },
 

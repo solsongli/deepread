@@ -2,13 +2,13 @@
 (function () {
   const tr = (zh, en) => DeepRead.bilingual(zh, en);
 
-  function open(reader) {
-    if (!reader.page?.units || reader.book || reader.exportJob || reader.optionsDialog) return;
+  function open(reader, { retranslate = false } = {}) {
+    if (!reader.page?.units || reader.page.busy || reader.book || reader.exportJob || reader.optionsDialog) return;
     const doc = reader.doc,
       current = reader.pageIndex;
     const el = (tag, cls, value) => DeepRead.util.h(doc, tag, { class: cls }, value);
     const panel = (reader.optionsDialog = el("dialog", "dr-translation-options"));
-    const heading = el("h2", "", tr("选页与导出", "Pages and export"));
+    const heading = el("h2", "", retranslate ? tr("重新翻译", "Retranslate") : tr("选页与导出", "Pages and export"));
     panel.setAttribute("aria-label", heading.textContent);
     const fields = el("fieldset", "");
     const row = (label, control) => {
@@ -54,8 +54,9 @@
     const redo = el("input", "");
     redo.type = "checkbox";
     redo.name = "retranslate";
+    redo.checked = retranslate;
     const redoLabel = el("label", "dr-options-check");
-    redoLabel.append(redo, tr("用新版重译已完成的段落", "Retranslate completed passages"));
+    redoLabel.append(redo, tr("从头翻译所选页", "Retranslate selected pages from scratch"));
     fields.append(redoLabel);
     const status = el("p", "dr-options-status");
     status.setAttribute("role", "status");
@@ -70,6 +71,7 @@
     const close = button("close", tr("关闭", "Close")),
       translate = button("translate", tr("翻译所选页", "Translate selected pages")),
       save = button("save", tr("导出已有译文", "Export translated pages"));
+    layout.parentElement.hidden = destination.parentElement.hidden = redoLabel.hidden = save.hidden = retranslate;
     panel.append(heading, fields, status, actions);
     reader.root.append(panel);
     let busy = false,
@@ -80,12 +82,16 @@
         : DeepRead.PageRange.parse(scope.value === "all" ? "1-" : range.value, reader.count);
     function refresh() {
       custom.hidden = scope.value !== "range";
-      order.parentElement.hidden = layout.value === "mono";
-      translate.textContent=redo.checked ? tr("重译所选页","Retranslate selected pages") : tr("翻译所选页","Translate selected pages");
+      order.parentElement.hidden = retranslate || layout.value === "mono";
+      translate.textContent = !redo.checked ? tr("翻译所选页", "Translate selected pages")
+        : scope.value === "current" ? tr("重新翻译本页", "Retranslate current page")
+        : scope.value === "all" ? tr("重新翻译全文", "Retranslate entire paper")
+        : tr("重新翻译所选页", "Retranslate selected pages");
       if (busy) return;
       try {
         const indices = pages();
         status.textContent = tr("已选 ", "Selected ") + indices.length + tr(" 页", " pages");
+        if (redo.checked) status.textContent += tr("。译文从头生成。", ". Generate new translations from scratch.");
         range.removeAttribute("aria-invalid");
         translate.disabled = save.disabled = false;
       } catch (error) {
@@ -112,7 +118,7 @@
       observer?.disconnect();
       panel.remove();
       if (reader.optionsDialog === panel) reader.optionsDialog = null;
-      if (reader.root) reader.exportControl.focus({ preventScroll: true });
+      if (reader.root) (retranslate ? reader.retranslateButton : reader.exportControl).focus({ preventScroll: true });
     });
     async function run(exporting) {
       if (busy || reader.book || reader.exportJob) return;
@@ -136,7 +142,7 @@
             panel.close();
             await Zotero.Reader.open(result.id);
           }
-        } else await reader.translateBook(indices,{revise:redo.checked});
+        } else await reader.translateBook(indices, { restart: redo.checked });
       } catch (error) {
         message = DeepRead.util.formatError(error);
         if (reader.root) reader.status.textContent = message;

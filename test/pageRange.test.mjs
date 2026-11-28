@@ -50,6 +50,7 @@ vm.runInContext(
   scope
 );
 const parser = scope.DeepRead.Parser;
+const download = parser._download.bind(parser);
 let uploads = 0,
   disableDownload = true,
   expired = false;
@@ -83,3 +84,34 @@ assert.equal(uploads, 2);
 console.log(
   "MinerU download resumes a completed batch and replaces an expired one for only the chosen pages"
 );
+
+class ResultRequest {
+  constructor({ mozAnon }) {
+    assert.equal(mozAnon, true);
+    this.channel = { setTRRMode: (mode) => { this.mode = mode; } };
+  }
+  open(method, url) {
+    assert.equal(method, "GET");
+    this.url = url;
+  }
+  send() {
+    retries.push({ url: this.url, mode: this.mode });
+    this.status = 200;
+    this.response = new Uint8Array([0x50, 0x4b]).buffer;
+    this.onload();
+    this.onloadend();
+  }
+}
+const retries = [];
+const cdn = "https://cdn-mineru.openxlab.org.cn";
+Object.assign(scope, {
+  fetch: async () => { throw new TypeError("NetworkError"); },
+  Components: { interfaces: { nsIRequest: { TRR_ONLY_MODE: 3 } } },
+  Zotero: { getMainWindow: () => ({ XMLHttpRequest: ResultRequest }) }
+});
+for (const url of [cdn + "/result.zip", cdn + ".example.invalid/result.zip"]) {
+  const bytes = await download(url, null, args.signal, "download result zip");
+  assert.deepEqual([...bytes], [0x50, 0x4b]);
+}
+assert.deepEqual(retries.map(r => r.mode), [3, undefined]);
+console.log("Only the official MinerU result CDN retries with secure DNS");
