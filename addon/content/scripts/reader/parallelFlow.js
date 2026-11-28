@@ -685,6 +685,10 @@
     page.typeAnchors = [];
     for (const e of entries) {
       if (!e.style) continue;
+      if (e.overflow && e.keepOriginal) {
+        e.keepOriginal();
+        continue;
+      }
       const r = e.paintRect,
         block = e.block,
         angle = e.angle;

@@ -1207,8 +1207,8 @@
     }
 
     function joinInlineFormulas() {
-      // Coalesce parser fragments only where the physical PDF itself puts two
-      // sides of a broken script in the same line. Retain display equations.
+      // Coalesce scripts split by the text layer. A formula at the start of a
+      // wrapped line can still be inline when prose shares its baseline.
       let group = [];
       function finish() {
         if (group.length > 1 && group.some((s) => s.item.type === "text")) {
@@ -1224,7 +1224,7 @@
         }
         group = [];
       }
-      for (const s of streams) {
+      for (const [index, s] of streams.entries()) {
         if (!s || replaced.has(s.id) || s.item.text_level) {
           finish();
           continue;
@@ -1245,6 +1245,15 @@
             a.baseline - b.baseline > 0 &&
             a.baseline - b.baseline < em * 1.7 &&
             b.rect[0] < a.rect[0] - em * 2;
+          const next = streams[index + 1];
+          const wrappedFormula = prev.item.type === "text" && s.item.type === "equation" &&
+            next?.item.type === "text" && !next.item.text_level && !/[.!?:;]$/u.test(prev.item.text) &&
+            a.baseline - b.baseline >= em * .75 && a.baseline - b.baseline < em * 1.65 &&
+            Math.abs(b.rect[0] - regionOf(prev.item.bbox)[0]) < em &&
+            b.rect[0] < a.rect[0] - em * 2 &&
+            chars.slice(next.start, Math.min(next.end, next.start + 28)).some(c =>
+              c.rect && c.fontSize >= em * .86 && /^[A-Za-z]/u.test(glyph(c)) &&
+              c.rect[0] > b.rect[2] && Math.abs(c.baseline - b.baseline) < em * .28);
           const sameLine =
             !gap.slice(0, -1).some(breaks) &&
             (gap.some((c) => c.scriptContinuation) ||
@@ -1253,7 +1262,7 @@
             gap.length <= 34 &&
             gap.some((c) => c.scriptContinuation) &&
             !/[a-z]{3}/iu.test(text(gap).replace(/max|min|exp|sin|cos|log/giu, ""));
-          if (s.start < prev.end || (s.start - prev.end > 8 && !mathGap) || (!sameLine && !wrap)) finish();
+          if (s.start < prev.end || (s.start - prev.end > 8 && !mathGap) || (!sameLine && !wrap && !wrappedFormula)) finish();
         }
         group.push(s);
       }

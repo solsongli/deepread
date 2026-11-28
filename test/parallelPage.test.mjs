@@ -231,6 +231,29 @@ console.log('parallelPage: inline PDF and OCR formulas, protected semantics, num
 const hv=[0,0,200,200];
 const at=(str,x,y)=>glyphs(str).map((c,i)=>({...c,rect:[x+i*5,y,x+i*5+5,y+10],baseline:y+2}));
 {
+  const view = [0,0,320,240];
+  const make = (text,x,y,end = false) => at(text,x,y).map((c,i) => ({...c,lineBreakAfter:end && i===text.length-1}));
+  function recover(nextY) {
+    const following=make(".The solver keeps the source expression.",45,nextY,true);
+    following[0].spaceAfter=true;
+    const physical = [
+      make("The procedure uses the coefficients",20,180,true),
+      make("{α,β}",20,166),
+      following
+    ];
+    const items = physical.map((chars,i) => {
+      const [l,b,r,t]=D.Overlay.unionRect(chars.map(c=>c.rect));
+      return {id:i,type:i===1?"equation":"text",page_idx:0,text:chars.map(c=>c.u).join(""),
+        bbox:[l/320*1000,(240-t)/240*1000,r/320*1000,(240-b)/240*1000]};
+    });
+    return D.ParallelFrames.recover(items,physical.flat(),view).items;
+  }
+  const inline=recover(166);
+  assert.equal(inline.length,1);
+  assert.match(inline[0].text,/coefficients \{α,β\}\. The solver/u);
+  assert.ok(recover(148).some(item=>item.type==="equation"),"an isolated formula stays outside the text flow");
+}
+{
   const title = "A Toolbox for Learning";
   const page = {index:2,view:hv,chars:at(title,36,186)};
   const firstPage = [{page_idx:0,text_level:1,text:"Project: A Toolbox for"},{page_idx:0,text:"Learning"}];

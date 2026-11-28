@@ -241,14 +241,14 @@
       pending = [],
       destinations = new Map();
     const name = library.PDFName.of;
+    const sourceDocument = () => sourceData ||= readSource(reader, sourcePath).then(source => ({
+      source, copier: library.PDFObjectCopier.for(source.context, output.context)
+    }));
 
     async function original(sheet, page, left, bottom) {
       if (!page.hasAnnotationArtwork) {
         try {
-          sourceData ||= readSource(reader, sourcePath).then(source => ({
-            source, copier: library.PDFObjectCopier.for(source.context, output.context)
-          }));
-          const { source, copier } = await sourceData;
+          const { source, copier } = await sourceDocument();
           const leaf = source.getPage(page.index).node;
           if (!leaf.Contents()) return;
           const [x0, y0, x1, y1] = page.view;
@@ -306,6 +306,48 @@
       }
     }
 
+    // Zotero paints embedded highlights in its annotation layer rather than
+    // the PDF canvas used for export. Keep their original PDF coordinates.
+    async function copyHighlights(sheet, page, left, top) {
+      if (!page.hasHighlightAnnotations) return;
+      try {
+        const {source,copier} = await sourceDocument();
+        const annotations = source.getPage(page.index).node.Annots();
+        if (!annotations) return;
+        const [a,b,c,d,e,f] = page.transform;
+        const preserveAppearance = a > 0 && d < 0 && b === 0 && c === 0;
+        const coordinates = (entry, key) => {
+          const values = entry.lookupMaybe(name(key), library.PDFArray);
+          return values?.asArray().map(value => source.context.lookup(value)?.asNumber?.()) || [];
+        };
+        for (let i = 0; i < annotations.size(); i++) {
+          const entry = annotations.lookup(i);
+          if (!(entry instanceof library.PDFDict) || entry.get(name("Subtype")) !== name("Highlight")) continue;
+          const rect = coordinates(entry,"Rect");
+          if (rect.length !== 4 || !rect.every(Number.isFinite)) continue;
+          const r = DeepRead.ParallelInk.project(rect, page.transform);
+          const highlight = output.context.obj({Type:"Annot",Subtype:"Highlight",
+            Rect:[left+r.left,top-r.top-r.height,left+r.left+r.width,top-r.top]});
+          const quads = coordinates(entry,"QuadPoints");
+          if (quads.length && quads.length % 8 === 0 && quads.every(Number.isFinite)) {
+            const points = [];
+            for (let j = 0; j < quads.length; j+=2) {
+              const [x,y] = [quads[j],quads[j+1]];
+              points.push(left+a*x+c*y+e,top-b*x-d*y-f);
+            }
+            highlight.set(name("QuadPoints"),output.context.obj(points));
+          }
+          for (const key of ["C", "CA", "Contents", "T", "M", "F", ...(preserveAppearance ? ["AP"] : [])]) {
+            const value = entry.get(name(key));
+            if (value) highlight.set(name(key),copier.copy(value));
+          }
+          sheet.node.addAnnot(output.context.register(highlight));
+        }
+      } catch (error) {
+        DeepRead.log("Embedded highlights unavailable on page " + (page.index+1), String(error));
+      }
+    }
+
     async function appendPair(pages, page, originalTarget = false) {
       const translated=pages[0], {width,height}=page, box=translated.getMediaBox();
       const x=box.x, top=box.y+height;
@@ -328,7 +370,11 @@
       }
       sheets.set(page.index,{sourceRef:sourceSheet.ref,targetRef:translated.ref,x,left,top,sourceTop,width,height,
         view:page.view,anchors:page.typeAnchors,transform:page.transform});
-      if (options.layout !== "mono") originalLinks(sourceSheet, page, left, sourceTop, true);
+      if (options.layout !== "mono") {
+        originalLinks(sourceSheet, page, left, sourceTop, true);
+        await copyHighlights(sourceSheet, page, left, sourceTop);
+      }
+      await copyHighlights(translated, page, x, top);
       if (originalTarget) {
         originalLinks(translated, page, x, top, false);
         return;

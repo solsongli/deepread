@@ -347,6 +347,7 @@
       });
       const pageAnnotations = JSON.parse(win.JSON.stringify(annotations));
       page.hasAnnotationArtwork = pageAnnotations.some((a) => a.subtype !== "Link" && a.subtype !== "Popup");
+      page.hasHighlightAnnotations = pageAnnotations.some(a => a.subtype === "Highlight");
       page.links = pageAnnotations.filter(
         (a) => a.subtype === "Link" && a.rect && (a.dest || /^(?:https?:\/\/|mailto:)/i.test(a.url || ""))
       );
@@ -460,17 +461,38 @@
 
     prepareUnits(page) {
       const s = this.session;
+      const provider = DeepRead.prefs.parserConfig().provider;
       let source = s.data?.contentList;
-      if (!source?.length && this.parsed?.provider === DeepRead.prefs.parserConfig().provider) source = this.parsed.items;
+      if (!source?.length && this.parsed?.provider === provider) source = this.parsed.items;
       const usePartial = page.partial && !s.data?.contentList?.length && (!source?.length || this.parsed?.legacy || this.parsed?.fallback);
       if (usePartial) source = page.partial.items;
-      const paragraphs = (s.data?.hierarchicalData?.find((p) => p.pageIndex === page.index)?.paragraphs || []).map((p) => ({ ...p, pageIndex: page.index }));
+      let paragraphs = (s.data?.hierarchicalData?.find((p) => p.pageIndex === page.index)?.paragraphs || []).map((p) => ({ ...p, pageIndex: page.index }));
       let items = [];
       if (source?.length) items = DeepRead.ParallelVisual.pageItems(source,page.index);
       else if (!paragraphs.length && !page.partial) items = DeepRead.TextLayerParser.buildContentList(
         [{ pageIndex: page.index, viewBox: page.view, chars: page.chars }], {includePublicationNotes:true});
       if (!s.data?.contentList?.length && (usePartial ? page.partial.fallback : this.parsed?.fallback))
         items = DeepRead.TextLayerParser.restoreCachedParagraphs(items, page);
+      const nativeParser = !source?.length || (usePartial ? page.partial.fallback : !!this.parsed?.fallback) || provider === "builtin";
+      let printed;
+      if (provider === "mineru" && !nativeParser) {
+        if (page.comparisonLayout?.source !== source)
+          page.comparisonLayout = { source, items: DeepRead.TextLayerParser.comparisonLayout(items, page) };
+        printed = page.comparisonLayout.items;
+        if (printed) {
+          const aligned = [];
+          items = printed.map((item, i) => {
+            if (item.type !== "text" && item.type !== "page_footnote") return item;
+            const normalized = item.text.normalize("NFKC");
+            const old = paragraphs.filter(p => p.paragraphText?.normalize("NFKC") === normalized);
+            if (old.length !== 1 || printed.some(other => other !== item && other.text === item.text)) return item;
+            const id = old[0].minerUid ?? `printed:${page.index}:${i}`;
+            aligned.push({...old[0],minerUid:id,paragraphType:item.type,bbox:item.bbox});
+            return {...item,id};
+          });
+          paragraphs = aligned;
+        }
+      }
       const styles = DeepRead.PaperStyles;
       const documentItems = s.data?.contentList?.length ? s.data.contentList : this.parsed?.items?.length ? this.parsed.items : items;
       const structure = styles.documentStructure(documentItems);
@@ -479,7 +501,7 @@
       page.vectorPanelRegions = items.filter(item=>item.type==="image" && item.bbox &&
         item.image_caption?.some(text=>/^Fig(?:ure)?\.?\s+\d+/iu.test(text)));
       const saved = page.saved?.translations ?? page.saved;
-      page.units = PLAN.plan({ paragraphs, items, nativeParser:!source?.length || (usePartial ? page.partial.fallback : !!this.parsed?.fallback) || DeepRead.prefs.parserConfig().provider==="builtin", chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels, clippedLabels:page.clippedLabels, panelColors:page.panelColors, saved,
+      page.units = PLAN.plan({ paragraphs, items, nativeParser:nativeParser || !!printed, chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels, clippedLabels:page.clippedLabels, panelColors:page.panelColors, saved,
         reuse: !page.saved?.generation && (!s.data?.language || s.data.language === page.language), continuationFor: (p) => s.continuationFor(p) });
       const count = page.units.filter(u=>u.layoutPart!=="runningTitle").length;
       const bibliography = (structure?.referenceBoxes.get(page.index) || [])
@@ -494,8 +516,8 @@
       const hasBody = page.units.some(u=>u.layoutPart!=="runningTitle");
       page.bibliographyOnly = count > 0 && !hasBody;
       if (!hasBody) page.units = [];
-      page.context = PLAN.interruptedContext(source?.length ? source : items, page.index);
-      page.localItems = source?.length ? null : items;
+      page.localItems = source?.length && !printed ? null : items;
+      page.context = PLAN.interruptedContext(page.localItems || source, page.index);
       PLAN.setContext(page.units,page.context);
       PLAN.hydrate(page.units, saved);
       if (page.styleProfile) {
@@ -1143,6 +1165,7 @@
       const notes = [], frames=[];
       page.supplements=[];
       page.dirtyRects=[];
+      page.originalArtwork = 0;
       for (const [sourceIndex, u] of page.units.entries()) {
         if (!u.translation) continue;
         // A fully protected native unit (for example a file tree) already
@@ -1150,6 +1173,7 @@
         if (u.matched && u.verbatim && u.translation === u.modelText &&
             u.tokens.every(t => (t.display ?? t.source) === t.source)) continue;
         if (u.matched && u.rects.length && u.rects.every(rect => DeepRead.ParallelInk.flatSource(rect,page,pixels))) continue;
+        const artwork = ["figure_label", "table_label", "image", "figure", "chart", "table"].includes(u.role);
         const type=DeepRead.PaperStyles.styleFor(u,page.styleProfile);
         const chinese = /^zh(?:-|$)/i.test(page.language);
         const rects = u.placed ? u.masks.map((r) => project(r, page.transform)) : [];
@@ -1176,18 +1200,9 @@
         if (type?.role.endsWith("Caption") && !u.matched) DeepRead.PaperStyles.captionLabel(fragment);
         if(!u.title && !u.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(fragment,u.modelText);
         if (!rects.length || colors.some((c) => !c)) {
-          notes.push([u, fragment]); page.supplements.push(u); continue;
-        }
-        page.dirtyRects.push(...rects);
-        for (let i = 0; i < rects.length; i++) {
-          if(patches[i]) { patches[i].erase(ctx);continue; }
-          const r = rects[i]; ctx.fillStyle = `rgb(${colors[i].join(",")})`;
-          ctx.fillRect(Math.floor(r.left * kx), Math.floor(r.top * ky), Math.ceil((r.left + r.width) * kx) - Math.floor(r.left * kx), Math.ceil((r.top + r.height) * ky) - Math.floor(r.top * ky));
-        }
-        if (u.markerRect && !type) {
-          const m=project(u.markerRect,page.transform), x=Math.max(0,Math.floor(m.left*kx)-1), y=Math.max(0,Math.floor(m.top*ky)-1);
-          const w=Math.ceil((m.left+m.width)*kx)-x+1, ht=Math.ceil((m.top+m.height)*ky)-y+1;
-          ctx.drawImage(source.canvas,x,y,w,ht,x,y,w,ht);
+          if (artwork) page.originalArtwork++;
+          else { notes.push([u, fragment]); page.supplements.push(u); }
+          continue;
         }
         const originalRect = project(u.rect, page.transform), r = {...originalRect};
         const block = h(hdoc, "div", "dr-parallel-text");
@@ -1247,7 +1262,32 @@
           boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:["documentTitle","heading","subheading","metadata","runningTitle"].includes(type.role) && u.centered};
         const metrics=DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment,
           u.size*Math.hypot(page.transform[0],page.transform[1]),type);
-        frames.push({unit:u,block,angle,sourceRect:originalRect,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics});
+        // Keep the original chart or table when the complete label cannot fit.
+        // Erase the source only after the replacement layout is ready.
+        if (artwork && block.dataset.overflow) {
+          block.remove();
+          page.originalArtwork++;
+          continue;
+        }
+        const masks = rects.map(r => [Math.floor(r.left*kx), Math.floor(r.top*ky),
+          Math.ceil((r.left+r.width)*kx)-Math.floor(r.left*kx), Math.ceil((r.top+r.height)*ky)-Math.floor(r.top*ky)]);
+        page.dirtyRects.push(...rects);
+        for (let i = 0; i < masks.length; i++) {
+          if(patches[i]) { patches[i].erase(ctx);continue; }
+          ctx.fillStyle = `rgb(${colors[i].join(",")})`;
+          ctx.fillRect(...masks[i]);
+        }
+        if (u.markerRect && !type) {
+          const m=project(u.markerRect,page.transform), x=Math.max(0,Math.floor(m.left*kx)-1), y=Math.max(0,Math.floor(m.top*ky)-1);
+          const w=Math.ceil((m.left+m.width)*kx)-x+1, ht=Math.ceil((m.top+m.height)*ky)-y+1;
+          ctx.drawImage(source.canvas,x,y,w,ht,x,y,w,ht);
+        }
+        const keepOriginal = artwork ? () => {
+          for (const mask of masks) ctx.drawImage(source.canvas,...mask,...mask);
+          block.remove();
+          page.originalArtwork++;
+        } : null;
+        frames.push({unit:u,block,angle,sourceRect:originalRect,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics,keepOriginal});
         if (block.dataset.overflow) page.supplements.push(u);
         block.dataset.sourceUnit = String(sourceIndex);
         block.dataset.sourceRect=[originalRect.left,originalRect.top,originalRect.width,originalRect.height].join(" ");
@@ -1274,7 +1314,7 @@
     }
 
     updateStatus() {
-      const page=this.page, notes=page.unplaced || 0;
+      const page=this.page, notes=page.unplaced || 0, artwork=page.originalArtwork || 0;
       const total = page.units.length, translated = page.units.filter((u) => u.translation).length;
       this.refreshExport();
       this.retryParse.hidden = !(page.partial ? page.partial.fallback : this.parsed?.fallback) || !!this.session.data?.contentList?.length;
@@ -1289,8 +1329,9 @@
         : parse ? tr("解析并翻译本页", "Parse and translate page")
         : page.saved?.generation || saved?.length ? tr("继续翻译本页", "Resume page translation") : tr("翻译本页", "Translate page");
       this.status.textContent = parse ? tr("先翻译可定位的正文，同时解析本页。", "Verified text can translate while the parser processes this page.")
-        : total ? tr(`第 ${page.index + 1} 页 · 原位 ${translated-notes}/${total} 处`, `Page ${page.index + 1} · ${translated-notes}/${total} in place`)
+        : total ? tr(`第 ${page.index + 1} 页 · 原位 ${translated-notes-artwork}/${total} 处`, `Page ${page.index + 1} · ${translated-notes-artwork}/${total} in place`)
           + (notes ? tr(` · 单独显示 ${notes} 处`, ` · ${notes} separate`) : '')
+          + (artwork ? tr(` · ${artwork} 处图表保留原文`, ` · ${artwork} figure or table passages kept as printed`) : '')
           + (page.supplements.length>notes ? tr(` · 长段全文 ${page.supplements.length-notes} 处`, ` · ${page.supplements.length-notes} full passages`) : '')
           + (total>translated ? tr(` · 待译 ${total-translated} 处`, ` · ${total-translated} pending`) : '')
         : page.bibliographyOnly ? tr("参考文献沿用原页版式。", "Bibliography shown as printed in the original.")

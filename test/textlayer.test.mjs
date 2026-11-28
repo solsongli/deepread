@@ -35,6 +35,38 @@ const page = (pageIndex, lines) => ({ pageIndex, viewBox: [0, 0, 612, 792], char
 const body = (t, top, extra = {}) => lineChars(t, { top, ...extra });
 const longText = "The quick brown fox jumps over the lazy dog and keeps running through the forest ";
 
+check("a printed source paragraph survives when the cloud result loses neighbouring text", () => {
+  const stamp="arXiv:2303.04137v5 [cs.RO] 14 Mar 2024";
+  const pg = page(3, [body(longText, 110), body("The second physical paragraph should appear independently.", 160),
+    lineChars(stamp,{x:25,top:250,rotation:90})]);
+  const cloud = [{type:"text",text:longText+"and continues on the following page.",bbox:[110,132,880,156]},
+    {type:"text",text:stamp,bbox:[23,302,58,722]}];
+  const printed = TL.comparisonLayout(cloud,{index:3,view:pg.viewBox,chars:pg.chars});
+  assert.ok(printed.some(it => it.text === longText.trim()));
+  assert.ok(printed.some(it => it.text === "The second physical paragraph should appear independently."));
+});
+
+check("PDF lettering cannot replace an OCR-only paragraph on a mixed page", () => {
+  const pg = page(3, [body(longText+longText, 110)]);
+  const cloud = [{type:"text",text:longText.trim(),bbox:[110,132,880,156]},
+    {type:"text",text:"Scanned prose has unique wording in the photograph.",bbox:[110,430,880,480]}];
+  assert.equal(TL.comparisonLayout(cloud,{index:3,view:pg.viewBox,chars:pg.chars}),null);
+});
+
+check("two raised footnote markers create separate notes even inside a single PDF text block", () => {
+  const note = (n,text,top) => {
+    const line=body(text,top,{size:8,para:false});
+    const [marker]=lineChars(String(n),{x:66,top:top-2,size:5});
+    marker.baseline=line[0].baseline+2;
+    marker.lineBreakAfter=marker.paragraphBreakAfter=false;
+    return [marker,...line];
+  };
+  const result=build([page(4,[body(longText+longText,130),note(5,"The first note.",702),note(6,"The second note.",710)])]);
+  const notes=result.filter(it=>it.type==="page_footnote");
+  assert.deepEqual(notes.map(it=>it.text),["5The first note.","6The second note."]);
+  assert.match(TL.toMarkdown(notes), /5The first note\.[\s\S]+6The second note\./u);
+});
+
 check("a numeric grid above its caption cannot absorb the following prose on cache reload", () => {
   const gridRow = (label, top) => {
     const chars = lineChars(label+" 82.3 91.2", {top, size:9});

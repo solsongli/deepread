@@ -75,12 +75,17 @@
   }
 
   // ---- Lines → blocks ---------------------------------------------------------------------------
-  function splitBlocks(lines, pageIndex) {
+  function splitBlocks(lines, pageIndex, view) {
     const blocks = [];
     let cur = null;
     let prev = null;
     for (const ln of lines) {
-      let split = !cur;
+      const marker = ln.chars.find(c => !isSpaceCh(c));
+      const body = ln.chars.find(c => c.fontSize >= ln.size * .9 && /\p{L}/u.test(c.u));
+      const footnote = ln.y1 <= view[1] + (view[3] - view[1]) * .17 &&
+        /^[\d†‡*∗]$/u.test(marker?.u || "") && marker.fontSize < ln.size * .8 &&
+        body && marker.baseline > body.baseline + ln.size * .16;
+      let split = !cur || footnote;
       if (!split && /^[FT图表]/iu.test(ln.chars[0]?.u || "") && CAPTION_RE.test(joinText([ln])) &&
           CAPTION_RE.test(joinText([cur.lines[0]]))) split = true;
       const runIn = prev && prev.boldFrac >= .8 && ln.boldFrac < .8 &&
@@ -107,7 +112,7 @@
         else if (gap < -0.5 * sz) split = true;
       }
       if (split) {
-        cur = { lines: [], pageIndex };
+        cur = { lines: [], pageIndex, footnote };
         blocks.push(cur);
       }
       cur.lines.push(ln);
@@ -234,7 +239,7 @@
     const per = sorted.map((p) => {
       const vb = p.viewBox || [0, 0, 612, 792];
       const lines = buildLines(p.chars || [], ctx);
-      const blocks = splitBlocks(lines, p.pageIndex);
+      const blocks = splitBlocks(lines, p.pageIndex, vb);
       const H = vb[3] - vb[1];
       for (const b of blocks) {
         const cy = ((vb[3] - (b.y0 + b.y1) / 2) - vb[1]) / H; // 0 = top
@@ -282,6 +287,7 @@
   }
 
   const isAnchor = (b, stats) => {
+    if (b.footnote) return true;
     if (b.nLines === 1 && b.text.length <= 100 && (NUMBERED_RE.test(b.text) || isSectionName(b.text))
       && /[a-z]{3,}/i.test(b.text) && isHeading(b, stats)) return true;
     // Journal templates often print the abstract in a second typeface.
@@ -389,6 +395,9 @@
         const bbox = toBBox(rect, vb);
         if (reg && reg.isTable) it = { type: "table", img_path: "", table_caption: [b.text], table_body: "", table_footnote: [], bbox, page_idx: pageIndex };
         else it = { type: "image", img_path: "", image_caption: [b.text], image_footnote: [], bbox, page_idx: pageIndex };
+      }
+      else if (b.footnote) {
+        it = { type: "page_footnote", text: b.text, bbox: toBBox([b.x0, b.y0, b.x1, b.y1], vb), page_idx: pageIndex };
       }
       else if (isEquation(b, stats, W)) {
         it = { type: "equation", text: b.text, text_format: "text", bbox: toBBox([b.x0, b.y0, b.x1, b.y1], vb), page_idx: pageIndex };
@@ -517,6 +526,7 @@
     const parts = [];
     for (const it of contentList) {
       if (it.type === "text") parts.push(it.text_level ? `${"#".repeat(it.text_level)} ${it.text}` : it.text);
+      else if (it.type === "page_footnote") parts.push(it.text);
       else if (it.type === "equation") parts.push(`$$${it.text}$$`);
       else if (it.type === "image") parts.push((it.image_caption || []).map((c) => `*${c}*`).join("\n"));
       else if (it.type === "table") parts.push((it.table_caption || []).map((c) => `*${c}*`).join("\n"));
@@ -548,6 +558,42 @@
     abortIfNeeded();
     const contentList = buildContentList(pages);
     return { contentList, markdown: toMarkdown(contentList) };
+  }
+
+  function comparisonLayout(items, page) {
+    // Retain explicit item boundaries that a flat PDF text layer can lose.
+    if (items.some(item => item.type === "list" && Array.isArray(item.list_items) && item.list_items.length > 1))
+      return null;
+    const letters = value => String(value || "").normalize("NFKD").toLowerCase()
+      .replace(/\$[^$]*\$/gu, "").replace(/[^\p{L}]/gu, "");
+    const glyphs = page.chars.filter(c => c.rect && !c.diagonal && !c.rotation);
+    const textOf = run => letters(run.map(c => c.u ?? c.c ?? "").join(""));
+    const ink = textOf(glyphs);
+    if (ink.length < 80) return null;
+    const rotatedInk = textOf(page.chars.filter(c => c.rect && (c.rotation || c.diagonal)));
+    const [left, bottom, right, top] = page.view;
+    const prose = items.filter(item => ["text", "title", "list", "page_footnote", "footnote", "aside_text"].includes(item.type));
+    for (const item of prose) {
+      const text = letters(item.text || [item.list_items].flat().join(" "));
+      if (!text || ink.includes(text) || rotatedInk.includes(text)) continue;
+      if (!item.bbox || text.length < 18) return null;
+      const [x0, y0, x1, y1] = item.bbox;
+      const nearby = textOf(glyphs.filter(c => {
+        const x = (500 * (c.rect[0] + c.rect[2] - 2 * left)) / (right - left);
+        const y = (500 * (2 * top - c.rect[1] - c.rect[3])) / (top - bottom);
+        return x >= x0 - 8 && x <= x1 + 8 && y >= y0 - 8 && y <= y1 + 8;
+      }));
+      // A block can continue in another column or on the next page. An exact
+      // phrase inside its printed area anchors it even if its box is too short.
+      const samples = text.match(/.{18}/gu) || [];
+      if (!samples.some(sample => nearby.includes(sample))) return null;
+    }
+    const printed = buildContentList([{pageIndex:page.index, viewBox:page.view, chars:page.chars}],
+      {includePublicationNotes:true});
+    if (!printed.some(item => item.type === "text")) return null;
+    const notes = new Set(prose.filter(item => item.type === "page_footnote").map(item => letters(item.text)));
+    return printed.map(item => item.type === "text" && notes.has(letters(item.text))
+      ? {...item,type:"page_footnote"} : item);
   }
 
   // Older built-in parses may have absorbed a differently typeset abstract
@@ -685,5 +731,5 @@
       ...items.slice(heading+2)
     ];
   }
-  DeepRead.TextLayerParser = { parse, buildContentList, restoreCachedParagraphs, toMarkdown };
+  DeepRead.TextLayerParser = { parse, buildContentList, comparisonLayout, restoreCachedParagraphs, toMarkdown };
 })();
