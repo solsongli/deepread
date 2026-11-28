@@ -27,16 +27,50 @@ E2E.run = async function () {
   }
   const words = ["Control", "Treatment", "Baseline"];
   words.forEach((text, i) => {
+    if (text === "Treatment") {
+      ctx.fillStyle = "#f1dbb8";
+      ctx.fillRect(648, 108 + i * 90, 190, 44);
+    }
     ctx.fillStyle = ["#b72851", "#1665a5", "#f8ce48"][i];
     ctx.fillRect(620, 120 + i * 90, 18, 18);
     ctx.fillStyle = "#101010";
     ctx.fillText(text, 655, 137 + i * 90);
   });
+  ctx.font="19px sans-serif";ctx.textAlign="center";ctx.lineWidth=3;
+  for (const [top,fill,lines] of [[337,"#c2e8f7",["Feed","Forward"]],[411,"#f2f4c1",["Add & Norm"]]]) {
+    ctx.fillStyle=fill;ctx.fillRect(625,top,205,58);
+    ctx.strokeStyle="#151515";ctx.strokeRect(625,top,205,58);
+    ctx.fillStyle="#101010";
+    lines.forEach((line,i)=>ctx.fillText(line,727,top+(lines.length===1?35:24+i*23)));
+  }
   const pdf = await D.ParallelPDF.create(),
     source = pdf.addPage();
   source.setSize(520, 500);
   const figure = await pdf.embedPng(canvas.toDataURL("image/png"));
   source.drawImage(figure, { x: 56, y: 120, width: 400, height: 222.2 });
+  const names = ["Grasp","Slide","Insert"];
+  canvas.width = 148;
+  canvas.height = 96;
+  for (const [i,fill] of ["#526b8c","#776745","#49745b"].entries()) {
+    ctx.fillStyle=fill;
+    ctx.fillRect(0,0,148,96);
+    ctx.fillStyle="#d2b78f";
+    ctx.fillRect(18+i*9,32,70,40);
+    const thumbnail = await pdf.embedPng(canvas.toDataURL("image/png"));
+    source.drawImage(thumbnail,{ x:50+i*84,y:364,width:74,height:48 });
+  }
+  // The captions are separate image ink below the panels. They are outside
+  // all three image boxes and have no PDF text layer.
+  canvas.width = 484;
+  canvas.height = 30;
+  ctx.fillStyle="#fff";
+  ctx.fillRect(0,0,484,30);
+  ctx.fillStyle="#161616";
+  ctx.font="bold 16px sans-serif";
+  ctx.textAlign="center";
+  names.forEach((name,i)=>ctx.fillText(name,74+i*168,20));
+  const captionInk=await pdf.embedPng(canvas.toDataURL("image/png"));
+  source.drawImage(captionInk,{ x:50,y:348,width:242,height:15 });
   const path = PathUtils.join(E2E.env("DEEPREAD_E2E_SHOTS"), "source-chart.pdf");
   await IOUtils.write(path, Uint8Array.from(await pdf.save()));
   const item = await Zotero.Attachments.importFromFile({
@@ -55,6 +89,11 @@ E2E.run = async function () {
     ["Control", "对照"],
     ["Treatment", "处理"],
     ["Baseline", "基线"],
+    ["Feed Forward","前馈网络"],
+    ["Add & Norm","相加并归一化"],
+    ["Grasp","抓取"],
+    ["Slide","滑动"],
+    ["Insert","插入"],
     ["Example measurements", "测量示例"]
   ]);
   let calls = 0;
@@ -74,7 +113,8 @@ E2E.run = async function () {
     await control.open(session.overlay.readerDoc.querySelector(".dr-parallel-button"));
     check(
       "opening discovers embedded artwork without recognition or model work",
-      calls === 0 && !control.page.rasterLabels.length && control.page.imageCandidates.length === 1
+      calls === 0 && !control.page.rasterLabels.length &&
+        control.page.imageCandidates.some(candidate=>candidate.panels?.length===3)
     );
     await control.translateBook();
     const page = control.page,
@@ -83,6 +123,11 @@ E2E.run = async function () {
       "book translation recognises the three real English legend labels",
       words.every((w) => page.rasterLabels.some((l) => l.text === w))
     );
+    check("outlined diagram nodes keep complete multi-line names",["Feed Forward","Add & Norm"]
+      .every(name=>page.rasterLabels.some(l=>l.text===name) && translated.textContent.includes(labels.get(name))));
+    check("captions printed below the three pictures are found and translated",names.every(name=>
+      page.rasterLabels.some(label=>label.panelCaption && label.text===name) &&
+      translated.textContent.includes(labels.get(name))));
     check(
       "labels occupy the page and do not spill into supplements",
       words.every((w) => translated.textContent.includes(labels.get(w))) && !page.supplements.length

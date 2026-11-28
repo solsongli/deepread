@@ -129,8 +129,9 @@
         if (type) {
           DeepRead.PaperType.apply(paragraph,page.language);
           DeepRead.PaperStyles.apply(paragraph,type,4/3);
+          DeepRead.PaperStyles.applyLabelFace(paragraph,unit,page.language);
           supplementStyles.push({paragraph,type});
-          if(type.role.endsWith("Caption")) DeepRead.PaperStyles.captionLabel(content);
+          if(type.role.endsWith("Caption") && !unit.matched) DeepRead.PaperStyles.captionLabel(content);
           paragraph.style.margin=Math.max(type.before,previous?.after || 0)+"pt 0 0";
           previous=type;
         }
@@ -235,21 +236,19 @@
   // page Form also avoids dragging the original page tree in through annotations.
   async function facingDocument(output, reader, sourcePath, options = {}) {
     const pdfjs = reader.session.overlay.app.pdfDocument;
-    let source, copier;
-    try {
-      source = await readSource(reader, sourcePath);
-      copier = library.PDFObjectCopier.for(source.context, output.context);
-    } catch (error) {
-      DeepRead.log("Using the reader image for the original side", String(error));
-    }
+    let sourceData;
     const sheets = new Map(),
       pending = [],
       destinations = new Map();
     const name = library.PDFName.of;
 
     async function original(sheet, page, left, bottom) {
-      if (copier && !page.hasAnnotationArtwork) {
+      if (!page.hasAnnotationArtwork) {
         try {
+          sourceData ||= readSource(reader, sourcePath).then(source => ({
+            source, copier: library.PDFObjectCopier.for(source.context, output.context)
+          }));
+          const { source, copier } = await sourceData;
           const leaf = source.getPage(page.index).node;
           if (!leaf.Contents()) return;
           const [x0, y0, x1, y1] = page.view;
@@ -299,11 +298,23 @@
       } else if (link.dest) pending.push({ sheet, rect, dest: link.dest, originalSide });
     }
 
-    async function appendPair(pages, page) {
+    function originalLinks(sheet, page, left, top, originalSide) {
+      for (const link of page.links || []) {
+        const r = DeepRead.ParallelInk.project(link.rect, page.transform);
+        addLink(sheet, link, [left+Math.max(0,r.left),top-Math.min(page.height,r.top+r.height),
+          left+Math.min(page.width,r.left+r.width),top-Math.max(0,r.top)], originalSide);
+      }
+    }
+
+    async function appendPair(pages, page, originalTarget = false) {
       const translated=pages[0], {width,height}=page, box=translated.getMediaBox();
       const x=box.x, top=box.y+height;
       let sourceSheet=translated, left, sourceTop;
-      if (options.layout==="alternating") {
+      if (options.layout === "mono") {
+        left = x;
+        sourceTop = top;
+        for (const leaf of pages) output.addPage(leaf);
+      } else if (options.layout==="alternating") {
         if (options.translationFirst) for (const leaf of pages) output.addPage(leaf);
         sourceSheet=output.addPage([width,height]); left=0;sourceTop=height;
         await original(sourceSheet,page,left,0);
@@ -317,10 +328,10 @@
       }
       sheets.set(page.index,{sourceRef:sourceSheet.ref,targetRef:translated.ref,x,left,top,sourceTop,width,height,
         view:page.view,anchors:page.typeAnchors,transform:page.transform});
-      for (const link of page.links || []) {
-        const r=DeepRead.ParallelInk.project(link.rect,page.transform);
-        addLink(sourceSheet,link,[left+Math.max(0,r.left),sourceTop-Math.min(height,r.top+r.height),
-          left+Math.min(width,r.left+r.width),sourceTop-Math.max(0,r.top)],true);
+      if (options.layout !== "mono") originalLinks(sourceSheet, page, left, sourceTop, true);
+      if (originalTarget) {
+        originalLinks(translated, page, x, top, false);
+        return;
       }
       // Gecko already prints external links in the translated text. Internal
       // links need the output page references, including any supplement pages.
@@ -407,11 +418,18 @@
         annotation(sheet, rect, { Dest: destination });
       }
     }
-    return { appendPair, finish };
+    async function appendOriginal(page) {
+      const sheet = library.PDFPage.create(output);
+      sheet.setSize(page.width, page.height);
+      await original(sheet, page, 0, 0);
+      await appendPair([sheet], page, true);
+    }
+    return { appendPair, appendOriginal, finish };
   }
 
   async function append(output, reader, signal, facing = null) {
     const page = reader.page;
+    if (page.bibliographyOnly && facing && !signal.aborted) return facing.appendOriginal(page);
     const frame = element(reader.doc, "iframe");
     frame.tabIndex = -1;
     frame.setAttribute("aria-hidden", "true");

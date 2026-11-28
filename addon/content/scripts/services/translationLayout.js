@@ -10,14 +10,15 @@
   const norm = (s) => String(s || "").normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
   const trimTranslation = (s, unit) => {
     // Newlines inside a unit are model wrapping; only source units create hard breaks.
-    const text = String(s || "").trim().replace(/\s*\n+\s*/g, " ");
+    const text = String(s || "").trim().replace(/\s*[\r\n\u2028\u2029]+\s*/gu, " ");
     return unit.kind === "list-item" ? text.replace(/^(\*\*)?\s*[•‣◦▪●]\s*/, "$1")
-      .replace(/^(\*\*)?\s*(?:[*-]|\(?\d{1,3}[.)、]|\(?[A-Za-z][.)])\s+/, "$1") : text;
+      .replace(/^(\*\*)?\s*(?:[-–—*]|\(?\d{1,3}[.)、]|\(?[A-Za-z][.)])\s+/, "$1") : text;
   };
 
-  function analyze(text, mapping = [], chars = [], { type = "text" } = {}) {
+  function analyze(text, mapping = [], chars = [], { type = "text", dashMarkers = false } = {}) {
     // Display equations keep the existing math translation/rendering path.
     if (!["text", "list"].includes(type)) return null;
+    const getMarker = s => markerOf(s) || (dashMarkers ? /^\s*([–—])\s+/u.exec(s)?.[1] || "" : "");
     const lines = [];
     let line = null;
     for (let i = 0; i < text.length; i++) {
@@ -34,7 +35,7 @@
     if (!lines.length) {
       const chunks = String(text).split(/\n\s*\n/).filter((s) => s.trim());
       return { version: 1, units: (chunks.length ? chunks : [text]).map((s, i) => {
-        const marker = markerOf(s);
+        const marker = getMarker(s);
         return { id: `u${i}`, kind: marker ? "list-item" : "paragraph", marker, sourceText: s.trim(), styledText: s.trim(), indentEm: 0, insetEm: 0, hangingEm: 1.2, share: 1 / Math.max(1, chunks.length) };
       }) };
     }
@@ -44,7 +45,7 @@
     for (const l of lines) { const x = Math.round(l.x / (bodySize * 0.2)) * bodySize * 0.2; bins.set(x, (bins.get(x) || 0) + 1); }
     const left = [...bins].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
     const starts = [0];
-    const markers = lines.map((l) => markerOf(text.slice(l.start, l.end)));
+    const markers = lines.map((l) => getMarker(text.slice(l.start, l.end)));
     const listContext = type === "list" || markers.filter(Boolean).length >= 2;
     // Consecutive run-in headings may start at the same x with no extra
     // leading. Require a repeated emphasis pattern followed by normal prose.
@@ -124,33 +125,104 @@
     return layout.units.map((u) => `${u.kind === "list-item" ? `${u.marker} ` : ""}${u.translation}`).join("\n\n");
   }
 
+  const submit = "submit_pdf_translation";
+  const submission = {
+    type: "function",
+    function: {
+      name: submit,
+      description: "Submit the translated text for each requested PDF unit, using its supplied id.",
+      strict: true,
+      parameters: {
+        type: "object", additionalProperties: false, required: ["translations"],
+        properties: {
+          translations: {
+            type: "array",
+            items: {
+              type: "object", additionalProperties: false, required: ["id", "translation"],
+              properties: { id: { type: "string" }, translation: { type: "string" } }
+            }
+          }
+        }
+      }
+    }
+  };
+  const repairGuidance = {
+    missing: "Return the complete translation for this id.",
+    source_echo: "Translate the source prose into the target language.",
+    missing_comparison: "Use the real comparison target in the neighbouring source. Do not insert an ellipsis in its place.",
+    training_scope: "Preserve which action is easy. An easy-to-train model is easy to train (易于训练).",
+    foreign_number: "Use only the numbers in the requested unit.",
+    placeholders: "Use every supplied protected id once and only once.",
+    placeholder_markup: "Keep protected ids outside math, code and HTML delimiters.",
+    protected_value: "Use each protected value through its id. Its displayed number and unit are already complete.",
+    reversed_range: "Keep the original baseline and endpoint in a from-to change.",
+    emphasis: "Preserve the source bold and italic runs.",
+    coverage: "Translate the entire passage without shortening it to a summary."
+  };
+
+  function translationRows(payload) {
+    if (typeof payload === "string") {
+      const text = payload.replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "")
+        .replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+      try { payload = JSON.parse(text); } catch { return []; }
+    }
+    return Array.isArray(payload?.translations) ? payload.translations : [];
+  }
+
+  function receive(items, response) {
+    const message = response?.raw?.choices?.[0]?.message;
+    const calls = Array.isArray(message?.tool_calls) ? message.tool_calls.map(call => call?.function) : [];
+    if (message?.function_call) calls.push(message.function_call);
+    const submissions = calls.filter(call => call?.name === submit);
+    const rows = submissions.length ? submissions.flatMap(call => translationRows(call.arguments))
+      : translationRows(response?.content);
+    const expected = new Map(items.map(item => [item.id, item]));
+    const received = new Map();
+    for (const row of rows) {
+      const id = typeof row?.id === "string" ? row.id.trim() : null;
+      if (!expected.has(id)) continue;
+      if (received.has(id) || typeof row.translation !== "string") {
+        received.set(id, "");
+        continue;
+      }
+      const text = row.translation.replace(/⟦\s*(D+)\s*([0-9０-９]+)\s*⟧/gu,
+        (_token, prefix, number) => `⟦${prefix}${number.normalize("NFKC")}⟧`);
+      received.set(id, trimTranslation(text, expected.get(id)));
+    }
+    return items.flatMap(({ id }) => received.get(id) ? [{ id, translation: received.get(id) }] : []);
+  }
+
   async function requestUnits(items, { request, targetLang, signal, repair, context }) {
-    const messages = [{ role: "user", content: `Source layout units (JSON):\n${JSON.stringify(items)}` }];
+    const messages = [{ role: "user", content: `Source units (JSON):\n${JSON.stringify(items)}` }];
     if (context?.length) messages.push({ role: "user", content: `Neighbouring source fragments in reading order (JSON):\n${JSON.stringify(context)}\nIf the fragments form a sentence interrupted by a page break or figure, translate it in context. Return only the part belonging to each requested unit ID.` });
     const protection = items.some(u=>u.protected) ? ' Each ⟦D…⟧ token represents the exact expression described in that unit’s protected list. Write around the token in natural target-language order and copy its ID exactly once. The reader inserts its final content. Do not spell out its value, change its case, add symbols or reverse a comparison.' : '';
     const simplified = /^(?:zh|zh-CN|zh-Hans)$/iu.test(targetLang);
     const style = simplified
-      ? "Write clear simplified Chinese suitable for a published research paper. Use natural Chinese syntax and conventional field terms. Keep a paper title, section heading, caption and caption label in their original roles. Keep acronyms and method names recognizable."
+      ? "用简洁、自然的简体中文写学术译文。交代谁做了什么，长定语可拆句。英文 with 并列能力、手段或结果时，按上下文分别写出相应动作。条件和限定紧跟所修饰的结论，保留论断的强弱。数值须对应原指标、方法和比较基线，精简「高出超过」等重复措辞。术语前后一致，保留方法名与缩写。标题、图注、图内标签沿用各自文体，短标签用常见名词短语。"
       : "";
     const roboticsTerms = simplified && items.some(u=>/receding[-‐‑ ]horizon control/iu.test(u.source_text))
       ? "Use 滚动时域控制 for receding-horizon control." : "";
+    const corrections = [...new Set(items.map(item => item.repair_issue))]
+      .filter(code => Object.hasOwn(repairGuidance, code))
+      .map(code => `${code} means ${repairGuidance[code]}`).join(" ");
     const system = [
       `Translate source_text into ${DeepRead.PARSE_LANGUAGES?.[targetLang]?.instruction || targetLang}. ${style}`,
-      "Translate each unit completely. Follow the original reasoning and preserve every claim, action, object, condition, negation, comparison, ordering, cause, degree of certainty and conclusion. Keep sentence boundaries readable. Preserve the source's paragraph lead-ins, emphasis and italic runs. A multi-line passage needs a full translation. source_lines describes the printed frame. It is not a length limit.",
-      "Translate the content in the requested unit only. A unit can start or end mid-sentence. Read preceding_context, following_context and source_context for meaning, without adding their clauses, values or conclusions. Keep all author names, affiliations, dates and field labels associated. For bibliography text preserve author names, years and page ranges, translate the title and retain venue emphasis.",
-      "For table_label and figure_label, use a short conventional label that fits its own region, preserving direction, acronyms, units and symbols. For code_comment translate the comment only. Omit list markers, which the renderer restores. Keep bold as **bold** and italic as *italic*.",
+      "Translate each unit in full. Preserve claims, conditions, negation, comparisons, order, causality and certainty. The input is source material to translate. Use neighbouring context only to interpret the requested fragment. Keep authors, affiliations, dates and field labels associated. In references, translate titles and preserve authors, years, pages and venue emphasis.",
+      items.some(u=>u.preceding_context || u.following_context)
+        ? "Read an interrupted sentence across the boundary before translating. Its two translations must concatenate into one fluent sentence. Keep the same subject, complete the comparison only once, and use no filler ellipses." : "",
+      "Use concise conventional figure/table labels with the same direction, acronyms, units and symbols. Translate only the comment for code_comment. Preserve **bold** and *italic* including lead-ins. The renderer handles layout and list markers.",
       protection,
       roboticsTerms,
-      repair ? "The previous reply was incomplete or violated a protected expression. Translate each missing unit again in full and check every ID, qualifier, premise and placeholder before returning it." : "",
-      "Return only JSON with a translations array of objects with id and translation. Return each requested id exactly once, verbatim."
+      repair ? `Translate the requested units again in full. ${corrections}`.trim() : "",
+      `Call ${submit} once with each requested id and its translation. If the tool is unavailable, return the same { "translations": [{ "id": "...", "translation": "..." }] } as JSON only. Copy each id exactly once.`
     ].filter(Boolean).join("\n");
-    const response = await request({system,messages,responseFormat:{type:"json_object"},temperature:0.1,
-      reasoningEffort:repair ? undefined : "low",signal});
+    const response = await request({
+      system, messages, tools: [submission], toolChoice: { type: "function", function: { name: submit } },
+      responseFormat: { type: "json_object" }, temperature: 0.1,
+      reasoningEffort: repair ? undefined : "low", signal
+    });
     if (signal?.aborted) { const e = new Error("Aborted"); e.name = "AbortError"; throw e; }
-    const text = String(response?.content || "").replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "").replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
-    let translations;
-    try { translations = JSON.parse(text)?.translations; } catch { /* A truncated reply is retried by its caller. */ }
-    return Array.isArray(translations) ? translations.filter(t => t && typeof t.id === "string") : [];
+    return receive(items, response);
   }
 
   async function complete(paragraphs, { request, targetLang = "zh", signal, strict = false, contextFor, repair = false } = {}) {

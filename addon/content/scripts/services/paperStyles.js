@@ -6,17 +6,23 @@
   const textOf = (p) => String(p.source ?? p.paragraphText ?? "");
   const captionLead =
     /^(fig(?:ure)?\.?|tab(?:le)?\.?|chart|algorithm|图|圖|表|算法)\s*(?:[A-Z]?\d+(?:[.\-]\d+)*[a-z]?|[IVXLCDM]+)(?=[\s.:：、—–-]|[\u3400-\u9fff]|$)/iu;
+  const bibliographyHeading =
+    /^(?:[\d.]+\s+)?(?:references(?: and notes)?|bibliography|literature cited|works cited|参考文献|參考文獻)[.:：]?$/iu;
 
-  function make(base = 10, proseStep) {
+  function make(base = 10, proseStep, language = "zh") {
+    const simplified = /^(?:zh|zh-CN|zh-Hans)$/iu.test(language);
+    const bodySize = simplified ? .955 : 1.025, bodyWeight = simplified ? 500 : 400;
+    const captionWeight = simplified ? 550 : 400;
     const rows = {
-      body: [1.025, 1.5, 0.45, 0.45],
-      list: [1.025, 1.5, 0.25, 0.25],
-      documentTitle: [1.8, 2.12, 0.8, 0.55, "sans", 700],
+      body: [bodySize, 1.35, 0.45, 0.45, "serif", bodyWeight],
+      list: [bodySize, 1.35, 0.25, 0.25, "serif", bodyWeight],
+      documentTitle: [1.8, 2.12, 0.8, 0.55, "serif", 700],
+      runningTitle: [1, 1.2, 0, 0, "serif", bodyWeight],
       heading: [1.25, 1.52, 0.7, 0.4, "serif", 700],
       subheading: [1.05, 1.32, 0.55, 0.35, "serif", 700],
-      figureCaption: [0.9, 1.15, 0.25, 0.25],
-      tableCaption: [0.9, 1.15, 0.25, 0.25],
-      algorithmCaption: [0.9, 1.15, 0.25, 0.25],
+      figureCaption: [0.9, 1.15, 0.25, 0.25, "serif", captionWeight],
+      tableCaption: [0.9, 1.15, 0.25, 0.25, "serif", captionWeight],
+      algorithmCaption: [0.9, 1.15, 0.25, 0.25, "serif", captionWeight],
       reference: [0.88, 1.08, 0.22, 0.22],
       footnote: [0.8, 1.0, 0.22, 0.22],
       metadata: [0.85, 1.06, 0.22, 0.22],
@@ -35,9 +41,8 @@
       };
     }
     if (proseStep) {
-      // Keep one rhythm for prose across the paper. Reserve at least a
-      // quarter-em between Chinese baselines for punctuation and math.
-      const step=Math.max(proseStep,roles.body.size*1.23);
+      // Keep the document rhythm and enough leading for Chinese punctuation and math.
+      const step = Math.max(proseStep, quarter(base * 1.025) * 1.23);
       roles.body.step=roles.list.step=quarter(step);
     }
     return { base, roles };
@@ -97,9 +102,10 @@
   function resolve(session) {
     const doc = session.overlay?.app?.pdfDocument;
     if (!doc || !session.pdfAdapter) return Promise.resolve(fallback);
+    const language = DeepRead.prefs?.language?.() || session.data?.language || "zh";
     const old = sessions.get(session);
-    if (old?.doc === doc) return old.promise;
-    const state = { doc, profile: null };
+    if (old?.doc === doc && old.language === language) return old.promise;
+    const state = { doc, language, profile: null };
     const adapter = session.pdfAdapter().pdfDocument;
     const count = adapter.numPages || doc.numPages;
     const pages = new Set(
@@ -116,6 +122,15 @@
           ]);
           const t = page.getViewport({ scale: 1 }).transform;
           countPage(data.chars || [], Math.hypot(t[0], t[1]), counts, leading);
+          if (index === 0 && DeepRead.TextLayerParser?.buildContentList) {
+            // This sample is already in memory even if the reader opened in
+            // the middle of a PDF without a document-wide parser result.
+            const cover = DeepRead.TextLayerParser.buildContentList([
+              {pageIndex:0,viewBox:page.view,chars:data.chars || []}
+            ], {includePublicationNotes:true});
+            const title = cover.findIndex(it => it.text_level === 1);
+            state.cover = title < 0 ? [] : cover.slice(title,title+3);
+          }
         } catch (error) {
           DeepRead.log?.("No type sample on page " + (index + 1), String(error));
         }
@@ -123,22 +138,47 @@
       const winner = [...counts].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
       const size = winner?.[0] || 10;
       const pitch = [...(leading.get(size) || [])].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
-      return (state.profile = make(size, pitch?.[1] >= 4 ? pitch[0] : null));
+      return (state.profile = make(size, pitch?.[1] >= 4 ? pitch[0] : null, language));
     })();
     sessions.set(session, state);
     return state.promise;
+  }
+
+  function bibliographyBeforeAppendix(items) {
+    // In a single-page preview the preceding REFERENCES heading may lie on
+    // an unloaded page. This page may finish the bibliography in the left
+    // column and start an appendix in the right column.
+    if (!items[0]?.page_idx || items[0].page_idx !== items.at(-1)?.page_idx) return -1;
+    const appendix = items.findIndex(it => /^appendi(?:x|ces)\b/iu.test(it.text || ""));
+    if (appendix < 2) return -1;
+    const entries = items.slice(0, appendix);
+    const named = entries.map(it => /^\p{Lu}[\p{L}’'.-]+\s+\p{Lu}[\p{L}’'.-]+,\s+(?:and\s+)?\p{Lu}[\p{L}\s',.\-’]{3,180}\.\s+(?:19|20)\d\d[a-z]?\./u.test(it.text || ""));
+    const start = named.findIndex((yes,i) => yes && named[i+1]);
+    if (start < 0) return -1;
+    const continuation = entries[start-1]?.text || "";
+    return /^\p{Ll}/u.test(continuation) && /\b(?:Proceedings of|Conference on|Journal of|Press)\b/u.test(continuation)
+      ? start-1 : start;
   }
 
   function documentStructure(items) {
     if (!items?.length) return null;
     if (indices.has(items)) return indices.get(items);
     const ids = new Set(),
+      referenceBoxes = new Map(),
       levels = new Set();
     let references = false,
       documentTitle,
       sectionLevel = Infinity;
-    for (const item of items) {
+    const continuation = bibliographyBeforeAppendix(items);
+    for (const [index, item] of items.entries()) {
       const s = typeof item.text === "string" ? item.text.trim() : "";
+      const heading = bibliographyHeading.test(s);
+      // Some small-cap REFERENCES headings disappear in the PDF text layer.
+      // Two consecutive IEEE entries with initials and a publication year
+      // distinguish the bibliography from an in-text numeric citation.
+      const firstEntry = !references && /^\[1\]\s+\p{Lu}\.\s+\p{Lu}/u.test(s) &&
+        /\b(?:19|20)\d{2}\b[\s\S]*?\[2\]\s+\p{Lu}\.\s+\p{Lu}/u.test(
+          items.slice(index, index+4).map(it => it.text || "").join(" ").slice(0,3500));
       if (item.text_level > 0) {
         if (
           documentTitle == null &&
@@ -152,20 +192,26 @@
           sectionLevel = Math.min(sectionLevel, Number(item.text_level));
         }
       }
-      if (/^(?:[\d.]+\s+)?(?:references|bibliography|参考文献)[.:]?$/iu.test(s)) {
+      if (heading || firstEntry || index === continuation) {
         references = true;
-        continue;
-      }
-      if (
+      } else if (
         references &&
-        (item.text_level || /^(?:appendix|appendices|supplementary material)\b/iu.test(s)) &&
-        !/^(?:references|bibliography)$/iu.test(s)
+        item.type !== "ref_text" && !/^\[\d+\]/u.test(s) &&
+        (item.text_level || item.type === "title" || /^(?:appendix|appendices|supplementary material)\b/iu.test(s))
       )
         references = false;
-      if (references && item.id != null) ids.add(item.id);
+      if ((references && ["text", "title", "list", "ref_text"].includes(item.type)) || item.type === "ref_text") {
+        if (!heading && item.id != null) ids.add(item.id);
+        for (const part of item.physicalParts?.length ? item.physicalParts : [item]) {
+          if (!part.bbox) continue;
+          if (!referenceBoxes.has(part.page_idx)) referenceBoxes.set(part.page_idx, []);
+          referenceBoxes.get(part.page_idx).push(part.bbox);
+        }
+      }
     }
     const result = {
       references: ids,
+      referenceBoxes,
       documentTitle,
       sectionLevel: Number.isFinite(sectionLevel) ? sectionLevel : 1,
       levelCount: levels.size
@@ -210,13 +256,18 @@
     )
       return "documentTitle";
     if (p.layoutPart === "contents") return "contents";
+    if (p.layoutPart === "runningTitle") return "runningTitle";
     if (
       p.layoutPart === "algorithm" ||
       p.verifiedLabel ||
       ["figure_label", "table_label", "algorithm_step", "formula_note", "code_comment"].includes(type)
     )
       return null;
-    if (p.title || type === "title") {
+    // Small-cap section headings sometimes come from the parser as plain text.
+    // Assign their visual role without changing any cached translation tokens.
+    const numberedSection = p.rects?.length === 1 &&
+      /^\d+(?:\.\d+)*\.?\s+(?:results and discussion|discussion and conclusions?)$/iu.test(s);
+    if (p.title || type === "title" || numberedSection) {
       if (/^(?:I|V|X|[IVXLCDM]{2,})\.\s+|^第[一二三四五六七八九十百\d]+章|^[一二三四五六七八九十]+、/u.test(s))
         return "heading";
       if (
@@ -281,9 +332,10 @@
         view &&
         u.typeRole === "body" &&
         u.rect &&
-        u.rect[3] < view[1] + (view[3] - view[1]) * 0.24 &&
+        u.rect[1] < view[1] + (view[3] - view[1]) * 0.24 &&
+        u.rect[3] < view[1] + (view[3] - view[1]) * 0.30 &&
         u.size < base * 0.94 &&
-        /^[\d¹²³†‡*]{1,3}\s*(?=\p{Lu})/u.test(u.source) &&
+        /^[\d¹²³†‡*∗]{1,3}\s*(?=\p{Lu})/u.test(u.source) &&
         u.source.length > 5
       )
         u.typeRole = "footnote";
@@ -293,6 +345,35 @@
     const ordered = units
       .filter((u) => u.rect && u.placed && Math.abs(u.direction?.[1] || 0) < 0.1)
       .sort((a, b) => b.rect[3] - a.rect[3] || a.rect[0] - b.rect[0]);
+    // A strip of images can have a short paragraph below each frame. Its
+    // native type is often half the size of the body text on the same page.
+    // Preserve those narrow, parallel text boxes as individual figure labels.
+    const notes = ordered.filter(u => view && u.matched && u.role === "text" && !u.layoutPart &&
+      !u.frontMatter && u.typeRole !== "footnote" && u.typeRole !== "reference" &&
+      !u.title && !u.marker && u.size < base * .84 && u.rect[2] - u.rect[0] < (view[2] - view[0]) * .29);
+    for (const u of notes) {
+      const peers = notes.filter(v => Math.abs(v.rect[3] - u.rect[3]) < base * .65 &&
+        Math.abs(v.size - u.size) < Math.max(.7, u.size * .16));
+      const starts = new Set(peers.map(v => Math.round(v.rect[0] / base)));
+      if (starts.size >= 3 && peers.some(v => v.rects.length > 1)) {
+        u.typeRole = null;
+        u.role = "figure_label";
+        u.verifiedLabel = true;
+      }
+    }
+    for (const u of ordered) {
+      if (!(u.typeRole === "list" || u.title) || !u.matched || u.rects.length !== 1 || u.size >= base * .9)
+        continue;
+      const panels = ordered.filter(note => note.verifiedLabel && note.role === "figure_label" &&
+        note.size < base * .84 && note.rect[0] >= u.rect[0] - base && note.rect[0] <= u.rect[2] &&
+        note.rect[3] < u.rect[1] && u.rect[1] - note.rect[3] < base * 12);
+      if (panels.length >= 2) {
+        u.typeRole = null;
+        u.role = "figure_label";
+        u.verifiedLabel = true;
+        u.labelBold = u.boldTitle;
+      }
+    }
     for (const u of ordered)
       if (u.typeRole === "list" && /^\([a-z]\)\s/iu.test(u.source)) {
         if (
@@ -394,19 +475,51 @@
 
   function styleFor(unit, profile) {
     const style = profile?.roles[unit.typeRole];
-    if (!style || !["documentTitle", "heading", "subheading"].includes(style.role)) return style;
+    if (style?.role === "runningTitle" && unit.boldTitle) return {...style,weight:700};
+    if ((unit.typewriterBody || unit.typewriterHeading) && unit.size > 0 && profile?.roles.body) {
+      const prose = unit.typewriterBody && unit.role !== "code_comment";
+      const size = quarter(unit.size * (prose ? 1.07 : 1));
+      return {...(style || profile.roles.body), size, step:quarter(size * (prose ? 1.26 : unit.pitch || 1.2)),
+        before:0, after:0, family:"sans", weight:unit.typewriterHeading ? 700 : 400};
+    }
+    if (!style) return style;
+    const heading = ["documentTitle", "heading", "subheading"].includes(style.role);
+    if (!heading && !style.role.endsWith("Caption")) return style;
     const family = unit.fontFamily || style.family;
-    return family === style.family && !unit.allItalic ? style : { ...style, family, italic: !!unit.allItalic };
+    const italic = !!(heading && unit.allItalic);
+    if (family === style.family && !italic) return style;
+    const weight = family === "sans" && style.weight === 550 ? 500 : style.weight;
+    return { ...style, family, italic, weight };
+  }
+
+  // Match native table cells and diagram labels to their measured face.
+  // Tiny axes and OCR labels without font metadata retain regular strokes.
+  function labelFace(unit, language) {
+    const table = unit.role === "table_label";
+    if (!table && unit.role !== "figure_label") return null;
+    const simpleHan = /^(?:zh|zh-CN|zh-Hans)$/iu.test(language);
+    const native = unit.matched && !unit.inkMask && !!unit.fontFamily;
+    const family = simpleHan && (table || native) ? (unit.fontFamily || "serif")
+      : !table || (unit.sans && !/^zh(?:-|$)/iu.test(language)) ? "sans" : "serif";
+    const medium = simpleHan && (table || (native && unit.size >= 6));
+    return {family, weight:unit.labelBold ? 700 : medium ? 500 : 400};
+  }
+
+  function applyLabelFace(node, unit, language) {
+    const style = labelFace(unit,language);
+    if (!style) return;
+    node.classList.toggle("dr-paper-sans",style.family === "sans");
+    node.style.fontWeight = String(style.weight);
   }
 
   function sourceFamily(name) {
     if (
-      /sans|NimbusSan|Helvetica|Arial|OptimisticDisp|CMSS|LMSans|Calibri|Aptos|Roboto|Inter(?=[-_.]|$)|Gothic/iu.test(
+      /sans|NimbusSan|Helvetica|Arial|OptimisticDisp|CMSS|LMSans|Calibri|Aptos|Roboto|Inter(?=[-_.]|$)|Gothic|Biolinum/iu.test(
         name
       )
     )
       return "sans";
-    if (/serif|Times|TeXGyreTermes|NimbusRom|STIX|Palatino|CMR|CMBX|LMRoman|SFRM|SFBX|Mincho/iu.test(name))
+    if (/serif|Times|TeXGyreTermes|NimbusRom|STIX|Palatino|CMR|CMBX|LMRoman|SFRM|SFBX|Mincho|Libertine/iu.test(name))
       return "serif";
   }
 
@@ -419,10 +532,11 @@
     node.style.fontStyle = style.italic ? "italic" : "normal";
     node.classList.toggle("dr-paper-sans", style.family === "sans");
   }
-  DeepRead.PaperStyles = {styleFor,sourceFamily,
+  DeepRead.PaperStyles = {styleFor,labelFace,applyLabelFace,sourceFamily,referenceHeading: text => bibliographyHeading.test(text.trim()),
     make,
     resolve,
     peek: (session) => sessions.get(session)?.profile || fallback,
+    cover: session => sessions.get(session)?.cover || [],
     countPage,
     documentStructure,
     role,

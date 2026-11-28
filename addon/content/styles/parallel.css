@@ -12,6 +12,9 @@
 .deepread-parallel button:focus-visible,.dr-native-more:focus-visible {outline:2px solid var(--dr-accent,#3975a3);}
 .dr-native-page { position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden; }
 .dr-native-page :is(.dr-parallel-text,.dr-native-more) {pointer-events:auto;}
+/* The empty part of a joined line can belong to the preceding paragraph. */
+.dr-native-page .dr-parallel-text[data-flow-fragment] {pointer-events:none;}
+.dr-native-page[data-translated] .dr-parallel-text[data-flow-fragment] .dr-parallel-line-ink {pointer-events:auto;}
 .dr-native-page:not([data-translated]) > .dr-parallel-stage {opacity:0;pointer-events:none;}
 .dr-native-page:not([data-translated]) .dr-parallel-text {pointer-events:none;}
 .dr-native-more {position:absolute;bottom:4px;right:8px;z-index:2;color:#24384c;background:#fff;font:12px sans-serif;}

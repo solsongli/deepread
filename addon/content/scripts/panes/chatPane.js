@@ -132,10 +132,11 @@
       chat.controller = new AbortController();
       session._emit("chat");
 
+      const tools = quotes.length ? [] : DeepRead.PaperTools.select(question, !!session.comparison?.root);
       // History: recent turns within a character budget.
       const history = [];
       let budget = HISTORY_CHARS;
-      for (const message of chat.messages.slice(0, -2).slice(-HISTORY_MESSAGES).reverse()) {
+      for (const message of (tools.length ? [] : chat.messages.slice(0, -2).slice(-HISTORY_MESSAGES).reverse())) {
         const content = message.role === "user" ? userContent(message) : message.content;
         if (!content || budget - content.length < 0) break;
         budget -= content.length;
@@ -143,15 +144,17 @@
       }
 
       try {
-        await DeepRead.LLM.stream({
-          system: systemPrompt(session),
-          messages: [...history, { role: "user", content: userContent(user) }],
+        const options = {
           config: DeepRead.prefs.llmConfig({ chat: true }),
           signal: chat.controller.signal,
           onDelta: (_delta, full) => {
             assistant.content = full;
             session._emit("chat-delta");
           },
+        };
+        if (tools.length) await DeepRead.PaperTools.answer(session, question, tools, options);
+        else await DeepRead.LLM.stream({
+          ...options, system: systemPrompt(session), messages: [...history, { role: "user", content: userContent(user) }]
         });
       }
       catch (error) {

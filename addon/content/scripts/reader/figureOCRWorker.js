@@ -22,7 +22,8 @@ async function initialize() {
 self.onmessage = async ({ data }) => {
   try {
     const { core, api } = await (engine ||= initialize());
-    core.FS.writeFile("/input", new Uint8Array(data));
+    core.FS.writeFile("/input", new Uint8Array(data.bytes));
+    api.SetVariable("tessedit_pageseg_mode", data.mode === "line" ? "7" : data.mode === "block" ? "6" : "11");
     if (api.SetImageFile(1, 0) !== 0 || api.Recognize(null) !== 0) throw new Error("Could not recognize the plot");
     self.postMessage({ tsv: api.GetTSVText() });
   } catch (error) {

@@ -44,6 +44,7 @@ E2E.run = async function () {
     return text.includes('intersecting') ? '与图像重叠的译文。' : '扫描页正文。';
   };
   let calls = 0, parseCalls = 0, fail = false, stall = false;
+  const replyModes = new Set();
   const pendingReplies = [];
   D.Parser.parsePDF = async ({ pdfApp, attachmentKey, filePath }) => {
     parseCalls++;
@@ -60,7 +61,16 @@ E2E.run = async function () {
     calls++;
     if (stall) await new Promise(resolve => pendingReplies.push(resolve));
     if (fail) return { content: JSON.stringify({ translations: [] }) };
-    return { content: JSON.stringify({ translations: list.map((u) => ({ id: u.id, translation: translated(u.source_text) })) }) };
+    const output = JSON.stringify({ translations: list.map(u => ({ id: u.id, translation: translated(u.source_text) })) });
+    const submit = args.toolChoice?.function?.name;
+    if (calls % 2 && submit === "submit_pdf_translation") {
+      replyModes.add("tool");
+      return { raw: { choices: [{ message: { tool_calls: [
+        { type: "function", function: { name: submit, arguments: output } }
+      ] } }] } };
+    }
+    replyModes.add("json");
+    return { content: output };
   };
   const transparent=(canvas,x,y,w,h)=>{
     const pixels=canvas.getContext("2d").getImageData(x,y,w,h).data;
@@ -103,15 +113,31 @@ E2E.run = async function () {
       doc.body.classList.contains("enable-vertical-split-view") && left.scrollMode===0 && right.scrollMode===0 &&
       !doc.querySelector(".dr-parallel-next,dialog.deepread-parallel") && !doc.querySelector("dialog[open]"));
     const pair=actions[0];pair.dispatchEvent(new c.surface.doc.defaultView.PointerEvent("pointermove",{bubbles:true}));
-    const relative=o=>{
-      const div=o.parentNode,b=o.getBoundingClientRect(),p=div.getBoundingClientRect();
+    const relative=(o,div=o.parentNode)=>{
+      const b=o.getBoundingClientRect(),p=div.getBoundingClientRect();
       return [(b.left-p.left-div.clientLeft)/div.clientWidth*c.page.width,(b.top-p.top-div.clientTop)/div.clientHeight*c.page.height,
         b.width/div.clientWidth*c.page.width,b.height/div.clientHeight*c.page.height];
     };
     const sourceRect=pair.dataset.sourceRect.split(" ").map(Number);
-    check("both hover outlines use the full physical source rectangle without blocking selection",
+    const rightPage=right.getPageView(0).div;
+    const paintRect=relative(pair,rightPage);
+    check("hover outlines use the physical source and rendered translation positions without blocking selection",
       native.marked===pair && native.outlines?.length===2 && native.outlines.every(o=>o.isConnected &&
-        o.style.pointerEvents==="none" && relative(o).every((v,i)=>Math.abs(v-sourceRect[i])<.1)));
+        o.style.pointerEvents==="none") && native.outlines.every((o,j)=>
+          relative(o).every((v,i)=>Math.abs(v-[sourceRect,paintRect][j][i])<.1)));
+    const part=pair.cloneNode(false);
+    Object.assign(part.style,{left:"12px",top:"31px",width:"36px",height:"10px"});
+    part.dataset.paintRects="[[12,31,36,10]]";
+    pair.parentNode.append(part);
+    const rr=rightPage.getBoundingClientRect();
+    part.dispatchEvent(new c.surface.doc.defaultView.MouseEvent("click",{bubbles:true,
+      clientX:rr.left+rightPage.clientLeft+26/c.page.width*rightPage.clientWidth,
+      clientY:rr.top+rightPage.clientTop+35/c.page.height*rightPage.clientHeight}));
+    check("clicking a continuation outlines its source once and both translated fragments",
+      native.marked===part && native.outlines?.length===3 &&
+      relative(native.outlines[0]).every((v,i)=>Math.abs(v-sourceRect[i])<.1) &&
+      relative(native.outlines[2]).every((v,i)=>Math.abs(v-[12,31,36,10][i])<.1));
+    part.remove();
     native.clearHighlight();
     const dims=()=>[left.getPageView(0).div,right.getPageView(0).div].map(el=>el.getBoundingClientRect());
     const [original,target]=dims();
@@ -132,6 +158,60 @@ E2E.run = async function () {
     check('left-column text begins at the matching PDF coordinate', Math.abs((list[0].getBoundingClientRect().x-origin.x)/scale - 44)<1);
     check('right column stays in the right column', actions.some((box) => box.textContent.includes('两组实验') && parseFloat(box.style.left) > 310));
     const typesetDoc=c.surface.doc,stage=c.target.stage;
+    {
+      const rect = [0, 0, 4, 2], samples = [rect];
+      const pixels = {width: 4, height: 2, data: Uint8ClampedArray.from(Array(8).fill([191, 0, 64, 255]).flat())};
+      const page = {width: 4, height: 2, transform: [1, 0, 0, 1, 0, 0], links: [{rect}], language: "zh"};
+      const entry = typesetDoc.createDocumentFragment();
+      entry.append("世界重建 WorldMirror ⟦D0⟧");
+      const unit = {linkSamples: samples, typeRole: "contents", tokens: [{id: "⟦D0⟧", kind: "number", display: "2.0", samples}]};
+      D.ParallelInk.materialize(typesetDoc, entry, unit, page, null, pixels);
+      const link = entry.firstChild;
+      check("contents words and their embedded version number share the source link and ink",
+        entry.childNodes.length === 1 && link.localName === "a" && link.dataset.sourceLink === "0" &&
+        !link.querySelector("a") && link.textContent.includes("世界重建") && link.textContent.endsWith("2.0") &&
+        link.style.color === "rgb(191, 0, 64)");
+    }
+    {
+      const brand = "https://example.org/device", vendor = "https://example.org/vendor";
+      const chars = ["Haption","Virtuose","Haption","OXO","Unsafe"].map((u,i) => ({
+        u, rect:[0,i*3,8,i*3+2], lineBreakAfter:true
+      }));
+      const page = {width:8,height:15,transform:[1,0,0,1,0,0],chars,language:"zh",
+        links:[{rect:chars[0].rect,url:brand},{rect:chars[1].rect,url:brand},
+          {rect:chars[3].rect,url:vendor},{rect:chars[4].rect,url:"javascript:void(0)"}]};
+      const pixels = {width:8,height:15,data:Uint8ClampedArray.from(Array(8*15).fill([255,0,0,255]).flat())};
+      const unit = {source:"Haption Virtuose. Haption, OXO and Unsafe.",rect:[0,0,8,15],rects:chars.map(c=>c.rect)};
+      const entry = typesetDoc.createDocumentFragment();
+      entry.append("Haption Virtuose；随后 Haption，使用 OXO 和 Unsafe。");
+      D.ParallelInk.materialize(typesetDoc,entry,unit,page,null,pixels);
+      const anchors = [...entry.querySelectorAll("a[data-source-link]")];
+      check("only unambiguous retained words inside external PDF link rectangles are clickable",
+        anchors.length===2 && anchors[0].textContent==="Haption Virtuose" && anchors[1].textContent==="OXO" &&
+        anchors.every(a=>a.style.color==="rgb(255, 0, 0)") &&
+        page.links[Number(anchors[0].dataset.sourceLink)].url===brand &&
+        page.links[Number(anchors[1].dataset.sourceLink)].url===vendor &&
+        entry.textContent==="Haption Virtuose；随后 Haption，使用 OXO 和 Unsafe。");
+      const unresolved = typesetDoc.createDocumentFragment();
+      unresolved.append("Haption 和 Haption");
+      D.ParallelInk.materialize(typesetDoc,unresolved,unit,page,null,pixels);
+      check("ambiguous repeated names are left alone", !unresolved.querySelector("a"));
+    }
+    {
+      const rects = [[0,0,8,2],[0,9,8,11],[12,0,18,2],[12,9,20,11]];
+      const chars = ["Wang et al.","Wang et al.","(2023)","Wang et al."].map((u,i)=>({u,rect:rects[i],lineBreakAfter:true}));
+      const page = {width:20,height:12,transform:[1,0,0,1,0,0],chars,links:[
+        {rect:rects[0],dest:"cite.wang2022"},{rect:rects[1],dest:"cite.wang2023"},{rect:rects[2],dest:"cite.wang2023"}
+      ]};
+      const pixels = {width:20,height:12,data:Uint8ClampedArray.from(Array(240).fill([255,0,0,255]).flat())};
+      for (const [i,expected] of [[0,"0"],[1,"1"],[3,null]]) {
+        const frag=typesetDoc.createDocumentFragment();frag.append("参见 Wang et al.");
+        D.ParallelInk.materialize(typesetDoc,frag,{source:"See Wang et al.",rect:rects[i]},page,null,pixels);
+        const a=frag.querySelector("a");
+        check("a retained author uses its own physical reference at row "+i,
+          (a?.dataset.sourceLink ?? null)===expected && (!a || a.textContent==="Wang et al."));
+      }
+    }
     function sampleMargins(justified){
       const box=typesetDoc.createElementNS("http://www.w3.org/1999/xhtml","div");
       box.className="dr-parallel-text";box.style.cssText="left:0;top:0;width:149px;height:240px;visibility:hidden";
@@ -153,6 +233,22 @@ E2E.run = async function () {
         return {edges,link:box.querySelector("a")?.textContent};
       }finally{box.remove();}
     }
+    for (const [source,translation,width,height,em] of [
+      ["base","基础版",22.4,10.8,10], ["Succ%","成功率%",26,9.75,9],
+      ["Our Pcd. (~1.7min)","我们的点云（约 1.7 分钟）",59.4,7.1,6.46]
+    ]) {
+      const box=typesetDoc.createElementNS("http://www.w3.org/1999/xhtml","div");
+      box.className="dr-parallel-text";
+      box.style.cssText="left:0;top:0;visibility:hidden;width:"+width+"px;height:"+height+"px";
+      D.PaperType.apply(box,"zh");stage.append(box);
+      const frag=typesetDoc.createDocumentFragment();frag.append(translation);
+      D.ParallelTypeset.draw(box,{source,translation,size:em,verifiedLabel:true,direction:[1,0],
+        rects:[[0,0,width,height]]},frag,em);
+      check("short scientific label stays inside its cell: "+source,
+        !box.dataset.overflow && box.querySelectorAll(".dr-parallel-line").length===1 &&
+        (source.includes("min") ? /1\.7\s*min/u.test(box.textContent) : box.textContent===translation));
+      box.remove();
+    }
     const flush=sampleMargins(true),ragged=sampleMargins(false);
     check("real Chinese glyph runs reach both margins of source-justified lines, with a natural final line",
       flush.edges.length>=3 && flush.edges.slice(0,-1).every(([l,r])=>Math.abs(l)<.15 && Math.abs(r)<.15) &&
@@ -169,10 +265,114 @@ E2E.run = async function () {
         rect:[0,0,480,2*step+type.size],rects:[[0,2*step,480,2*step+type.size],[0,step,480,step+type.size],[0,0,340,type.size]]};
       D.ParallelTypeset.draw(box,unit,sample,type.size,type);
       const rows=Array.from(box.querySelectorAll(".dr-parallel-grid-line"));
-      check(typeRole+" uses three readable lines and keeps the full translation at the role font size",
-        rows.length===3 && rows.every(row=>row.textContent.length>=4 && row.firstChild.offsetWidth<box.clientWidth*.72) &&
-        rows.map(row=>row.textContent).join("")===shortText && parseFloat(box.style.fontSize)===type.size);
+      check(typeRole+" keeps a short translation on one natural line at the document font size",
+        rows.length===1 && rows[0].textContent===shortText && parseFloat(box.style.fontSize)===type.size);
       box.remove();
+    }
+    {
+      const caption = "图二展示了输入表示以及词元嵌入、片段嵌入和位置嵌入的对应关系。";
+      const style = paperStyle.figureCaption;
+      const width = caption.length * style.size * 1.1;
+      const box = typesetDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      box.className = "dr-parallel-text";
+      box.style.cssText = `left:0;top:0;width:${width}px;height:70px;visibility:hidden`;
+      D.PaperType.apply(box, "zh");
+      stage.append(box);
+      const fragment = typesetDoc.createDocumentFragment();
+      fragment.append(caption);
+      D.ParallelTypeset.draw(box, { size: style.size, caption: true, direction: [1, 0],
+        rect: [0, 0, width, 2 * style.step], rects: [[0, style.step, width, 2 * style.step], [0, 0, width, style.step]]
+      }, fragment, style.size, style);
+      check("a caption filling the source width stays on one natural line",
+        box.querySelectorAll(".dr-parallel-grid-line").length === 1 && box.textContent === caption);
+      box.remove();
+    }
+    {
+      const box = typesetDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      box.className = "dr-parallel-text";
+      box.style.cssText = "left:0;top:0;width:300px;height:80px;visibility:hidden";
+      D.PaperType.apply(box, "zh");
+      stage.append(box);
+      const fragment = typesetDoc.createDocumentFragment();
+      const number = typesetDoc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+      number.dataset.referenceStart = "true";
+      number.textContent = "[2]";
+      fragment.append("[1] 第一篇参考文献。 ", number, " 第二篇参考文献。");
+      const ref = paperStyle.reference;
+      D.ParallelTypeset.draw(box, { source: "References", size: ref.size, direction: [1, 0], rects: [[0, 0, 300, 35]] },
+        fragment, ref.size, ref);
+      const rows = Array.from(box.querySelectorAll(".dr-parallel-grid-line"), r => r.textContent);
+      check("numbered references keep their own line even in a merged parser block",
+        rows.length === 2 && rows[0].startsWith("[1]") && rows[1].startsWith("[2]"));
+      box.remove();
+    }
+    {
+      const complete = D.LLM.complete, stream = D.LLM.stream, paint = c.paint;
+      const exchange = [];
+      let repainted = 0;
+      try {
+        c.paint = function () { repainted++; return paint.call(this); };
+        D.LLM.complete = async (opts) => {
+          exchange.push(opts);
+          return { raw: { choices: [{ message: { content: null, tool_calls: [
+            { id: "font", type: "function", function: { name: "pdf_fonts", arguments: '{"role":"body"}' } },
+            { id: "layout", type: "function", function: { name: "pdf_layout", arguments: '{"mode":"apply"}' } }
+          ] } }] } };
+        };
+        D.LLM.stream = async (opts) => {
+          exchange.push(opts);
+          opts.onDelta("已重排。", "已重排。");
+        };
+        await D.ChatPane.send(s, "对照译文用了什么字体？请重排当前译页。");
+        const results = (exchange[1]?.messages || []).filter(m => m.role === "tool");
+        const fonts = JSON.parse(results[0]?.content || "{}");
+        const layout = JSON.parse(results[1]?.content || "{}");
+        if (s.chat.error) throw new Error(s.chat.error);
+        check("paper chat sends the question and two local tools without full paper text",
+          exchange.length === 2 && exchange[0].tools?.length === 2 && exchange[0].messages.length === 1 &&
+          !exchange[0].system.includes("# Paper full text"));
+        check("font tool returns the font currently used for body text", fonts.styles?.body?.pt === paperStyle.body.size);
+        check("layout tool repaints only the active translated page and the answer is shown",
+          layout.page === 1 && layout.applied && repainted > 0 && s.chat.messages.at(-1).content === "已重排。");
+      } finally {
+        D.LLM.complete = complete;
+        D.LLM.stream = stream;
+        c.paint = paint;
+      }
+      check("a paper question about a layout model keeps normal reading context",
+        !D.PaperTools.select("论文如何训练 layout 模型？", true).length);
+    }
+    {
+      const complete = D.LLM.complete, stream = D.LLM.stream;
+      const flagged = c.page.units.find(u => u.tokens?.length);
+      const missing = c.page.units.find(u => u !== flagged);
+      const old = [flagged.translation, missing.translation];
+      let audit;
+      try {
+        flagged.translation = "译文中的公式已丢失。";
+        missing.translation = "";
+        D.LLM.complete = async opts => {
+          check("translation check is discoverable as a read-only tool in the chat",
+            opts.tools.length === 1 && opts.tools[0].function.name === "pdf_check_translation");
+          return { raw: { choices: [{ message: { tool_calls: [
+            { id: "check", type: "function", function: { name: "pdf_check_translation", arguments: "{}" } }
+          ] } }] } };
+        };
+        D.LLM.stream = async opts => {
+          audit = JSON.parse(opts.messages.at(-1).content);
+          opts.onDelta("检查完成。", "检查完成。");
+        };
+        await D.ChatPane.send(s, "检查当前页译文有没有漏译。");
+        check("translation audit uses the local pending and placeholder checks",
+          audit?.page === 1 && audit.pending === 1 && audit.flagged === 1 &&
+          audit.issues.some(row => row.code === "placeholders") &&
+          audit.issues.some(row => row.code === "missing") &&
+          flagged.translation === "译文中的公式已丢失。" && missing.translation === "");
+      } finally {
+        [flagged.translation, missing.translation] = old;
+        D.LLM.complete = complete;
+        D.LLM.stream = stream;
+      }
     }
     check("bundled serif and sans-serif typefaces are loaded for translation and export",
       typesetDoc.fonts.check('400 12px "DeepRead Song"',"论文") &&
@@ -222,6 +422,8 @@ E2E.run = async function () {
     check('stopping a book run discards a late reply', !c.book && !(await D.Store.comparisonData(s.key,c.page.fingerprint,'page:1:zh')));
     const before = calls; await c.translateBook();
     check('whole document resumes from the first missing page and reuses parsed geometry', calls===before+2 && parseCalls===3 && !c.book);
+    check("the same PDF translation path accepts a terminal tool reply and compatible JSON",
+      replyModes.has("tool") && replyModes.has("json"));
     const rotated=c.target.stage.querySelector('[data-type-role="body"]');
     check("navigating to a rotated page keeps the same physical body size and line spacing",
       rotated && rotated.style.fontSize===originalBodySize && rotated.style.lineHeight===originalBodyStep);

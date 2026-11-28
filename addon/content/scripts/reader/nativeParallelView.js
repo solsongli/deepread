@@ -97,6 +97,7 @@
         };
         const input = () => {
           this.driver = side;
+          this.revealedPassage = null;
         };
         for (const type of ["wheel", "pointerdown", "keydown", "touchstart"]) {
           view.container.addEventListener(type, input, true);
@@ -111,11 +112,16 @@
           listen(type, update);
         listen("pagerendered", () => this.schedule());
         const highlight = (e) => this.highlight(side, e);
+        const activate = (e) => {
+          if (!e.target.closest?.("a,button,input,textarea,[role=button]")) highlight(e);
+        };
         const leave = () => this.clearHighlight();
         view.container.addEventListener("pointermove", highlight);
+        view.container.addEventListener("click", activate, true);
         view.container.addEventListener("pointerleave", leave);
         this.cleanup.push(() => {
           view.container.removeEventListener("pointermove", highlight);
+          view.container.removeEventListener("click", activate, true);
           view.container.removeEventListener("pointerleave", leave);
         });
       }
@@ -125,6 +131,7 @@
       align(this.right.pdfViewer, anchor);
       const toolbarInput = () => {
         this.driver = internal._lastViewPrimary === false ? 1 : 0;
+        this.revealedPassage = null;
       };
       for (const type of ["pointerdown", "keydown"]) {
         outer.addEventListener(type, toolbarInput, true);
@@ -160,10 +167,12 @@
       if (source.pagesRotation !== target.pagesRotation) target.pagesRotation = source.pagesRotation;
       if (Math.abs(source.currentScale - target.currentScale) > 0.001)
         target.currentScale = source.currentScale;
-      const anchor = position(source);
-      if (target.currentPageNumber !== source.currentPageNumber) {
-        if (target._setCurrentPageNumber) target._setCurrentPageNumber(source.currentPageNumber, false);
-        else target.currentPageNumber = source.currentPageNumber;
+      const reveal = this.revealedPassage;
+      const anchor = reveal?.side === this.driver ? reveal.anchor : position(source);
+      const targetPage = reveal?.side === this.driver ? reveal.anchor.index + 1 : source.currentPageNumber;
+      if (target.currentPageNumber !== targetPage) {
+        if (target._setCurrentPageNumber) target._setCurrentPageNumber(targetPage, false);
+        else target.currentPageNumber = targetPage;
       }
       align(target, anchor);
       const v = this.right.pdfViewer,
@@ -194,6 +203,7 @@
     }
     navigate(index) {
       if (!this.ready || index < 0 || index >= this.reader.count) return;
+      this.revealedPassage = null;
       this.driver = 0;
       const viewer = this.left.pdfViewer;
       if (viewer.currentPageNumber !== index + 1) viewer.currentPageNumber = index + 1;
@@ -343,39 +353,76 @@
         this.clearHighlight();
         return;
       }
-      let block = side === 1 && event.target.closest?.(".dr-parallel-text[data-source-rect]");
-      if (!block) {
-        const rect = node.getBoundingClientRect(),
-          x = ((event.clientX - rect.left - node.clientLeft) * s.page.width) / node.clientWidth,
-          y = ((event.clientY - rect.top - node.clientTop) * s.page.height) / node.clientHeight;
-        block = [...s.target.stage.querySelectorAll("[data-source-rect]")].find((b) => {
-          const [l, t, w, h] = b.dataset.sourceRect.split(" ").map(Number);
-          return x >= l && x <= l + w && y >= t && y <= t + h;
-        });
+      const pages = [this.left.pdfViewer,this.right.pdfViewer].map(v=>v.getPageView(index)?.div);
+      if (!pages.every(div => div?.clientWidth && div.clientHeight)) {
+        this.clearHighlight();
+        return;
       }
-      if (block && block === this.marked && this.outlines?.every((o) => o.isConnected)) return;
+      const blocks = [...s.target.stage.querySelectorAll(".dr-parallel-text[data-source-rect]")];
+      const {width,height} = s.page;
+      const area = node.getBoundingClientRect();
+      const x = (event.clientX - area.left - node.clientLeft) * width / node.clientWidth;
+      const y = (event.clientY - area.top - node.clientTop) * height / node.clientHeight;
+      const contains = ([l,t,w,h]) => x>=l && x<=l+w && y>=t && y<=t+h;
+      const source = b => b.dataset.sourceRect.split(" ").map(Number);
+      const painted = b => {
+        if (b.dataset.paintRects) return JSON.parse(b.dataset.paintRects);
+        if (b.dataset.paintRect) return [b.dataset.paintRect.split(" ").map(Number)];
+        const target = pages[1], origin = target.getBoundingClientRect(), box = b.getBoundingClientRect();
+        const sx = width/target.clientWidth, sy = height/target.clientHeight;
+        return [[(box.left-origin.left-target.clientLeft)*sx,(box.top-origin.top-target.clientTop)*sy,
+          box.width*sx,box.height*sy]];
+      };
+      let block;
+      if (side === 0) block = blocks.find(b => contains(source(b)));
+      else {
+        // A cross-column continuation can share the first printed line with
+        // the preceding paragraph. Prefer the occupied part of that line.
+        block = blocks.find(b => b.dataset.paintRects && painted(b).some(contains));
+        const hit = event.target.closest?.(".dr-parallel-text[data-source-rect]");
+        if (!block && hit && (!hit.dataset.paintRects || painted(hit).some(contains))) block = hit;
+        if (!block) block = blocks.find(b => painted(b).some(contains));
+      }
+      const activated = event.type === "click";
+      if (block && block === this.marked && !activated && this.outlines?.every(o=>o.isConnected)) return;
       this.clearHighlight();
       if (!block) return;
-      const [x, y, w, h] = block.dataset.sourceRect.split(" ").map(Number);
-      const pages = [this.left.pdfViewer,this.right.pdfViewer].map(v=>v.getPageView(index)?.div);
-      if (!pages.every(Boolean)) return;
       const outlines = [];
-      for (const div of pages) {
-        const outline = element(div.ownerDocument, "div", "dr-native-outline");
-        outline.setAttribute("aria-hidden", "true");
-        outline.style.cssText =
-          "position:absolute;pointer-events:none;z-index:5;outline:1.5px solid #387ab2;";
-        Object.assign(outline.style, {
-          left: (x / s.page.width) * 100 + "%",
-          top: (y / s.page.height) * 100 + "%",
-          width: (w / s.page.width) * 100 + "%",
-          height: (h / s.page.height) * 100 + "%"
-        });
-        div.append(outline);
-        outlines.push(outline);
+      const fragments = block.dataset.sourceUnit === undefined ? [block] :
+        blocks.filter(b=>b.dataset.sourceUnit===block.dataset.sourceUnit);
+      const rectangles = [[source(block)], fragments.flatMap(painted)];
+      for (const [sideIndex, div] of pages.entries()) {
+        for (const [l,t,w,h] of rectangles[sideIndex]) {
+          const outline = element(div.ownerDocument, "div", "dr-native-outline");
+          outline.setAttribute("aria-hidden", "true");
+          Object.assign(outline.style, {
+            position:"absolute",pointerEvents:"none",zIndex:"5",outline:"1.5px solid #387ab2",
+            left:l/width*100+"%",top:t/height*100+"%",width:w/width*100+"%",height:h/height*100+"%"
+          });
+          div.append(outline);
+          outlines.push(outline);
+        }
       }
       this.outlines = outlines;
       this.marked = block;
+      if (!activated || !fragments.some(b => b.hasAttribute("data-flow-fragment"))) return;
+      const other = pages[1-side];
+      const viewer = (side === 0 ? this.right : this.left).pdfViewer;
+      const port = viewer.container.getBoundingClientRect();
+      const sheet = other.getBoundingClientRect();
+      const targets = rectangles[1-side];
+      const top = rect => sheet.top + other.clientTop + rect[1] * other.clientHeight / height;
+      const left = rect => sheet.left + other.clientLeft + rect[0] * other.clientWidth / width;
+      const visibleX = rect => left(rect) >= port.left && left(rect) < port.right;
+      if (targets.some(rect => top(rect) >= port.top && top(rect) < port.bottom && visibleX(rect))) return;
+      const target = targets.reduce((nearest,rect) =>
+        Math.abs(top(rect)-port.top) < Math.abs(top(nearest)-port.top) ? rect : nearest, targets[0]);
+      this.revealedPassage = {side, anchor:{
+        index,x:visibleX(target) ? position(viewer)?.x ?? 0 : target[0]/width-port.width/other.clientWidth*.08,
+        y:target[1]/height-port.height/other.clientHeight*.12
+      }};
+      this.driver = side;
+      this.schedule();
     }
     close(restore = true) {
       this.closed = true;

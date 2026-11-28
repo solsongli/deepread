@@ -57,6 +57,10 @@ const server = http.createServer((req, res) => {
       case "always400rf":
         if (body.response_format) return json(400, { error: { message: "bad response_format" } });
         return ok("{}");
+      case "noNamedTool":
+        return body.tool_choice
+          ? json(422, { error: { message: "Unsupported tool_choice" } })
+          : ok('{"translations":[]}');
       case "429x2":
         if (n <= 2) return json(429, { error: "slow down" }, { "Retry-After": "0" });
         return ok("after429");
@@ -145,6 +149,30 @@ test("complete: no max_tokens / no auth when absent", async () => {
   await LLM.complete({ messages: msgs });
   assert.equal("max_tokens" in requests[0].body, false);
   assert.equal(requests[0].headers.authorization, undefined);
+  assert.equal("tools" in requests[0].body, false);
+});
+
+test("complete: includes function tools only on request", async () => {
+  reset("normal");
+  const tools = [{ type: "function", function: { name: "pdf_layout", parameters: { type: "object" } } }];
+  await LLM.complete({ messages: msgs, tools });
+  assert.deepEqual(requests[0].body.tools, tools);
+});
+
+test("terminal translation tool uses JSON after a provider rejects named tool_choice", async () => {
+  reset("noNamedTool", { model: "legacy-tool-provider", jsonMode: "json_object" });
+  const name = "submit_pdf_translation";
+  const tools = [{ type: "function", function: { name, parameters: { type: "object" } } }];
+  const toolChoice = { type: "function", function: { name } };
+  const opts = { messages: msgs, tools, toolChoice, responseFormat: { type: "json_object" } };
+  assert.equal((await LLM.complete(opts)).content, '{"translations":[]}');
+  assert.deepEqual(requests[0].body.tool_choice, toolChoice);
+  assert.equal("response_format" in requests[0].body, false);
+  assert.deepEqual(requests[1].body.response_format, { type: "json_object" });
+  assert.equal("tools" in requests[1].body, false);
+  await LLM.complete(opts);
+  assert.equal(requests.length, 3);
+  assert.equal("tool_choice" in requests[2].body, false);
 });
 
 test("complete: strips <think>", async () => {

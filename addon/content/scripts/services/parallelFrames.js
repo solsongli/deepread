@@ -128,12 +128,14 @@
       view[0] + (box[2] * (view[2] - view[0])) / 1000,
       view[3] - (box[1] * (view[3] - view[1])) / 1000
     ];
-    const splitCells = (row) => {
+    const splitCells = (row, columnStarts = [], numericStarts) => {
       const cells = [];
       for (const c of row) {
         if (!glyph(c).trim()) continue;
         const prev = cells.at(-1)?.at(-1);
-        if (!prev || c.rect[0] - prev.rect[2] > Math.max(c.fontSize, prev.fontSize) * 0.78) cells.push([]);
+        const space = prev ? c.rect[0] - prev.rect[2] : 0;
+        if (!prev || numericStarts?.has(c) || space > Math.max(c.fontSize, prev.fontSize) * 0.78 ||
+            (space > c.fontSize * .2 && columnStarts.some(x => Math.abs(c.rect[0] - x) < c.fontSize * .15))) cells.push([]);
         else if (ids.get(c) > ids.get(prev) + 1) {
           const between = chars.slice(ids.get(prev) + 1, ids.get(c));
           if (between.every((g) => !glyph(g).trim())) cells.at(-1).push(...between);
@@ -142,6 +144,25 @@
       }
       return cells;
     };
+    const numberCell = s => /^[+−–—-]?(?:\d[\d.,/%×±−–-]*k?|[−–—-])$/iu.test(s.trim());
+    const scoringModel = cells => cells.length >= 5 && /\b(?:low|medium|high|xhigh|max)$/u.test(text(cells[0])) &&
+      /[A-Z][\w-]*\d|\b\d+[.\d-]*/u.test(text(cells[0])) && cells.filter(c => numberCell(text(c))).length >= 3;
+    function splitTableCells(row, guides) {
+      // Dense numerical tables separate values by a normal word space. Keep
+      // a suffix of three or more printed measurements as individual fields.
+      const words = [];
+      let prev;
+      for (const c of row) {
+        if (!glyph(c).trim()) { prev = null; continue; }
+        if (!prev || prev.spaceAfter || breaks(prev) || c.rect[0] - prev.rect[2] > c.fontSize*.2) words.push([]);
+        words.at(-1).push(c);
+        prev = c;
+      }
+      let start = words.length;
+      while (start > 0 && numberCell(text(words[start-1]))) start--;
+      const starts = words.length - start >= 3 ? new Set(words.slice(start).map(word => word[0])) : undefined;
+      return splitCells(row, guides, starts);
+    }
     function linedUp(a, b, inKnownTable = false) {
       if (!a || !b || a.cells.length < 3 || b.cells.length < 3) return false;
       const em = a.row[0].fontSize || 9;
@@ -169,12 +190,37 @@
     recoverAlgorithms();
     recoverContents();
     recoverPrintedLabels();
+    recoverListingNotes();
     recoverTables();
     recoverMissingTableHeadings();
     recoverFigureLabels();
     recoverEquationNotes();
     splitWrappedParagraphs();
     joinInlineFormulas();
+    // Some narrow headers print "Pick &" and "Place" on successive
+    // baselines. Neither half has its own column or translation.
+    for (const head of additions.filter(it => it.type === "table_label" && /\s(?:&|and|or|of)$/iu.test(it.text))) {
+      const r = union(head.inlineGlyphs), em = head.inlineGlyphs[0].fontSize;
+      const tails = additions.filter(it => {
+        if (it === head || it.type !== "table_label" || it.visualOwner !== head.visualOwner ||
+            !/^[\p{L}][\p{L}\p{N} -]{0,30}$/u.test(it.text)) return false;
+        const b = union(it.inlineGlyphs);
+        return r[3] > b[3] + em * .55 && r[3] - b[3] < em * 1.55 &&
+          Math.abs(r[0]+r[2]-b[0]-b[2]) < em;
+      });
+      if (tails.length !== 1) continue;
+      const [tail] = tails;
+      head.text += " " + tail.text;
+      head.inlineGlyphs = [...head.inlineGlyphs.slice(0,-1), {...head.inlineGlyphs.at(-1), lineBreakAfter:true}, ...tail.inlineGlyphs];
+      head.bbox = boxFor(head.inlineGlyphs);
+      additions.splice(additions.indexOf(tail),1);
+    }
+    const pairs = additions.filter(it=>it.type==="table_label" && /^[a-z]{2}[-–][a-z]{2}$/u.test(it.text));
+    for (const cell of pairs) {
+      const first = cell.inlineGlyphs[0];
+      cell.languagePairs = pairs.some(other => other !== cell && other.visualOwner === cell.visualOwner &&
+        Math.abs(other.inlineGlyphs[0].rect[1] - first.rect[1]) < first.fontSize*.4);
+    }
     return {
       items: items.filter((it, i) => !replaced.has(it.id ?? `item:${i}`)).concat(additions),
       replaced,
@@ -267,21 +313,25 @@
       const entries = [];
       for (const row of rows) {
         const s = text(row);
-        const entry = /^((?:[A-Z]|[IVXLCDM]+|\d+)(?:\.\d+)*\.?)\s+(.+?)\s+(\d{1,4})$/u.exec(s);
+        const entry = /^(?:((?:[A-Z]|[IVXLCDM]+|\d+)(?:\.\d+)*\.?)\s+)?(.+?)\s+(\d{1,4})$/u.exec(s);
         if (!entry || !/[a-z]{2}/iu.test(entry[2]) || !row.at(-1).rect) continue;
         const label = entry[2].replace(/(?:\s*[.·…]){3,}\s*$/u, "").trim();
         if (!label || label.length > 185) continue;
-        const titleStart = s.indexOf(label, entry[1].length);
+        const titleStart = s.indexOf(label, entry[1]?.length || 0);
         let at = 0;
         const run = row.filter((c) => {
           const begin = at;
           at += glyph(c).length + (c.spaceAfter || breaks(c) ? 1 : 0);
           return begin < titleStart + label.length && begin + glyph(c).length > titleStart;
         });
-        if (run.length) entries.push({ row, run, right: row.at(-1).rect[2], dots: label !== entry[2].trim() });
+        if (!run.length) continue;
+        const dots = label !== entry[2].trim();
+        const pageStart = row.at(-entry[3].length);
+        if (!entry[1] && !dots && pageStart.rect[0] - run.at(-1).rect[2] < pageStart.fontSize * 2) continue;
+        entries.push({ row, run, right: row.at(-1).rect[2], numberedLeaders: !!entry[1] && dots });
       }
       const toc = entries.filter(
-        (e) => entries.filter((other) => Math.abs(e.right - other.right) < 5 && other.dots).length >= 2
+        (e) => entries.filter((other) => Math.abs(e.right - other.right) < 5 && other.numberedLeaders).length >= 2
       );
       const covered = new Map();
       for (const e of toc) for (const c of e.row) covered.set(c, e);
@@ -294,7 +344,15 @@
         if (!matches.every((e) => s.start <= ids.get(e.row[0]) + 2 && s.end >= ids.get(e.row.at(-1)) - 2))
           continue;
         replaced.add(s.id);
-        for (const e of matches) addFrame(e.run, s.item, "text", "contents-" + ids.get(e.row[0]));
+        for (const e of matches) {
+          const frame = addFrame(e.run, s.item, "text", "contents-" + ids.get(e.row[0]));
+          const punctuation = e.row.slice(e.row.indexOf(e.run.at(-1)) + 1).filter(c => /^[.·…]$/u.test(glyph(c)));
+          if (punctuation.length < 3) continue;
+          const [a,b,c] = punctuation.map(g => g.rect);
+          const pitch = b[0] - a[0];
+          if (pitch > a[2] - a[0] && Math.abs(c[0] - b[0] - pitch) < .5)
+            frame.contentsLeader = {dot:a,pitch};
+        }
       }
     }
 
@@ -317,7 +375,7 @@
               : [];
           });
         } else {
-          const cells = owned.map(splitCells);
+          const cells = owned.map(row => splitCells(row));
           if (
             cells.length < 2 ||
             cells.some((c) => c.length < 2 || Math.abs(c[1][0].rect[0] - cells[0][1][0].rect[0]) > 4)
@@ -334,26 +392,90 @@
       }
     }
 
+    function recoverListingNotes() {
+      const captions = items.filter(it => it.bbox && /^Listing\s+\d+[.:]/iu.test(it.text || ""));
+      if (!captions.length) return;
+      for (const row of rows) {
+        const marker = row.findIndex(c => glyph(c) === "#");
+        if (marker < 1 || !/^\d{1,3}$/u.test(text(row.slice(0,marker))) || !/[a-z]{2}/iu.test(text(row.slice(marker+1)))) continue;
+        const glyphs = row.slice(marker+1).filter(c => glyph(c).trim());
+        const r = union(glyphs), em = glyphs[0].fontSize;
+        const owner = streams.find(s => s?.item.type === "equation" && ids.get(row[marker]) >= s.start &&
+          ids.get(glyphs.at(-1)) < s.end+2);
+        if (!owner || !captions.some(it => {
+          const b = regionOf(it.bbox);
+          return r[1] > b[3] && r[1]-b[3] < em*24 && r[0] < b[2] && r[2] > b[0];
+        })) continue;
+        const run = glyphs.map((c,i) => ({...c,spaceAfter:c.spaceAfter &&
+          i+1<glyphs.length && glyphs[i+1].rect[0]-c.rect[2] > em*.3}));
+        const note = addFrame(run,owner.item,"code_comment","comment-"+ids.get(glyphs[0]));
+        note.visualOwner = owner.id;
+        note.flushLeft = true;
+      }
+    }
+
     function recoverTables() {
       // Tables flattened by the text-layer parser lose every column boundary.
       // Identify a grid using repeated alignment across adjacent physical rows.
       // A table caption followed by a run of aligned columns is also strong
       // evidence when PDF reading order jumps from one cell to the next.
       const tableCaptions = items.filter(
-        (it) => it.type === "text" && it.bbox && /^Table\s+\d+\b/iu.test(it.text)
+        it => it.bbox && ((it.type === "text" && /^Table\s+(?:\d+\b|[IVXLCDM]+[.:])/iu.test(it.text)) ||
+          (it.type === "table" && !it.table_body && it.table_caption?.length))
       );
+      const headings = new Map();
+      for (const s of streams) {
+        if (!s || !s.item.text_level || replaced.has(s.id)) continue;
+        const complete = DeepRead.Typography.match(chars.slice(s.start,s.end+8),s.item.text);
+        const lines = DeepRead.ParallelVisual.lines(complete || chars.slice(s.start,s.end));
+        if (lines.length !== 1 || !lines[0].every(DeepRead.Typography.bold)) continue;
+        const cells = splitCells(lines[0]);
+        if (cells.length < 3 || cells.some(cell => !/\p{L}/u.test(text(cell)))) continue;
+        // An uncaptioned table needs stronger evidence than a heading with
+        // gaps: the rows below must start on the same three column guides.
+        headings.set(s.item,cells);
+        tableCaptions.push(s.item);
+      }
       for (const caption of tableCaptions) {
-        const box = regionOf(caption.bbox);
-        const region = [];
+        if (replaced.has(caption.id)) continue;
+        const parserBox = regionOf(caption.bbox);
+        const cap = caption.type === "table" && locate({...caption, text: caption.table_caption.join(" ")});
+        if (caption.type === "table" && !cap) continue;
+        const box = cap ? union(chars.slice(cap.start, cap.end)) : parserBox;
+        if (cap && parserBox[3] - box[3] > chars[cap.start].fontSize * 2.5) continue;
+        // A short caption may span only half its table. Use the width of an
+        // actual multirow parser block below it when its cell grid agrees.
+        for (const s of streams) {
+          if (!s || s.item === caption) continue;
+          const below = regionOf(s.item.bbox);
+          if (Math.abs(below[0] - box[0]) > 6 || below[2] <= box[2] ||
+              box[1] - below[3] < -2 || box[1] - below[3] > 58) continue;
+          const candidates = rows.filter(row => ids.get(row[0]) >= s.start - 2 && ids.get(row.at(-1)) < s.end + 2)
+            .map(row => ({row, cells: splitTableCells(row)}));
+          if (candidates.some((r, i) => linedUp(r, candidates[i + 1], true))) box[2] = below[2];
+        }
+        const head = headings.get(caption);
+        const starts = head?.map(cell=>cell[0].rect[0]);
+        const region = head ? [{row:head.flat(),cells:head,rect:union(head.flat())}] : [];
+        if (starts) box[2] = Math.max(box[2],Math.min(view[2],starts.at(-1)+(starts.at(-1)-starts.at(-2))*.9));
         let last = box[1],
           size;
         for (const row of printedRows) {
-          const cells = splitCells(row.filter((c) => c.rect[0] >= box[0] - 6 && c.rect[2] <= box[2] + 6));
+          const cells = splitTableCells(row,starts).filter(cell =>
+            cell[0].rect[0] >= box[0] - 6 && cell.at(-1).rect[2] <= box[2] + Math.max(6, 2 * cell[0].fontSize));
           if (!cells.length) continue;
           const sample = cells.flat(),
             rect = union(sample),
             em = DeepRead.Typography.metrics(sample)?.fontSize || 8;
           if (rect[3] > box[1] + 1) continue;
+          if (head) {
+            const aligned = cells.every(cell => {
+              const x = cell[0].rect[0], end = cell.at(-1).rect[2];
+              return starts.some((start,i) => Math.abs(x-start)<em*.85 &&
+                end <= (i+1 < starts.length ? starts[i+1]+em*.15 : box[2]+em*2));
+            });
+            if (!aligned) break;
+          }
           if (
             region.length &&
             /^(?:[A-Z]|\d+)(?:\.\d+)+\.?\s+\p{Lu}/u.test(text(sample)) &&
@@ -363,28 +485,41 @@
           const gap = last - rect[3];
           if (gap > (size || em) * 3.2 || (size && em > size * 1.18 && /[a-z]{3}/i.test(text(sample)))) break;
           // A full-width line without cell boundaries marks a return to prose.
-          if (cells.length === 1 && rect[2] - rect[0] > (box[2] - box[0]) * 0.8 && text(sample).length > 85)
-            break;
+          if (/^Table\s+(?:\d+|[IVXLCDM]+)[.:\s]/iu.test(text(sample))) break;
+          const prose = cells.length <= 2 && cells.some(cell =>
+            (text(cell).match(/\b[a-zA-Z]{2,}\b/gu)?.length || 0) >= 6 && text(cell).length > 36);
+          if (prose && !head) {
+            if (region.some(r => r.cells.length >= 3) || gap > em * 1.5) break;
+            region.length = 0;
+            last = rect[1];
+            continue; // a wrapped caption line printed above the column headings
+          }
           size ||= em;
           region.push({ row: sample, cells, rect });
           last = rect[1];
         }
-        if (region.filter((r, i) => linedUp(r, region[i - 1]) || linedUp(r, region[i + 1])).length < 3)
-          continue;
+        const multi = region.filter(r => r.cells.length >= 3);
+        if (head ? region.filter(r => r.cells.length === starts.length).length < 3 :
+          multi.filter((r, i) => linedUp(r, multi[i - 1], true) || linedUp(r, multi[i + 1], true)).length < 3) continue;
+        const gridStarts = region.flatMap(r => r.cells.slice(1).map(cell => cell[0].rect[0]));
+        const guides = [...new Set(gridStarts.filter(x => gridStarts.some(y => y !== x && Math.abs(x - y) < .5) ||
+          gridStarts.indexOf(x) !== gridStarts.lastIndexOf(x)))];
+        if (!head) for (const r of region) r.cells = splitTableCells(r.row, guides);
         const tableInk = new Set(region.flatMap((r) => r.row));
+        const gridTop = Math.max(...region.map(r => r.rect[3]));
         const inRegion = (c) =>
           tableInk.has(c) ||
           (c.rect &&
             c.rect[0] >= box[0] - 6 &&
             c.rect[2] <= box[2] + 6 &&
             c.rect[1] >= last - 1 &&
-            c.rect[3] <= box[1] + 1);
+            c.rect[3] <= gridTop + 1);
         // Drop a parser box only if every one of its printed words is accounted for.
         const sources = streams.filter(
           (s) =>
             s &&
             !replaced.has(s.id) &&
-            s.item !== caption &&
+            (head || s.item !== caption) &&
             chars
               .slice(s.start, s.end)
               .filter((c) => norm(glyph(c)))
@@ -392,6 +527,20 @@
         );
         if (!sources.length) continue;
         const eligible = new Set(sources.flatMap((s) => chars.slice(s.start, s.end)));
+        const kept = streams.filter(s => s && !sources.includes(s) && !replaced.has(s.id));
+        for (const line of region) {
+          const groupHeading = line.cells.length === 1 && /^[\p{L}][\p{L}\d -]{1,42}$/u.test(text(line.row)) &&
+            line.row.every(c => !glyph(c).trim() || DeepRead.Typography.italic(c) || DeepRead.Typography.bold(c));
+          if (!head && line.cells.length < 2 && !groupHeading) continue;
+          for (const c of line.row)
+            if (!claimedLabels.has(c) && !kept.some(s => ids.get(c) >= s.start && ids.get(c) < s.end)) eligible.add(c);
+        }
+        for (const row of region) {
+          if (row.row.some(c => eligible.has(c))) break;
+          if (row.row.every(c => !glyph(c).trim() || DeepRead.Typography.bold(c)) &&
+              !streams.some(s => s && !replaced.has(s.id) && row.row.some(c => ids.get(c) >= s.start && ids.get(c) < s.end)))
+            for (const c of row.row) eligible.add(c);
+        }
         sources.forEach((s) => replaced.add(s.id));
         const rawIdentifiers = /\b(?:raw|original)\b.{0,70}\bnames?\b/iu.test(caption.text);
         const nameColumns = (region[0]?.cells || [])
@@ -407,11 +556,14 @@
         let previous = [];
         for (const [index, row] of region.entries()) {
           const em = row.row[0].fontSize || 8;
-          const newRow = row.cells.length >= 2 && row.rect[0] < columnsLeft + em * 1.5;
+          const newRow = row.rect[0] < columnsLeft + em * 1.5;
+          const effortBadge = index && /^(?:low|medium|high|xhigh|max)$/u.test(text(region[index-1].row)) &&
+            row.cells.filter(cell => numberCell(text(cell))).length >= 3;
           if (newRow) previous = [];
           for (const cell of row.cells) {
             if (!cell.some((c) => eligible.has(c))) continue;
             cell.forEach((c) => claimedLabels.add(c));
+            if ((effortBadge || scoringModel(row.cells)) && (cell === row.cells[0] || cell === row.cells[1])) continue;
             const label = text(cell);
             if (
               index &&
@@ -419,17 +571,17 @@
               /^(?:[A-Z][\w'-]*(?:\s*(?:[+/,()-]\s*)?|$))+$/u.test(label)
             )
               continue;
-            if (/^(?:max|min|sin|cos|log|exp)$/u.test(label) && cell.every((c) => c.fontSize < size * 0.85))
+            if (/^(?:max|min|low|medium|high|xhigh|sin|cos|log|exp)$/u.test(label) && cell.every((c) => c.fontSize < size * 0.85))
               continue;
             if (
               !/[a-z]{2}/iu.test(label) ||
               cell.every(DeepRead.Typography.monospace) ||
               (rawIdentifiers && index >= 2) ||
-              /\w_\w/u.test(label)
+              /\w_\w/u.test(label) || /^[\w.]+\([\w, ]*\)$/u.test(label)
             )
               continue;
             if (
-              !/[a-z]{2}/u.test(label) ||
+              (!/[a-z]{2}/u.test(label) && !/^(?:No|OK)$/u.test(label)) ||
               (!label.includes(" ") && /[a-z][A-Z]|[A-Za-z]\d|(?:Norm|Net)$/u.test(label))
             )
               continue;
@@ -452,6 +604,7 @@
               Object.assign(prior.frame, { inlineGlyphs: joined, text: text(joined), bbox: boxFor(joined) });
             } else {
               const frame = addFrame(cell, caption, "table_label", "grid-" + ids.get(cell[0]));
+              if (caption.type === "table") frame.visualOwner = caption.id;
               const box = union(cell);
               const flush = cellBoxes.filter((b) => Math.abs(b[0] - box[0]) < em * 0.35);
               frame.flushLeft = flush.length >= 3 && flush.some((b) => Math.abs(b[2] - box[2]) > em);
@@ -460,12 +613,74 @@
           }
         }
       }
-      const gridRows = rows.map((row) => ({ row, cells: splitCells(row) }));
+      const gridRows = rows.map((row) => ({ row, cells: splitTableCells(row) }));
       const cellRows = new Map();
+      // A two-column count table has only one gutter. Require at least
+      // three consecutive right-aligned numeric values before claiming it.
+      const countRow = r => r?.cells.length === 2 &&
+        /\p{L}/u.test(text(r.cells[0])) &&
+        /^\d[\d,.]*(?:\s*%)?$/u.test(text(r.cells[1])) &&
+        r.cells[1][0].rect[0] - r.cells[0].at(-1).rect[2] > r.row[0].fontSize * 1.5;
+      const sameColumns = (a, b) => {
+        if (a?.cells.length !== 2 || b?.cells.length !== 2) return false;
+        const em = a.row[0].fontSize;
+        const step = a.row[0].baseline - b.row[0].baseline;
+        return step > 0 && step < em * 2.8 &&
+          Math.abs(a.cells[0][0].rect[0] - b.cells[0][0].rect[0]) < em * .45 &&
+          Math.abs(a.cells[1].at(-1).rect[2] - b.cells[1].at(-1).rect[2]) < em * .45;
+      };
+      for (let i = 0; i < gridRows.length; i++) {
+        if (!countRow(gridRows[i])) continue;
+        let end = i + 1;
+        while (countRow(gridRows[end]) && sameColumns(gridRows[end - 1], gridRows[end])) end++;
+        if (end - i < 3) continue;
+        const header = gridRows[i - 1];
+        const hasHeader = sameColumns(header, gridRows[i]) && /\p{L}/u.test(text(header.cells[1]));
+        const names = hasHeader && /\b(dataset|model|method|platform|identifier|name)s?\b/iu.test(text(header.cells[0]));
+        for (const row of gridRows.slice(hasHeader ? i - 1 : i, end)) {
+          row.countTable = true;
+          row.keepName = names && row !== header && !/^total$/iu.test(text(row.cells[0]));
+          for (const c of row.row) cellRows.set(c, row);
+        }
+        i = end - 1;
+      }
       gridRows.forEach((r, i) => {
-        if (linedUp(r, gridRows[i - 1]) || linedUp(r, gridRows[i + 1]))
+        if ([gridRows[i-1], gridRows[i+1]].some(other => other && linedUp(r, other,
+          [r,other].every(line => line.cells.filter(cell => numberCell(text(cell))).length >= 3))))
           for (const c of r.row) cellRows.set(c, r);
       });
+      // A group label printed between two runs of scores belongs to the same
+      // table, including when a parser joins it to the preceding data rows.
+      for (let i=1; i+1<gridRows.length; i++) {
+        const group = gridRows[i], before = gridRows[i-1], after = gridRows[i+1];
+        if (group.cells.length !== 1 || !/^[\p{L}][\p{L}\d -]{1,48}$/u.test(text(group.row))) continue;
+        const em = group.row[0].fontSize;
+        if ([before,after].every(r => cellRows.has(r.row[0]) && r.cells.filter(cell => numberCell(text(cell))).length >= 3 &&
+          Math.abs(r.row[0].baseline-group.row[0].baseline)<em*2.7 &&
+          Math.abs(r.row[0].rect[0]-group.row[0].rect[0])<em*2))
+          for (const c of group.row) cellRows.set(c,group);
+      }
+      // A header may have been discarded as small text, even though the data
+      // rows directly below form a reliable grid (including tick/cross fonts).
+      for (const [i,first] of gridRows.entries()) {
+        if (!cellRows.has(first.row[0]) || cellRows.has(gridRows[i-1]?.row[0]) ||
+            first.cells.filter(cell => numberCell(text(cell))).length < 3) continue;
+        const em = first.row[0].fontSize, data = union(first.row);
+        for (const line of printedRows) {
+          const r = union(line);
+          if (r[1] < data[3]-1 || r[1]-data[3] > em*4 || Math.abs(line[0].fontSize-em) > em*.2) continue;
+          const headings = splitCells(line).filter(cell => cell[0].rect[0] >= data[0]-em &&
+            (cell[0].rect[0]+cell.at(-1).rect[2])/2 <= data[2]+em);
+          if (headings.length < 2 || headings.some(cell => !/^[\p{L}][\p{L}\d./%() -]{0,35}$/u.test(text(cell)))) continue;
+          for (const heading of headings) {
+            if (heading.some(c => claimedLabels.has(c) || streams.some(s=>s && ids.get(c)>=s.start && ids.get(c)<s.end))) continue;
+            const table = streams.find(s => s && ids.get(first.row[0]) >= s.start && ids.get(first.row[0]) < s.end);
+            if (!table) continue;
+            addFrame(heading, table.item, "table_label", "column-header-"+ids.get(heading[0]));
+            heading.forEach(c=>claimedLabels.add(c));
+          }
+        }
+      }
       for (const s of streams) {
         if (!s || replaced.has(s.id) || s.item.text_level || s.item.type !== "text") continue;
         const ink = chars.slice(s.start, s.end).filter((c) => norm(glyph(c)));
@@ -477,6 +692,8 @@
         for (const row of matched)
           for (const run of row.cells) {
             const label = text(run);
+            if (scoringModel(row.cells) && (run === row.cells[0] || run === row.cells[1])) continue;
+            if (row.keepName && run === row.cells[0]) continue;
             if (
               !/[a-z]{2}/u.test(label) ||
               run.every(DeepRead.Typography.monospace) ||
@@ -485,14 +702,106 @@
               continue;
             if (
               !/\s/u.test(label) &&
-              !/^(?:method|model|configuration|role|name|dataset|size|time|type|average|mean|overall|total|baseline|yes|no|training|test|validation|accuracy|score|input|output|default|steps|parameters|layers|views|resolution|dispatch|wall)$/iu.test(
+              !/^(?:method|model|configuration|role|name|dataset|environments?|size|time|type|average|mean|overall|total|baseline|yes|no|training|test|validation|accuracy|score|input|output|default|steps|parameters|layers|views|resolution|dispatch|wall)$/iu.test(
                 label
               )
             )
               continue;
-            addFrame(run, s.item, "table_label", "cell-" + ids.get(run[0]));
+            const frame = addFrame(run, s.item, "table_label", "cell-" + ids.get(run[0]));
+            if (row.countTable) {
+              frame.flushLeft = run === row.cells[0];
+              frame.flushRight = !frame.flushLeft;
+            }
           }
       }
+      // Some embedded vector tables print a whole column before the next.
+      // Keep its numeric values in the original PDF and translate each label
+      // at its own baseline. A prose column lacks this repeated field pattern.
+      for (const s of streams) {
+        if (!s || replaced.has(s.id) || s.item.type !== "text" || s.item.text_level) continue;
+        const ink = chars.slice(s.start, s.end);
+        const lines = DeepRead.ParallelVisual.lines(ink);
+        if (lines.length < 3 || lines.some(line => text(line).length > 44)) continue;
+        const labels = lines.map(text), boxes = lines.map(union), em = lines[0][0].fontSize;
+        if (!boxes.every(b => Math.abs(b[0]-boxes[0][0]) < em*.7 ||
+            Math.abs(b[2]-boxes[0][2]) < em*.7 || Math.abs(b[0]+b[2]-boxes[0][0]-boxes[0][2]) < em)) continue;
+        const numeric = label => /^[\d\s.,×/%+±−–-]+$/u.test(label);
+        const count = labels.filter(numeric).length;
+        const repetitive = lines.length >= 5 && new Set(labels).size <= lines.length*.6;
+        if (count < Math.max(2, lines.length-1) && !repetitive) continue;
+        if (repetitive && labels.some(label => !numeric(label) && label.split(/\s+/u).length > 3)) continue;
+        const column = union(ink);
+        const owner = items.find(it => {
+          if (!it.bbox || !["table","image","chart"].includes(it.type)) return false;
+          const b = regionOf(it.bbox);
+          return column[0] <= b[2]+em && column[2] >= b[0]-em && column[1] < b[3] && column[3] > b[1];
+        });
+        replaced.add(s.id);
+        for (const [i, line] of lines.entries()) {
+          line.forEach(c => claimedLabels.add(c));
+          if (numeric(labels[i]) || !/[a-z]{2}/iu.test(labels[i])) continue;
+          const frame = addFrame(line, s.item, "table_label", "column-" + ids.get(line[0]));
+          frame.visualOwner = owner?.id;
+          frame.flushLeft = Math.abs(boxes[i][0]-boxes[0][0]) < em*.35;
+        }
+      }
+    }
+
+    function recoverBoundedTable(table, cap, owned) {
+      const area = regionOf(table.bbox);
+      const sides = [[], []];
+      // The parser's table box may include either a top or a bottom caption.
+      // A physical row owns all its cells even if the parser dropped that row.
+      for (const line of printedRows) {
+        const cells = splitTableCells(line).filter(run => {
+          const r = union(run);
+          return r[0] >= area[0]-2 && r[2] <= area[2]+2 && r[1] >= area[1]-2 && r[3] <= area[3]+2;
+        });
+        if (!cells.length) continue;
+        const row = cells.flat(), rect = union(row);
+        if (rect[1] >= cap[3]-1) sides[0].push({row, cells, rect});
+        else if (rect[3] <= cap[1]+1) sides[1].push({row, cells, rect});
+      }
+      for (const grid of sides) {
+        const dataRows = grid.filter(r => r.cells.length >= 3 && r.cells.filter(cell =>
+          /^[\d\s%.,/+±−–—×()[\]k-]+$/u.test(text(cell)) ||
+          /^(?:O|Θ)\s*\(/u.test(text(cell))).length >= 2);
+        const labeledRows = grid.filter(r => r.cells.length >= 3 && numberCell(text(r.cells.at(-1))));
+        const evidence = dataRows.length >= 2 ? dataRows : labeledRows.length >= 3 ? labeledRows : [];
+        if (!evidence.some((r,i) => linedUp(r, evidence[i+1], true))) continue;
+        const dataLeft = Math.min(...evidence.map(r => r.rect[0]));
+        const tabular = grid.filter(r => r.cells.length > 1 || text(r.row).length <= 95);
+        const tableChars = new Set(tabular.flatMap(r => r.row));
+        for (const frame of additions) {
+          if (frame.type === "table_label" && frame.inlineGlyphs.every(c => tableChars.has(c))) frame.visualOwner = table.id;
+        }
+        for (const s of streams) {
+          if (!s || replaced.has(s.id)) continue;
+          const glyphs = chars.slice(s.start, s.end).filter(c => norm(glyph(c)));
+          if (glyphs.length && glyphs.every(c => tableChars.has(c))) replaced.add(s.id);
+        }
+        const remaining = streams.filter(s => s && !replaced.has(s.id));
+        for (const line of tabular) {
+          const em = line.row[0].fontSize;
+          // Body text accidentally enclosed by an old table box is a separate
+          // source. It must never be hidden behind an unrelated cell label.
+          for (const cell of line.cells) {
+            if (cell.some(c => owned.has(c) || remaining.some(s => ids.get(c) >= s.start && ids.get(c) < s.end))) continue;
+            const label = text(cell);
+            if (!/[a-z]{2}/iu.test(label) || cell.every(DeepRead.Typography.monospace) ||
+                /\w_\w|^(?:O|Θ)\s*\(|^[\w.]+\([\w, ]*\)$/u.test(label) ||
+                (!/\s/u.test(label) && (/[a-z][A-Z]|[A-Z]{2,}|\d/u.test(label)) &&
+                 !/^(?:F1|Top-?\d+)$/iu.test(label))) continue;
+            const frame = addFrame(cell, table, "table_label", "grid-" + ids.get(cell[0]));
+            frame.visualOwner = table.id;
+            frame.flushLeft = Math.abs(cell[0].rect[0]-dataLeft) < em*.6;
+            cell.forEach(c => { owned.add(c); claimedLabels.add(c); });
+          }
+        }
+        tableBounds.push(boxFor([...tableChars]));
+        return true;
+      }
+      return false;
     }
 
     function recoverMissingTableHeadings() {
@@ -504,6 +813,7 @@
         const cap = locate({ ...table, text: table.table_caption.join(" ") });
         if (!cap) continue;
         const box = union(chars.slice(cap.start, cap.end));
+        if (recoverBoundedTable(table, box, alreadyOwned)) continue;
         const candidates = printedRows
           .map((row) => {
             const inside = row.filter((c) => c.rect[0] >= box[0] - 8 && c.rect[2] <= box[2] + 8);
@@ -543,7 +853,7 @@
             const box = union(row);
             return box[3] <= heading.rect[1] + 1 && box[1] >= firstData.rect[3] - 1;
           })
-          .flatMap(splitCells);
+          .flatMap(row => splitCells(row));
         for (const cell of heading.cells) {
           const label = text(cell);
           if (!/^[\p{L}\p{N}][\p{L}\p{N} .,()/-]*$/u.test(label) || !/[a-z]{3}/iu.test(label)) continue;
@@ -585,10 +895,66 @@
             (it.type === "text" && /^(?:Fig(?:ure)?\.?|Chart)\s+\d+\b/iu.test(it.text)))
       );
       if (figures.length) {
-        const occupied = [];
+        const diagramSources = new Set();
+        // A text-layer parser can read across the columns of an infographic
+        // before it reaches its printed caption. Use the tiny native font,
+        // caption position and actual gaps between runs to restore each label.
+        for (const s of streams) {
+          if (!s || replaced.has(s.id) || s.item.type !== "text" || /^Fig(?:ure)?\.?\s+\d+/iu.test(s.item.text)) continue;
+          const glyphs = chars.slice(s.start,s.end).filter(c => c.rect && !c.rotation);
+          if (!glyphs.length) continue;
+          const r = union(glyphs), cells = DeepRead.ParallelVisual.lines(glyphs).map(row => splitCells(row));
+          const em = glyphs.find(c => glyph(c).trim())?.fontSize || 0;
+          const caption = figures.find(fig => {
+            if (fig.type !== "text") return false;
+            const fs = streams.find(entry => entry?.item === fig);
+            if (!fs || !(em > 0 && em < chars[fs.start].fontSize * .76)) return false;
+            const box = regionOf(fig.bbox);
+            return r[1] > box[3] && r[3] - box[3] < (view[3] - view[1]) * .43 &&
+              r[0] >= box[0] - em && r[2] <= box[2] + em;
+          });
+          if (!caption) continue;
+          const split = cells.some(row => row.some((cell,i) =>
+            i && cell[0].rect[0] - row[i-1].at(-1).rect[2] > em * 2));
+          if (!split && r[2] - r[0] > (view[2] - view[0]) * .19) continue;
+          replaced.add(s.id);
+          diagramSources.add(s.id);
+          for (const run of split ? cells.flat() : [glyphs]) {
+            if (run.some(c => claimedLabels.has(c)) || !/[a-z]{2}/iu.test(text(run))) continue;
+            addFrame(run, caption, "figure_label", "diagram-" + ids.get(run[0]));
+            run.forEach(c => claimedLabels.add(c));
+          }
+        }
+        for (const s of streams) {
+          if (!s?.item.text_level || replaced.has(s.id)) continue;
+          const glyphs = chars.slice(s.start,s.end);
+          const lines = DeepRead.ParallelVisual.lines(glyphs);
+          if (lines.length !== 1) continue;
+          const panels = splitCells(lines[0]), em = lines[0][0].fontSize;
+          if (panels.length < 2 || !panels.every((cell,i) => /[a-z]{2}/iu.test(text(cell)) &&
+              (!i || cell[0].rect[0]-panels[i-1].at(-1).rect[2] > em*2))) continue;
+          const r = union(glyphs);
+          const graphic = figures.find(it => {
+            const b = regionOf(it.bbox);
+            return it.type !== "text" && r[0] >= b[0]-em && r[2] <= b[2]+em &&
+              Math.abs(r[1]-b[3]) < em*1.5 && r[2]-r[0] > (b[2]-b[0])*.5;
+          });
+          if (!graphic) continue;
+          replaced.add(s.id);
+          for (const cell of panels) {
+            const frame = addFrame(cell, graphic, "figure_label", "panel-" + ids.get(cell[0]));
+            frame.visualOwner = graphic.id;
+            frame.panelHeading = true;
+            cell.forEach(c => claimedLabels.add(c));
+          }
+        }
+        const occupied = [], panelOpeners = [];
         for (const [i, item] of items.entries()) {
           if (!item.bbox || ["image", "figure", "chart"].includes(item.type)) continue;
           const span = streams[i];
+          // A recovered label belongs inside the figure. Unlike intervening
+          // body prose, it does not separate other labels from their caption.
+          if (span && diagramSources.has(span.id)) continue;
           if (!span) {
             occupied.push(regionOf(item.bbox));
             continue;
@@ -596,13 +962,22 @@
           for (const row of rows) {
             if (ids.get(row.at(-1)) < span.start || ids.get(row[0]) >= span.end) continue;
             const owned = row.filter((c) => ids.get(c) >= span.start && ids.get(c) < span.end);
-            if (owned.length) occupied.push(union(owned));
+            if (!owned.length) continue;
+            const bounds = union(owned);
+            occupied.push(bounds);
+            const opener = /^\(([a-z])\)\s+\p{Lu}[^:]{1,35}:\s+\p{L}/u.exec(item.text || "");
+            if (opener && ids.get(owned[0]) === span.start && ids.get(owned.at(-1)) >= span.end - 1)
+              panelOpeners.push({ bounds, index:opener[1] });
           }
         }
         const rotated = [];
         let run = [];
         for (const c of chars) {
-          if (run.length && (c.rotation !== run[0].rotation || !c.rect)) {
+          const prior = run.at(-1);
+          const gap = prior && c.rect && Math.max(prior.rect[1] - c.rect[3], c.rect[1] - prior.rect[3]);
+          if (prior && (c.rotation !== prior.rotation || !c.rect ||
+              gap > Math.max(prior.fontSize, c.fontSize) * .85 ||
+              Math.abs(c.rect[0] - prior.rect[0]) > Math.max(prior.fontSize, c.fontSize))) {
             rotated.push(run);
             run = [];
           }
@@ -613,7 +988,13 @@
           }
         }
         if (run.length) rotated.push(run);
-        const labels = [...printedRows.flatMap(splitCells), ...rotated];
+        const stage = /^(?:round|stage|phase|iteration|frame)\s+\d+\s*:\s+\p{L}/iu;
+        const printedCells = printedRows.map(row => splitCells(row));
+        const stageCells = new Set(panelOpeners.length < 3 ? [] : printedCells.flatMap(row => {
+          const stages = row.filter(cell => stage.test(text(cell)));
+          return stages.length >= 3 ? stages.map(cell => cell[0]) : [];
+        }));
+        const labels = [...printedCells.flat(), ...rotated];
         for (const fig of figures) {
           const box = regionOf(fig.bbox),
             typed = fig.type !== "text",
@@ -628,12 +1009,45 @@
           // letters; locate() excludes trailing punctuation from its range.
           const captionSpans = captions.map(text=>locate({...fig,text})).filter(Boolean);
           const captionKeys = captions.map(norm);
-          for (const cell of labels) {
+          const openers = typed ? [] : panelOpeners.filter(({bounds}) =>
+            Math.abs(bounds[0] - box[0]) < 8 && bounds[1] > box[3] &&
+            bounds[3] - box[3] < (view[3] - view[1]) * .48
+          ).sort((a,b) => b.bounds[3] - a.bounds[3]);
+          const panelSeparators = openers.length >= 3 && openers.every((opener,i) =>
+            opener.index.charCodeAt(0) === 97 + i && (!i || openers[i - 1].bounds[1] - opener.bounds[3] > 24)
+          ) ? new Set(openers.map(opener => opener.bounds)) : new Set();
+          for (const rawCell of labels) {
+            // Some vector diagrams draw an identical label twice, with a
+            // fraction-of-a-point offset. Their sorted glyphs otherwise spell
+            // "TTookk" and hide a valid numbered label.
+            const cell = typed ? rawCell.filter((c,i) => {
+              const prior = rawCell[i-1];
+              return !prior || glyph(c)!==glyph(prior) || c.fontName!==prior.fontName ||
+                Math.abs(c.rect[0]-prior.rect[0])>.06 || Math.abs(c.rect[1]-prior.rect[1])>c.fontSize*.09;
+            }) : rawCell;
             const first = cell.findIndex(
               (c) => /[A-Za-z]/u.test(glyph(c)) && !/math|symbol/iu.test(c.fontName || "")
             );
             if (first < 0) continue;
-            const run = cell.slice(first);
+            const dimensional = first > 0 && /^D$/iu.test(glyph(cell[first])) && /^\d$/u.test(glyph(cell[first-1])) &&
+              cell[first].rect[0]-cell[first-1].rect[2] < cell[first].fontSize*.3;
+            const run = cell.slice(dimensional ? first-1 : first);
+            // PDF.js sometimes reports zero rotation for slanted chart ticks.
+            // Two adjacent letters can fall within a horizontal row's tolerance
+            // even though the original word climbs steadily across the plot.
+            if (!run[0].rotation && run.length < 5) {
+              const k = ids.get(run[0]);
+              const rises = (a,b) => {
+                if (!a?.rect || !b?.rect || a.fontName !== b.fontName) return 0;
+                const dx = b.rect[0] - a.rect[0], dy = b.baseline - a.baseline;
+                return dx > 0 && dx < a.fontSize * 1.3 && Math.abs(dy) > dx * .25 &&
+                  Math.abs(dy) < Math.min(a.fontSize, dx * 2.5) ? Math.sign(dy) : 0;
+              };
+              if ([k-1,k,k+1].some(j => {
+                const step = rises(chars[j-1],chars[j]);
+                return step && step === rises(chars[j],chars[j+1]);
+              })) continue;
+            }
             const label = text(run),
               rect = union(run),
               x = (rect[0] + rect[2]) / 2,
@@ -651,23 +1065,64 @@
               continue;
             if (occupied.some((b) => rect[2] > b[0] && rect[0] < b[2] && rect[3] > b[1] && rect[1] < b[3]))
               continue;
-            if (!typed && occupied.some((b) => b[1] > box[3] + 2 && b[3] < y && b[0] < x && b[2] > x)) continue;
+            // In a stack of figure panels, a lower panel's heading can sit
+            // between this stage label and the shared figure caption.
+            const staged = panelSeparators.size && y < openers[0].bounds[1] && stageCells.has(run[0]);
+            if (!typed && occupied.some(b => b[1] > box[3] + 2 && b[3] < y && b[0] < x && b[2] > x &&
+                !(staged && panelSeparators.has(b)))) continue;
             if (run.some((c) => claimedLabels.has(c)) || label.length > 75 || /[=<>⟨⟩_{}]/u.test(label))
               continue;
             const words = label.match(/[a-z]{2,}/giu) || [];
             const singleWord =
-              /^[A-Z]?[a-z]{2,}(?:-[a-z]{2,})*$/u.test(label) &&
+              /^(?:[a-z]\)\s+)?[A-Z]?[a-z]{2,}(?:-[a-z]{2,})*$/u.test(label) &&
               !/^(?:argmax|argmin|min|max|log|exp|sin|cos|tan|fps|flops|sigmoid|softmax)$/iu.test(label);
-            if (words.length < 2 && !singleWord && !/^(?:frozen|trainable)$/iu.test(label)) continue;
-            if (!typed && !/[a-z]{2}/u.test(label) && !/^(?:frozen|trainable)$/iu.test(label)) continue;
+            const numberedLabel = /^(?:stage|step|phase|layer|level|view|frame|round|iteration)\s*[-:]?\s*\d+$/iu.test(label) ||
+              typed && /^(?:sentence|token|tok)\s+(?:\d+|[A-Z])$/iu.test(label);
+            if (words.length < 2 && !singleWord && !numberedLabel && !/^(?:frozen|trainable)$/iu.test(label)) continue;
+            const capitalizedPhrase = words.length >= 2 && words.some(word => word.length >= 4);
+            if (!typed && !/[a-z]{2}/u.test(label) && !capitalizedPhrase && !/^(?:frozen|trainable)$/iu.test(label)) continue;
             candidates.push(run);
           }
           if (!typed && candidates.length < 2 && !candidates.some((run) => run[0].rotation)) continue;
           for (const run of candidates) {
             if (run.some((c) => claimedLabels.has(c))) continue;
-            addFrame(run, fig, "figure_label", "label-" + ids.get(run[0]));
-            additions.at(-1).visualOwner = typed ? fig.id : undefined;
+            let glyphs = run;
+            const bounds = union(run), em = run[0].fontSize;
+            // One cell's small note can wrap after a preposition or article.
+            // Recover its last line only under a matched stage heading.
+            if (panelSeparators.size && /\b(?:the|a|an|of|in|to|with|and|or)$/iu.test(text(run)) &&
+                [...stageCells].some(c => Math.abs(c.rect[0] - bounds[0]) < em * .45 &&
+                  c.rect[1] >= bounds[3] && c.rect[1] - bounds[3] < em && em < c.fontSize * .85)) {
+              const tails = labels.filter(cell => {
+                const next = union(cell), step = bounds[3] - next[3];
+                return cell[0].fontName === run[0].fontName && Math.abs(cell[0].fontSize - em) < em * .1 &&
+                  step > em * .85 && step < em * 1.55 && Math.abs(next[0] - bounds[0]) < em * .45 &&
+                  next[2] <= bounds[2] + em * .5 && /^\p{Ll}[\p{L}\p{N} ,’'-]*[.!?][”’"]?$/u.test(text(cell)) &&
+                  !cell.some(c => claimedLabels.has(c)) && !occupied.some(b =>
+                    next[2] > b[0] && next[0] < b[2] && next[3] > b[1] && next[1] < b[3]);
+              });
+              if (tails.length === 1) {
+                const [tail] = tails;
+                glyphs = [...run.slice(0,-1), {...run.at(-1), lineBreakAfter:true}, ...tail];
+                tail.forEach(c => claimedLabels.add(c));
+              }
+            }
+            const frame = addFrame(glyphs, fig, "figure_label", "label-" + ids.get(run[0]));
+            frame.visualOwner = typed ? fig.id : undefined;
+            if (panelSeparators.size && (stageCells.has(run[0]) || glyphs !== run)) frame.flushLeft = true;
             run.forEach((c) => claimedLabels.add(c));
+          }
+          if (panelSeparators.size && stageCells.size) {
+            const headings = [...stageCells].filter(c => DeepRead.Typography.bold(c) &&
+              c.rect[0] >= box[0] - 1 && c.rect[0] <= box[2] && c.rect[1] > box[3] &&
+              c.rect[3] < openers[0].bounds[1]);
+            for (const frame of additions) {
+              if (frame.type !== "figure_label" || !frame.inlineGlyphs ||
+                  frame.inlineGlyphs.some(DeepRead.Typography.bold)) continue;
+              const rect = union(frame.inlineGlyphs), em = frame.inlineGlyphs[0].fontSize;
+              if (headings.some(c => em < c.fontSize * .85 && Math.abs(rect[0] - c.rect[0]) < em * .5 &&
+                  c.rect[1] >= rect[3] && c.rect[1] - rect[3] < em)) frame.stageNote = true;
+            }
           }
         }
       }

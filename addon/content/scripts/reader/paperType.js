@@ -34,6 +34,9 @@
       const loading = state.sheet.then(() => {
         const styles = ["normal", "bold", "italic", "italic bold"];
         const loads = styles.map(style => doc.fonts.load(style + ' 12px "DeepRead Roman"', "Aa1"));
+        if (simplified) loads.push(doc.fonts.load('500 12px "DeepRead Song"', "论文"));
+        if (simplified) loads.push(doc.fonts.load('550 12px "DeepRead Song"', "图表"));
+        if (simplified) loads.push(doc.fonts.load('500 12px "DeepRead Hei"', "图表"));
         for(const weight of ["400","700"]) {
           loads.push(doc.fonts.load(weight+' 12px "DeepRead Hei"',simplified ? "论文Aa" : "Aa"));
           if(simplified) loads.push(doc.fonts.load(weight+' 12px "DeepRead Song"',"论文"));

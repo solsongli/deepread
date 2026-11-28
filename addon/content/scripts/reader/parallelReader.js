@@ -307,10 +307,11 @@
       const bitmap = source.canvas;
       bitmap.width = Math.max(1, Math.ceil(width * rasterScale));
       bitmap.height = Math.max(1, Math.ceil(height * rasterScale));
-      const renderInto = (canvas, scale) => {
+      const renderInto = (canvas, scale, filter) => {
         const params = raw(Components.utils.createObjectIn(win));
         params.canvasContext = raw(canvas.getContext("2d"));
         params.viewport = viewportAt(scale);
+        if (filter) params.operationsFilter = Components.utils.exportFunction(filter, win);
         return raw(pdfPage.render(params));
       };
       const task = renderInto(bitmap, rasterScale);
@@ -390,6 +391,27 @@
       ]);
       if (token.signal.aborted) return;
       this.prepareUnits(page);
+      await this.preparePanelColors(page, token.signal);
+      if (token.signal.aborted) return;
+      page.restoreLabels = async signal => {
+        try {
+          const lib = raw(win).pdfjsLib, replay = (canvas, filter) => renderInto(canvas, rasterScale, filter);
+          // operationsFilter indexes the display stream, which may differ
+          // from getOperatorList() when PDF.js optimizes a transparency group.
+          const intent = pdfPage._transport?.getRenderingIntent?.("display", lib?.AnnotationMode?.ENABLE);
+          const list = pdfPage._intentStates?.get(intent?.cacheKey)?.operatorList;
+          if (page.clippedLabels === undefined) {
+            page.clippedLabels = await DeepRead.ParallelInk.clippedLabels(page, bitmap, list, lib?.OPS, replay, signal);
+            if (page.clippedLabels) this.prepareUnits(page);
+          }
+          page.stageNoteInks = DeepRead.ParallelInk.stageNoteInks(page.units,list,lib?.OPS);
+          if (!signal.aborted) await DeepRead.ParallelInk.restoreNativeLabels(page, bitmap, list, lib?.OPS, replay, signal);
+        } catch (error) {
+          if (!signal.aborted) DeepRead.log("Figure label background unavailable", String(error));
+        }
+      };
+      await page.restoreLabels(token.signal);
+      if (token.signal.aborted) return;
       this.paintSurface(surface);
     }
 
@@ -416,7 +438,7 @@
     }
 
     needsParse(page=this.page) {
-      return this.needsDocumentParse() && !page?.partial;
+      return this.needsDocumentParse() && !page?.partial && !page?.bibliographyOnly;
     }
 
     partialLayouts(page) {
@@ -439,15 +461,38 @@
       const paragraphs = (s.data?.hierarchicalData?.find((p) => p.pageIndex === page.index)?.paragraphs || []).map((p) => ({ ...p, pageIndex: page.index }));
       let items = [];
       if (source?.length) items = DeepRead.ParallelVisual.pageItems(source,page.index);
-      else if (!paragraphs.length && !page.partial) items = DeepRead.TextLayerParser.buildContentList([{ pageIndex: page.index, viewBox: page.view, chars: page.chars }]);
-      page.units = PLAN.plan({ paragraphs, items, nativeParser:!source?.length || (usePartial ? page.partial.fallback : !!this.parsed?.fallback) || DeepRead.prefs.parserConfig().provider==="builtin", chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels, saved:page.saved,
+      else if (!paragraphs.length && !page.partial) items = DeepRead.TextLayerParser.buildContentList(
+        [{ pageIndex: page.index, viewBox: page.view, chars: page.chars }], {includePublicationNotes:true});
+      if (!s.data?.contentList?.length && (usePartial ? page.partial.fallback : this.parsed?.fallback))
+        items = DeepRead.TextLayerParser.restoreCachedParagraphs(items, page);
+      const styles = DeepRead.PaperStyles;
+      const documentItems = s.data?.contentList?.length ? s.data.contentList : this.parsed?.items?.length ? this.parsed.items : items;
+      const structure = styles.documentStructure(documentItems);
+      const cover = documentItems.some(it=>it.page_idx===0 && it.text_level===1) ? documentItems : styles.cover(s);
+      items = PLAN.restoreRunningTitle(page,items,cover);
+      page.vectorPanelRegions = items.filter(item=>item.type==="image" && item.bbox &&
+        item.image_caption?.some(text=>/^Fig(?:ure)?\.?\s+\d+/iu.test(text)));
+      page.units = PLAN.plan({ paragraphs, items, nativeParser:!source?.length || (usePartial ? page.partial.fallback : !!this.parsed?.fallback) || DeepRead.prefs.parserConfig().provider==="builtin", chars: page.chars, view: page.view, language: page.language, rasterLabels:page.rasterLabels, clippedLabels:page.clippedLabels, panelColors:page.panelColors, saved:page.saved,
         reuse: (!s.data?.language || s.data.language === page.language), continuationFor: (p) => s.continuationFor(p) });
+      const count = page.units.filter(u=>u.layoutPart!=="runningTitle").length;
+      const bibliography = (structure?.referenceBoxes.get(page.index) || [])
+        .map(bbox => PLAN.fromPermille(bbox, page.view)).filter(Boolean);
+      page.units = page.units.filter(unit => {
+        if (unit.role === "ref_text" || (unit.title && styles.referenceHeading(unit.source))) return false;
+        return !unit.rect || !bibliography.some(([left, bottom, right, top]) => {
+          const [l, b, r, t] = unit.rect;
+          return (l+r)/2 >= left-1 && (l+r)/2 <= right+1 && (b+t)/2 >= bottom-1 && (b+t)/2 <= top+1;
+        });
+      });
+      const hasBody = page.units.some(u=>u.layoutPart!=="runningTitle");
+      page.bibliographyOnly = count > 0 && !hasBody;
+      if (!hasBody) page.units = [];
       page.context = PLAN.interruptedContext(source?.length ? source : items, page.index);
       page.localItems = source?.length ? null : items;
       PLAN.setContext(page.units,page.context);
       PLAN.hydrate(page.units, page.saved);
       if (page.styleProfile) {
-        DeepRead.PaperStyles.classify(page.units,page.styleProfile,DeepRead.PaperStyles.documentStructure(s.data?.contentList?.length ? s.data.contentList : this.parsed?.items || source),page.view,Math.hypot(page.transform[0],page.transform[1]));
+        styles.classify(page.units,page.styleProfile,structure,page.view,Math.hypot(page.transform[0],page.transform[1]));
         page.equations=items.filter(it=>["equation","formula","interline_equation"].includes(it.type))
           .map(it=>PLAN.fromPermille(it.bbox,page.view)).filter(Boolean).map(rect=>project(rect,page.transform));
       }
@@ -635,7 +680,25 @@
       return glossary;
     }
 
+    async preparePanelColors(page, signal) {
+      if (page.panelColors || !page.units.some(u => u.panelHeading)) return;
+      const key = page.fingerprint + ":" + page.index;
+      this.panelInkPages ??= new Map();
+      try {
+        const ranges = this.panelInkPages.get(key) || await DeepRead.ParallelInk.panelColors(this,page,signal);
+        if (!ranges || signal.aborted) return;
+        this.panelInkPages.set(key,ranges);
+        page.panelColors = ranges;
+        if (ranges.size) this.prepareUnits(page);
+      } catch (error) {
+        if (!signal.aborted) DeepRead.log("Panel heading colour unavailable",String(error));
+      }
+    }
+
     async translateUnits(page, signal, concurrency, glossary, selection, request, revise = false) {
+      if (page.bibliographyOnly) return;
+      await this.preparePanelColors(page,signal);
+      if (signal.aborted) return;
       const hadLabels = page.rasterLabels;
       const artwork = DeepRead.FigureOCR.recognize(this, page, signal).catch((error) => {
         if (!signal.aborted) {
@@ -651,6 +714,8 @@
       if (text.status === "rejected" && !text.reason?.incomplete) throw text.reason;
       if (page.rasterLabels !== hadLabels && (page.rasterLabels?.length || hadLabels?.length)) {
         this.prepareUnits(page);
+        await page.restoreLabels?.(signal);
+        if (signal.aborted) return;
         await this.translatePageText(page, signal, concurrency, glossary, selection, request);
       } else if (text.status === "rejected") throw text.reason;
     }
@@ -906,7 +971,7 @@
         const incomplete = failures.sort((a, b) => a - b).join(", ");
         this.status.textContent =
           tr(`已处理 ${visited} 页`, `Processed ${visited} pages`) +
-          (originals ? tr(`，其中 ${originals} 页保留原图`, ` · ${originals} original-only pages`) : "") +
+          (originals ? tr(`，其中 ${originals} 页沿用原页`, ` · ${originals} original-only pages`) : "") +
           (fallbackPages
             ? tr(` · ${fallbackPages} 页使用了 PDF 文字层`, ` · ${fallbackPages} pages used the PDF text layer`)
             : "") +
@@ -986,7 +1051,7 @@
         const pdf = await DeepRead.ParallelPDF.create();
         pdf.setTitle((this.session.item.attachmentFilename || "DeepRead") + ` · ${current.language}` +
           (bilingual ? tr(" · 双语对照"," · Bilingual") : ""));
-        const facing = bilingual ? await DeepRead.ParallelPDF.facingDocument(pdf,this,source,{layout,translationFirst}) : null;
+        const facing = await DeepRead.ParallelPDF.facingDocument(pdf,this,source,{layout,translationFirst});
         for (const i of indices) {
           if (signal.aborted) return false;
           await this.showPage(i, token);
@@ -1051,26 +1116,38 @@
       const notes = [], frames=[];
       page.supplements=[];
       page.dirtyRects=[];
-      for (const u of page.units) {
+      for (const [sourceIndex, u] of page.units.entries()) {
         if (!u.translation) continue;
+        // A fully protected native unit (for example a file tree) already
+        // has its exact source spelling, alignment and connectors on canvas.
+        if (u.matched && u.verbatim && u.translation === u.modelText &&
+            u.tokens.every(t => (t.display ?? t.source) === t.source)) continue;
+        if (u.matched && u.rects.length && u.rects.every(rect => DeepRead.ParallelInk.flatSource(rect,page,pixels))) continue;
         const type=DeepRead.PaperStyles.styleFor(u,page.styleProfile);
+        const chinese = /^zh(?:-|$)/i.test(page.language);
         const rects = u.placed ? u.masks.map((r) => project(r, page.transform)) : [];
-        const patches=u.verifiedLabel && u.placed ? u.masks.map(mask=>DeepRead.ParallelInk.labelPatch(pixels,mask,page,u.size)) : [];
-        const colors = rects.map((r,i) => u.verifiedLabel ? patches[i]?.color : paperColor(pixels, r, kx, ky));
+        const colors = rects.map(r => u.verifiedLabel ? null : paperColor(pixels, r, kx, ky));
+        const patches = rects.map((_, i) => {
+          if (!u.verifiedLabel && ((!u.typewriterHeading && colors[i]) || !u.matched || rects.length !== 1)) return null;
+          const patch = DeepRead.ParallelInk.labelPatch(pixels, u.masks[i], page, u.size);
+          // A horizontal rule can occupy all samples along one edge of a
+          // one-line header. Use its near-white interior and preserve the rule.
+          if (patch && (u.verifiedLabel || Math.min(...patch.color) >= (u.typewriterHeading ? 205 : 230))) {
+            colors[i] = patch.color;
+            return patch;
+          }
+          return null;
+        });
         const originalFragment = hdoc.importNode(this.session.overlay._translationContent(u, u.translation, page.language), true);
         let fragment = materialize(hdoc,originalFragment,u,page,source.canvas,pixels);
-        if (type?.role.endsWith("Caption")) DeepRead.PaperStyles.captionLabel(fragment);
-        if(!u.title && !u.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(fragment,u.modelText);
-        const samples=u.linkSamples || [];
-        if (samples.length && !fragment.querySelector("a")) {
-          const ids=samples.map(rect=>DeepRead.ParallelInk.sourceLink({samples:[rect]},page));
-          const id=ids.find(i=>i>=0);
-          if (id!=null && ids.filter(i=>i===id).length>=samples.length*.9) {
-            const link=h(hdoc,"a");link.href="#";link.dataset.sourceLink=String(id);
-            link.style.color=DeepRead.ParallelInk.inkColor({samples},page,pixels);
-            link.append(fragment);fragment=hdoc.createDocumentFragment();fragment.append(link);
-          }
+        // A template often uses italics for the entire English abstract.
+        // Set Chinese prose upright while keeping inline math in its original face.
+        if (chinese && type?.role === "body" && u.allItalic) {
+          for (const mark of fragment.querySelectorAll("em, i"))
+            if (!mark.closest("[role=math]")) mark.replaceWith(...mark.childNodes);
         }
+        if (type?.role.endsWith("Caption") && !u.matched) DeepRead.PaperStyles.captionLabel(fragment);
+        if(!u.title && !u.caption && /^zh(?:-|$)/i.test(page.language)) DeepRead.PaperType.separateLead(fragment,u.modelText);
         if (!rects.length || colors.some((c) => !c)) {
           notes.push([u, fragment]); page.supplements.push(u); continue;
         }
@@ -1096,13 +1173,30 @@
           const k=Math.hypot(page.transform[0],page.transform[1]);
           r.top-=u.titleInsets[0]*k;r.height+=(u.titleInsets[0]+u.titleInsets[1])*k;
         }
-        if(angle===0 && ["table_label","figure_label","algorithm_step"].includes(u.role) && patches.length===1 && patches[0]) {
+        if(angle===0 && !u.panelCaption && ["table_label","figure_label","algorithm_step"].includes(u.role) && patches.length===1 && patches[0]) {
           const mask=rects[0];
           const left=patches[0].left+Math.max(0,r.left-mask.left);
           const right=patches[0].right+Math.max(0,mask.left+mask.width-r.left-r.width);
-          if(!u.flushLeft && u.role!=="algorithm_step" && Math.min(left,right)>1 && Math.abs(left-right)<u.size*.8) {
+          // The marker is redrawn from the source at its original position.
+          // Keep the translated heading beside it even when there is open
+          // white space at both ends of the printed line.
+          const printedPanelMarker = u.role === "figure_label" && u.markerRect && /^\([a-z]\)$/iu.test(u.marker);
+          if(u.flushRight) {
+            r.left-=left;r.width+=left;
+          } else if(!u.flushLeft && !printedPanelMarker && u.role!=="algorithm_step" && Math.min(left,right)>1 && Math.abs(left-right)<u.size*.8) {
             r.left-=left;r.width+=left+right;layoutUnit={...u,centered:true};
           } else r.width+=right;
+        }
+        if (angle % 2 && u.verifiedLabel && patches.length === 1 && patches[0]) {
+          // Keep the word's endpoint next to its axis tick or attention line.
+          // A rotated label can grow lengthwise in the verified blank strip.
+          const {above=0,below=0} = patches[0];
+          if (above || below) {
+            const up = above >= below;
+            if (up) r.top -= above;
+            r.height += up ? above : below;
+            layoutUnit = {...u,flushRight:up ? angle === 1 : angle === 3};
+          }
         }
         block.style.transformOrigin = "0 0";
         block.style.transform = `rotate(${angle * 90}deg)`;
@@ -1110,20 +1204,25 @@
         block.style.top = `${r.top + (angle === 2 || angle === 3 ? r.height : 0)}px`;
         block.style.width = `${angle % 2 ? r.height : r.width}px`;
         block.style.height = `${(angle % 2 ? r.width : r.height) + (angle===0 && !u.title ? u.clearance || 0 : 0)}px`;
-        if (colors[0][0] * 0.21 + colors[0][1] * 0.72 + colors[0][2] * 0.07 < 115) block.style.color = "white";
-        else if (u.styleSamples) block.style.color=DeepRead.ParallelInk.inkColor({samples:u.styleSamples},page,pixels);
+        if (u.labelBold) block.style.fontWeight = "700";
+        const sourceInk = !u.lightInk && (page.stageNoteInks?.get(u.owner) || (u.styleSamples && DeepRead.ParallelInk.inkColor(
+          {samples:u.styleSamples,mutedCredit:u.creditLabel},page,pixels)));
+        if (u.lightInk) block.style.color = "white";
+        else if (sourceInk) block.style.color = sourceInk;
+        else if (colors[0][0] * 0.21 + colors[0][1] * 0.72 + colors[0][2] * 0.07 < 115) block.style.color = "white";
         if (u.title && u.boldTitle) block.classList.add("dr-parallel-title");
-        const chinese = /^zh(?:-|$)/i.test(page.language);
         if ((u.sans && (u.title || !chinese)) || u.role==="figure_label") block.classList.add("dr-paper-sans");
+        DeepRead.PaperStyles.applyLabelFace(block,u,page.language);
         if (chinese && u.title && u.allItalic) block.classList.add("dr-paper-subheading");
         if (u.allItalic) block.style.fontStyle='italic';
         target.stage.append(block);
         if (type) layoutUnit={...layoutUnit,allItalic:false,title:type.weight===700,
-          boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:["documentTitle","heading","subheading","metadata"].includes(type.role) && u.centered};
+          boldTitle:type.weight===700,caption:type.role.endsWith("Caption"),centered:["documentTitle","heading","subheading","metadata","runningTitle"].includes(type.role) && u.centered};
         const metrics=DeepRead.ParallelTypeset.draw(block, layoutUnit, fragment,
           u.size*Math.hypot(page.transform[0],page.transform[1]),type);
         frames.push({unit:u,block,angle,sourceRect:originalRect,rect:{...r,height:r.height+(angle===0&&!u.title?u.clearance||0:0)},style:type,metrics});
         if (block.dataset.overflow) page.supplements.push(u);
+        block.dataset.sourceUnit = String(sourceIndex);
         block.dataset.sourceRect=[originalRect.left,originalRect.top,originalRect.width,originalRect.height].join(" ");
       }
       DeepRead.ParallelFlow.render(frames,page,canvas);
@@ -1136,6 +1235,7 @@
           DeepRead.PaperType.apply(translated, page.language);
           const type=DeepRead.PaperStyles.styleFor(u,page.styleProfile);
           if (type) DeepRead.PaperStyles.apply(translated,type,4/3);
+          DeepRead.PaperStyles.applyLabelFace(translated,u,page.language);
           translated.append(frag);
           row.append(h(hdoc, "div", "", u.source), translated); detail.append(row);
 
@@ -1164,7 +1264,8 @@
           + (notes ? tr(` · 单独显示 ${notes} 处`, ` · ${notes} separate`) : '')
           + (page.supplements.length>notes ? tr(` · 长段全文 ${page.supplements.length-notes} 处`, ` · ${page.supplements.length-notes} full passages`) : '')
           + (total>translated ? tr(` · 待译 ${total-translated} 处`, ` · ${total-translated} pending`) : '')
-        : tr("本页保留原图。扫描正文需要可用的 OCR 解析结果。", "Original page shown. Scanned text needs OCR results.");
+        : page.bibliographyOnly ? tr("参考文献沿用原页版式。", "Bibliography shown as printed in the original.")
+          : tr("本页保留原图。扫描正文需要可用的 OCR 解析结果。", "Original page shown. Scanned text needs OCR results.");
       if (page.partial ? page.partial.fallback : this.parsed?.fallback) this.status.textContent += pendingDownload
         ? tr(" · MinerU 结果未能下载，当前使用 PDF 文字层"," · MinerU download unavailable, using the PDF text layer")
         : tr(" · 本次使用 PDF 文字层"," · Using PDF text layer");

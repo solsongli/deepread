@@ -46,6 +46,7 @@ E2E.run = async function () {
   for (let i = 0; i < paras.length; i++) {
     await reader.navigate({ position: { pageIndex: 0, rects: paras[i].rects } });
     await sleep(400);
+    await overlay._hoverFace(paras[i]);
     overlay.hoverPara = overlay.trPara = paras[i];
     overlay._drawHover(paras[i]);
     const box = overlay.pdfDoc.querySelector(".dr-translation");
@@ -54,6 +55,13 @@ E2E.run = async function () {
     assert(box.dataset.typeRole===type.role && box.dataset.scale==="1.00","Paragraph did not use its document type role");
     assert(box.querySelector("strong"), "Bold translation lost in renderer");
     assert(box.querySelector("strong").textContent !== box.textContent.trim(), "Entire translation was bolded");
+    if (!i) {
+      const channels=overlay.pdfWin.getComputedStyle(box.querySelector("strong")).color.match(/\d+/g).map(Number);
+      assert(Math.abs(channels[0]-191)<5 && channels[1]<5 && Math.abs(channels[2]-64)<5,
+        "The hovered lead-in must retain its printed red together with bold");
+      assert(overlay.pdfWin.getComputedStyle(box).color !== overlay.pdfWin.getComputedStyle(box.querySelector("strong")).color,
+        "Normal explanatory prose must retain its own ink");
+    }
     const font = Number(box.dataset.fontSize);
     const r = box.getBoundingClientRect();
     assert(font < 30, "Oversized caption font");

@@ -1,8 +1,8 @@
 /* PDF text alignment and translation typography. License: AGPL-3.0-or-later */
 (function () {
-  const bold = (c) => c?.bold === true || /bold|black|heavy|[-,]Bd(?:It|Obl)?(?:MT)?$|[-,]Medi(?:Ital)?\b|(?:^|\+)(?:cm|lm)(?:ss)?bx(?:ti|sl)?\d/i.test(c?.fontName || "");
-  const italic = (c) => c?.italic === true || /italic|oblique|(?:Regu|Medi|Bold|[-,])Ital(?:MT)?\b|(?:^|\+)(?:cm|lm)(?:bxti|bxsl|ti|sl|itt|ssi)\d/i.test(c?.fontName || "");
-  const monospace = c => /(?:^|\+)(?:cm|lm)(?:tt|itt)\d|mono|NimbusMon|Courier|Consolas|Menlo/i.test(c?.fontName || "");
+  const bold = (c) => c?.bold === true || /bold|black|heavy|[-,]Bd(?:It|Obl)?(?:MT)?$|[-,]Medi(?:Ital)?\b|(?:^|\+)(?:(?:cm|lm)(?:ss)?bx(?:ti|sl)?|sfbx)\d/i.test(c?.fontName || "");
+  const italic = (c) => c?.italic === true || /italic|oblique|(?:Regu|Medi|Bold|[-,])Ital(?:MT)?\b|(?:^|\+)(?:(?:cm|lm)(?:bxti|bxsl|ti|sl|itt|ssi)|sf(?:ti|sl))\d/i.test(c?.fontName || "");
+  const monospace = c => /(?:^|\+)(?:(?:cm|lm)(?:tt|itt)|sftt)\d|mono|NimbusMon|Courier|Consolas|Menlo/i.test(c?.fontName || "");
   const normal = (s) => String(s || "").normalize("NFKD").toLowerCase().replace(/ı/g,"i")
     .replace(/[ˆˇ˘˙˚˜]/gu,"").replace(/[^\p{L}\p{N}]/gu, "");
 
@@ -53,16 +53,21 @@
     return fontSize ? { fontSize } : null;
   }
 
-  function styledSentence(sentence, chars) {
+  function styledSentence(sentence, chars, onEmphasis) {
     const text = sentence.text || "";
     const mapping = sentence.charMapping || [];
     if (mapping.length !== text.length) return text;
-    let out = "", run = "", previous = "";
+    let out = "", run = "", previous = "", start = 0;
     const flush = () => {
       if (!run) return;
       // Markdown emphasis cannot start or end with whitespace.
       const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(run);
       out += m[1] + (m[2] ? previous + m[2] + previous : "") + m[3];
+      if (onEmphasis && previous && m[2]) {
+        const from = start + m[1].length;
+        onEmphasis(previous, m[2], mapping.slice(from, from + m[2].length).map(i => chars[i]));
+      }
+      start += run.length;
       run = "";
     };
     for (let i = 0; i < text.length; i++) {

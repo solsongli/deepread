@@ -13,6 +13,12 @@ const para = (page, index, text, bbox, type = "text") => ({ page_idx: page, para
   point_translations: [`old ${page}:${index}`] });
 const a = para(0, 4, "We use the learned representation to improve the", [80, 760, 460, 910]);
 const b = para(1, 0, "Transformer predictions without changing the objective.", [80, 100, 460, 240]);
+const colA=para(0,0,"We use the index because, similarly to the",[120,815,488,910]);
+const colB=para(0,1,"morpheme-based score, it tracks syntax.",[516,246,883,340]);
+assert.equal(C.candidates([colA,colB]).length,0,"reading cards keep their original page/figure scope");
+assert.deepEqual(Array.from(C.candidates([colA,colB],{includeColumns:true})[0].boundaries),["column"]);
+assert.equal(C.candidates([{...colA,paragraph_text:"We have completed this experiment."},colB],{includeColumns:true}).length,0);
+assert.equal(C.candidates([{...colA,bbox:[120,120,488,250]},colB],{includeColumns:true}).length,0);
 assert.equal(C.candidates([a, b]).length, 1, "uppercase technical term can continue a sentence");
 assert.equal(C.candidates([{ ...a, paragraph_text: a.paragraph_text + "." }, { ...b, bbox: [80, 700, 460, 900] }]).length, 0, "complete paragraphs at unrelated positions are not candidates");
 assert.equal(C.candidates([{ ...a, bbox: [80, 300, 460, 450] }, b]).length, 1, "an unfinished sentence can continue after a nonstandard page break");

@@ -19,6 +19,7 @@
     "services/typography.js",
     "services/translationLayout.js",
     "services/paperStyles.js",
+    "services/paperTools.js",
     "services/printGrid.js",
     "services/parallelTypeset.js",
     "services/parallelInline.js",

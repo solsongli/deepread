@@ -138,11 +138,84 @@
       bbox: item.bbox,
       context: item.context,
       inlineGlyphs: item.inlineGlyphs,
+      languagePairs: item.languagePairs,
+      contentsLeader: item.contentsLeader,
       visualOwner: item.visualOwner,
+      panelHeading: item.panelHeading,
+      stageNote: item.stageNote,
       flushLeft: item.flushLeft,
+      flushRight: item.flushRight,
       pageIndex: item.page_idx,
       docTitle: item.text_level === 1 && item.page_idx === 0
     };
+  }
+
+  // Academic appendices also use TeX's variable-width typewriter for prose.
+  // A complete CLI or Python example keeps its literal source and line breaks.
+  function prepareTypewriterExcerpts(sources, chars, view) {
+    const font = c => /(?:^|\+)SFVT\d+$/iu.test(c.fontName || "") || DeepRead.Typography.monospace(c);
+    const printed = chars.filter(font);
+    if (!printed.length) return sources;
+    const rows = DeepRead.ParallelVisual.lines(printed).map(run => ({
+      run, text:glyphStream(run).text.trim(), rect:union(run.map(c=>c.rect))
+    }));
+    const commands = new Set();
+    const codeRows = new Set();
+    const output = [];
+    for (const p of sources) {
+      const box = fromPermille(p.bbox,view);
+      if (p.paragraphType !== "text" || !box) { output.push(p); continue; }
+      const lines = rows.filter(({rect}) => rect[0] >= box[0]-1 && rect[2] <= box[2]+1 &&
+        rect[1] >= box[1]-1 && rect[3] <= box[3]+1);
+      if (!lines.length || normalized(lines.map(r=>r.text).join(" ")) !== normalized(p.paragraphText)) {
+        output.push(p); continue;
+      }
+      const program = /^([a-z][\w.-]*)\s+[a-z][\w-]*(?:\s|$)/u.exec(lines[0].text)?.[1];
+      const shell = lines.length >= 2 && program && lines.every(r=>r.text.startsWith(program+" ")) &&
+        lines.some(r=>/\s--[\w-]+/u.test(r.text));
+      const python = lines.some(r=>/^(?:from\s+[\w.]+\s+import\s|import\s+\w)/u.test(r.text)) &&
+        lines.some(r=>/^[\w.]+\s*=|^\w+\(/u.test(r.text));
+      const commandTranscript = /^\$\s+[\w./-]+/u.test(lines[0].text);
+      const functionCall = /^[A-Za-z_][\w.]*\(\s*["'[{]/u.test(lines[0].text) &&
+        /\)\s*;?$/u.test(lines.at(-1).text);
+      if (!shell && !python && !commandTranscript && !functionCall) {
+        output.push({...p,typewriterBody:true});
+        continue;
+      }
+      if (shell) commands.add(program);
+      for (const line of lines) codeRows.add(line);
+      // The unpainted code remains on the source canvas; only an actual prose
+      // comment can receive its own translation frame.
+      for (const [i, row] of lines.entries()) {
+        if (!/^#/u.test(row.text)) continue;
+        const at = row.text.lastIndexOf("#") + 1, comment = row.text.slice(at).trim();
+        if (!/^[a-zA-Z]+\s+[a-zA-Z]/u.test(comment) || /^\w+\s*=/u.test(comment)) continue;
+        const mark = row.run.findLastIndex(c=>glyphText(c)==="#");
+        const run = row.run.slice(mark + 1);
+        output.push({...p, paragraphType:"code_comment", paragraphText:comment, inlineGlyphs:run,
+          rects:linesOf(run), typewriterBody:true, minerUid:String(p.minerUid)+":comment:"+i, points:[],translationLayout:null});
+      }
+    }
+    // Short Markdown headings are frequently absent in text-layer layouts.
+    for (const [i, row] of rows.entries()) {
+      if (codeRows.has(row) || !/^#{1,6}\s+\p{L}/u.test(row.text) ||
+          output.some(p=>p.paragraphText?.includes(row.text))) continue;
+      output.push({paragraphType:"text",paragraphText:row.text,inlineGlyphs:row.run,rects:[row.rect],
+        minerUid:"native-prompt-heading-"+i,typewriterBody:true,points:[]});
+    }
+    return output.map(p => {
+      if (p.typewriterBody) return {...p,excerptCommands:commands};
+      if (p.paragraphType !== "title" || !p.bbox) return p;
+      const box = fromPermille(p.bbox,view);
+      if (box && rows.some(({rect,run}) => Math.abs(box[0]-rect[0]) < 2 &&
+          box[1]-rect[3] >= -1 && box[1]-rect[3] < run[0].fontSize*1.8)) {
+        return {...p,typewriterHeading:true,excerptCommands:commands,
+          hint:/\binstructions?\.md\b/iu.test(p.paragraphText)
+            ? "Heading for an instruction file. Name its purpose in the target language and retain its exact filename."
+            : p.hint};
+      }
+      return p;
+    });
   }
 
   function joinSplitFormula(sources, chars, view) {
@@ -173,6 +246,63 @@
         minerUid:prev.minerUid, bbox:union([prev.bbox,p.bbox]), inlineGlyphs:glyphs };
     }
     return output;
+  }
+
+  // A line starting with an author-year citation can grammatically finish
+  // the preceding caption sentence. Giving it a separate request can turn
+  // the cited author into the subject of a method used by this paper.
+  function joinCaptionCitation(sources, chars, view) {
+    const out = [];
+    for (const p of sources) {
+      const prev=out.at(-1);
+      if (!prev || !["image","figure","table","caption","chart"].includes(prev.paragraphType) ||
+          p.paragraphType!=="text" || /[.!?]\s*$/u.test(prev.paragraphText) ||
+          !/^\p{Lu}[\p{L}’'-]+(?:\s+et\s+al\.|\s+and\s+\p{Lu}[\p{L}’'-]+)\s*\((?:19|20)\d{2}[a-z]?\)\s+\p{Ll}/u.test(p.paragraphText)) {
+        out.push(p);continue;
+      }
+      const run = q=>q.inlineGlyphs || (q.bbox && match(charactersIn(fromPermille(q.bbox,view),chars),q.paragraphText));
+      const a=run(prev), b=run(p);
+      if (!a?.length || !b?.length) {out.push(p);continue;}
+      const aLines=linesOf(a), bLines=linesOf(b), last=a.at(-1), first=b[0], em=first.fontSize;
+      const baseGap=last.baseline-first.baseline;
+      if (!(baseGap>em*.65 && baseGap<em*1.7) || Math.abs(aLines.at(-1)[0]-bLines[0][0])>em ||
+          Math.abs(Math.max(...aLines.map(r=>r[2]))-Math.max(...bLines.map(r=>r[2])))>em*2.5) {
+        out.push(p);continue;
+      }
+      out[out.length-1]={...prev,paragraphText:prev.paragraphText+" "+p.paragraphText,
+        inlineGlyphs:[...a,...b],rects:[...aLines,...bLines],translationLayout:null,points:[],
+        hint:"The author-year citation after the method name belongs to the same sentence. Use a parenthetical attribution to that method. The current paper applies it."};
+    }
+    return out;
+  }
+
+  // Small capitals in a parenthetical list of method names may be filtered
+  // out as a short label. Restore the physical line only when the prose on
+  // both sides continues one sentence in the same column.
+  function restoreParentheticalLine(sources,chars,view) {
+    const out=[];
+    for (const p of sources) {
+      const prev=out.at(-1);
+      if (p.paragraphType!=="text" || prev?.paragraphType!=="text" ||
+          !/^\p{Ll}/u.test(p.paragraphText) || !/\p{L}$/u.test(prev.paragraphText) || !p.bbox || !prev.bbox) {
+        out.push(p); continue;
+      }
+      const a=fromPermille(prev.bbox,view),b=fromPermille(p.bbox,view);
+      const gap=a[1]-b[3];
+      if (gap<5 || gap>32 || Math.abs(a[0]-b[0])>4 || Math.abs(a[2]-b[2])>8) {out.push(p);continue;}
+      const between=charactersIn([Math.max(a[0],b[0])-1,b[3]+1,Math.min(a[2],b[2])+1,a[1]-1],chars);
+      const middle=glyphStream(between).text.trim();
+      if (linesOf(between).length!==1 || !/^\([^()]+\)\s+(?:and|or|in|as|for|with)\s+\p{L}/iu.test(middle)) {
+        out.push(p); continue;
+      }
+      const first=prev.inlineGlyphs || match(charactersIn(a,chars),prev.paragraphText);
+      const last=p.inlineGlyphs || match(charactersIn(b,chars),p.paragraphText);
+      if (!first.length || !last.length) {out.push(p);continue;}
+      const glyphs=[...first,...between,...last];
+      out[out.length-1]={...prev,paragraphText:prev.paragraphText+" "+middle+" "+p.paragraphText,
+        inlineGlyphs:glyphs,rects:linesOf(glyphs),translationLayout:null,points:[]};
+    }
+    return out;
   }
 
   function equationTag(chars) {
@@ -263,8 +393,55 @@
         }
       }
     }
+    const panelLabels = rasterLabels.filter(label=>label.panelCaption);
+    const names = new Set(panelLabels.map(label=>normalized(label.text)));
+    for (const label of panelLabels) {
+      const key = normalized(label.text);
+      const peers = sources.flatMap(p => {
+        if (p.paragraphType!=="table_label" || !names.has(normalized(p.paragraphText))) return [];
+        const r = p.rects?.[0] || fromPermille(p.bbox,view);
+        if (!r || label.mask[1]-r[3] < 6 || label.mask[1]-r[3] > 55) return [];
+        return [{p,r}];
+      });
+      if (peers.some(({p})=>normalized(p.paragraphText)===key)) continue;
+      const header = peers.find(({r,p})=>peers.filter(({r:other,p:entry})=>
+        p.visualOwner===entry.visualOwner && Math.abs(r[3]-other[3]) < 2).length >= 3);
+      if (!header) continue;
+      const y = (header.r[1]+header.r[3])/2;
+      const row = chars.filter(c=>valid(c.rect) && !c.rotation && !c.diagonal &&
+        Math.abs((c.rect[1]+c.rect[3])/2-y)<2);
+      const glyphs = match(row,label.text);
+      if (!glyphs.length || normalized(glyphs.map(glyphText).join(""))!==key) continue;
+      sources.push({paragraphType:"table_label",paragraphText:glyphStream(glyphs).text.trim(),
+        inlineGlyphs:glyphs,rects:linesOf(glyphs),visualOwner:header.p.visualOwner,
+        minerUid:String(header.p.minerUid)+":panel-name:"+key,
+        hint:"Table heading. The same panel name is printed under a figure as "+label.text+"."});
+    }
+    const definitions = [];
+    if (rasterLabels.length) {
+      for (const p of sources) {
+        const caption = String(p.paragraphText || "");
+        if (!/^(?:Fig(?:ure)?\.?|Table)\s+\d+/iu.test(caption)) continue;
+        for (const m of caption.matchAll(/[“"‘']([A-Z][A-Za-z]{1,9}\.)[”"’']\s+(?:denotes|means|stands for|refers to)\s+([^.;\n]{2,70})/gu))
+          definitions.push({term:m[1], context:m[0]});
+      }
+    }
     for (const [i, label] of rasterLabels.entries()) {
       if (!valid(label.rect) || !valid(label.mask)) continue;
+      const region = label.rect.slice();
+      // OCR measures the free space around each word independently. Adjacent
+      // lines can both claim the same gap, even though their ink never meets.
+      // Divide only the blank margin and preserve both complete source masks.
+      for (const other of rasterLabels) {
+        const a=label.mask, b=other.mask;
+        if (other===label || !valid(b)) continue;
+        for (const axis of [0,1]) {
+          const cross=1-axis;
+          if (Math.min(a[cross+2],b[cross+2]) <= Math.max(a[cross],b[cross])) continue;
+          if (a[axis] >= b[axis+2]) region[axis]=Math.max(region[axis],(a[axis]+b[axis+2])/2);
+          if (a[axis+2] <= b[axis]) region[axis+2]=Math.min(region[axis+2],(a[axis+2]+b[axis])/2);
+        }
+      }
       let owner = items.find(
         (it) =>
           visual.has(it.type) &&
@@ -290,18 +467,77 @@
         caption.coveredByOCR = true;
         owner = caption.visualOwner ?? caption.minerUid;
       }
+      let hint = label.hint;
+      const printed = label.text.replace(/\b[A-Z][A-Za-z]{1,9}\./gu, word => {
+        const exact = definitions.find(d => d.term === word);
+        // OCR can confuse c and e in a tiny label. Correct it only when a
+        // caption explicitly defines a unique spelling on this page.
+        const options = exact ? [exact] : definitions.filter(d =>
+          d.term.length === word.length && [...word].filter((ch,j) => ch !== d.term[j]).length === 1 &&
+          d.term.replace(/[ce]/g, "c") === word.replace(/[ce]/g, "c"));
+        if (options.length !== 1) return word;
+        hint = options[0].context;
+        return options[0].term;
+      });
       sources.push({
         paragraphType: "figure_label",
-        paragraphText: label.text,
-        rects: [label.rect],
+        paragraphText: printed,
+        rects: [region],
+        originalLabelRect: label.rect,
         inkMask: label.mask,
+        nativeOCR: !!(label.nativeOCR || label.lightInk), lightInk: !!label.lightInk, labelBold: !!label.bold,
         typography: { fontSize: label.size },
         centered: !!label.centered,
+        flushLeft: !!label.flushLeft,
+        panelCaption: !!label.panelCaption,
         visualOwner: owner,
-        hint: label.hint,
+        hint,
         minerUid: "figure-label:" + i
       });
     }
+  }
+
+  // Reading cards discard repeated running heads. Recover a printed paper
+  // title for the facing page only if the margin glyphs match the first page.
+  function restoreRunningTitle(page, items, documentItems) {
+    if (!page.index || !documentItems?.length) return items;
+    const at = documentItems.findIndex(it => it.page_idx === 0 && it.text_level === 1);
+    if (at < 0 || !documentItems[at].text) return items;
+    const title = documentItems[at].text;
+    const anchors = [title, ...title.split(/\s*[:：]\s*|\s+[—–]\s+/u)].map(normalized)
+      .filter(key => key.length >= 10);
+    const context = normalized(documentItems.slice(at,at+4).filter(it => it.page_idx === 0 && ["title","text"].includes(it.type || "text"))
+      .map(it => it.text || "").join(" "));
+    const [l,b,r,t] = page.view;
+    const margin = page.chars.filter(c => valid(c.rect) && c.rect[1] >= t - (t-b)*.085 &&
+      !c.rotation && !c.diagonal);
+    for (const row of DeepRead.ParallelVisual.lines(margin)) {
+      // A folio or a separate publisher field at the other margin does not
+      // form part of the title. The entire remaining run must be verified.
+      const fields = [];
+      for (const c of row) {
+        const previous = fields.at(-1)?.at(-1);
+        if (!previous || c.rect[0] - previous.rect[2] > c.fontSize*2) fields.push([]);
+        fields.at(-1).push(c);
+      }
+      for (const field of fields) {
+        const box = union(field.map(c => c.rect));
+        const run = charactersIn(box,margin);
+        const text = glyphStream(run).text.trim();
+        const key = normalized(text);
+        if (!anchors.some(anchor => key === anchor || key.startsWith(anchor)) || !context.includes(key) ||
+            !/\p{L}{2,}.*\s+.*\p{L}{2,}/u.test(text)) continue;
+        const existing = items.find(item => valid(item.bbox) && inside(fromPermille(item.bbox,page.view),
+          (box[0]+box[2])/2,(box[1]+box[3])/2,1) && normalized(item.text || "").includes(key));
+        if (existing && (existing.layoutPart === "runningTitle" || normalized(existing.text) !== key ||
+            !["text","title","header"].includes(existing.type))) continue;
+        const header = {...existing,type:"header",text_level:0,page_idx:page.index,
+          id:existing?.id ?? "running-title:"+page.index,text,inlineGlyphs:run,layoutPart:"runningTitle",bbox:[
+            1000*(box[0]-l)/(r-l),1000*(t-box[3])/(t-b),1000*(box[2]-l)/(r-l),1000*(t-box[1])/(t-b)]};
+        return existing ? items.map(item => item === existing ? header : item) : [...items,header];
+      }
+    }
+    return items;
   }
 
   const contactLabels = { homepage: "主页", correspondence: "通信作者", date: "日期" };
@@ -317,9 +553,28 @@
   function splitFrontmatter(sources, chars, view, authorArea, saved) {
     const physicalSources = [];
     for (const p of sources) {
+      // A narrow metadata sidebar can end on the same baseline as the author
+      // affiliations. Keep its original DOI and clickable location intact.
+      if (p.paragraphType === "text" && authorArea(p)) {
+        const parts = /^(.+?)\s+(DOI:\s*10\.\d{4,9}\/\S+)$/iu.exec(p.paragraphText);
+        if (parts) {
+          const within = charactersIn(fromPermille(p.bbox,view),chars);
+          const affiliation = match(within,parts[1]), doi = match(within,parts[2]);
+          const affBox = union(affiliation.map(c=>c.rect)), doiBox = union(doi.map(c=>c.rect));
+          if (valid(affBox) && valid(doiBox) && (doiBox[2] < affBox[0]-5 || doiBox[0] > affBox[2]+5)) {
+            physicalSources.push({...p,paragraphText:parts[1],inlineGlyphs:affiliation,rects:linesOf(affiliation),
+              translationLayout:null,points:[]});
+            physicalSources.push({...p,paragraphText:parts[2],inlineGlyphs:doi,rects:linesOf(doi),
+              minerUid:String(p.minerUid)+":doi",verbatim:true,translationLayout:null,points:[]});
+            continue;
+          }
+        }
+      }
       // Publishing footers often put the citation and its DOI on separate
       // baselines, even when the parser returns one unbroken text string.
-      if (["footer", "footnote", "page_footnote"].includes(p.paragraphType)) {
+      const numberedURLs = /^\s*\d+\s*https?:\/\//iu.test(p.paragraphText) &&
+        /\s\d+\s*(?:https?:\/\/|\p{Lu})/u.test(p.paragraphText);
+      if (["footer", "footnote", "page_footnote"].includes(p.paragraphType) || numberedURLs) {
         const bounded = charactersIn(fromPermille(p.bbox, view), chars);
         const original = match(bounded, p.paragraphText);
         const groups = [];
@@ -333,7 +588,7 @@
         }
         if (line.length) groups.push(line);
         const isURL = (run) =>
-          /^(?:(?:https?:\/\/|www\.)\S+|(?:DOI:\s*)?10\.\d{4,9}\/\S+)$/i.test(glyphStream(run).text.trim());
+          /^(?:\d+\s*)?(?:(?:https?:\/\/|www\.)\S+|(?:DOI:\s*)?10\.\d{4,9}\/\S+)$/i.test(glyphStream(run).text.trim());
         if (groups.length > 1 && groups.some(isURL)) {
           const sections = [];
           for (const group of groups) {
@@ -343,6 +598,7 @@
           sections.forEach(({ run, url }, i) =>
             physicalSources.push({
               ...p,
+              paragraphType: numberedURLs ? "footnote" : p.paragraphType,
               paragraphText: glyphStream(run).text.trim(),
               inlineGlyphs: run,
               rects: linesOf(run),
@@ -421,7 +677,137 @@
       }
       physicalSources.push(p);
     }
-    return physicalSources;
+    const roles = new Map([["equal contribution","同等贡献"],["project lead","项目负责人"],
+      ["corresponding author","通讯作者"],["corresponding authors","通讯作者"]]);
+    return physicalSources.flatMap(p => {
+      if ((!p.frontMatterLine && !authorArea(p)) || p.paragraphType !== "text" ||
+          !/[†‡]/u.test(p.paragraphText)) return [p];
+      const run = p.inlineGlyphs || match(charactersIn(fromPermille(p.bbox,view),chars),p.paragraphText);
+      if (!run.length || linesOf(run).length !== 1) return [p];
+      const names = [[]];
+      for (const c of run) {
+        if (/^[*∗†‡]$/u.test(glyphText(c))) {
+          if (names.at(-1).length) names.push([]);
+        } else names.at(-1).push(c);
+      }
+      const fields = names.map(glyphs => ({glyphs, text:glyphStream(glyphs).text.trim()}));
+      if (fields.length < 2 || fields.some(f => !roles.has(f.text.toLowerCase()))) return [p];
+      // Leave each superscript in its original position beside its role.
+      return fields.map(({glyphs,text},i) => ({...p,paragraphText:text,rects:linesOf(glyphs),inlineGlyphs:glyphs,
+        minerUid:String(p.minerUid)+":credit:"+i,creditLabel:roles.get(text.toLowerCase()),
+        flushLeft:true,centered:false,frontMatterLine:true,translationLayout:null,points:[]}));
+    });
+  }
+
+  function restoreTitleContinuation(sources, chars, view, primaryTitle) {
+    if (primaryTitle == null) return sources;
+    const at = sources.findIndex(p => p.minerUid === primaryTitle);
+    const title = sources[at];
+    if (!title || !/(?:[,;:\u2013\u2014]|\b(?:a|an|and|by|for|from|in|of|on|or|the|to|with))\s*$/iu.test(title.paragraphText)) return sources;
+    const first = title.inlineGlyphs ||
+      match(charactersIn(fromPermille(title.bbox, view), chars), title.paragraphText);
+    const rects = linesOf(first);
+    const glyph = first.find(DeepRead.Typography.bold);
+    if (rects.length !== 1 || !glyph?.fontName) return sources;
+    const [line] = rects, em = glyph.fontSize;
+    const following = sources.findIndex(p => {
+      if (!p.frontMatterLine || p.rects?.length !== 1) return false;
+      const [next] = p.rects;
+      const gap = line[1] - next[3];
+      return gap >= -em * .2 && gap <= em * .6 &&
+        Math.abs((line[0] + line[2] - next[0] - next[2]) / 2) < em * .8 &&
+        p.inlineGlyphs.filter(c => glyphText(c).trim()).every(c =>
+          c.fontName === glyph.fontName && Math.abs(c.fontSize - em) < .5);
+    });
+    if (following < 0) return sources;
+    const continuation = sources[following];
+    sources[at] = {
+      ...title,
+      paragraphText: title.paragraphText + " " + continuation.paragraphText,
+      inlineGlyphs: [...first, ...continuation.inlineGlyphs],
+      rects: [...rects, ...continuation.rects], translationLayout: null, points: []
+    };
+    sources.splice(following, 1);
+    return sources;
+  }
+
+  function numberedHeadingLines(sources, chars, view) {
+    const number = /^(?:[A-Z]|\d+)(?:\.\d+)*\.?\s+(?=\p{Lu})/u;
+    const output = [];
+    let hanging;
+    for (const p of sources) {
+      const heading = p.paragraphType === "title" && number.test(p.paragraphText);
+      if (!heading && (!hanging || !["title","text"].includes(p.paragraphType) || p.paragraphText.length > 160)) {
+        output.push(p); hanging = null; continue;
+      }
+      const run = p.inlineGlyphs || match(charactersIn(fromPermille(p.bbox,view),chars),p.paragraphText);
+      const rows = linesOf(run).map(rect => charactersIn(rect, run));
+      if (!rows.length) { output.push(p); hanging = null; continue; }
+      const groups = [];
+      for (const row of rows) {
+        const printed = glyphStream(row).text.trim();
+        const firstRow = groups.at(-1)?.[0];
+        const firstStream = firstRow && glyphStream(firstRow);
+        const prefix = firstRow && number.exec(firstStream.text);
+        const body = prefix && firstRow[firstStream.mapping[prefix[0].length]];
+        const flushSubhead = body && /^\p{Lu}/u.test(printed) &&
+          body.rect[0]-firstRow[0].rect[0]>body.fontSize && Math.abs(row[0].rect[0]-firstRow[0].rect[0])<body.fontSize*.4 &&
+          firstRow[0].baseline-row[0].baseline>body.fontSize*1.3 && row.every(c=>!glyphText(c).trim() || DeepRead.Typography.bold(c));
+        if (!groups.length || number.test(printed) || flushSubhead) groups.push([]);
+        groups.at(-1).push(row);
+      }
+      for (const [i, lines] of groups.entries()) {
+        const glyphs = lines.flat(), first = glyphs[0];
+        const value = lines.map(row => glyphStream(row).text.trim()).join(" ");
+        const prefix = number.exec(value);
+        if (!prefix && hanging && first.fontName === hanging.font && first.fontSize >= hanging.em*.75 &&
+            glyphs.some(c=>Math.abs(c.fontSize-hanging.em)<.5 && Math.abs(c.baseline-first.baseline)<.5) &&
+            Math.abs(first.rect[0]-hanging.left)<hanging.em*.5 && hanging.baseline-first.baseline>hanging.em*.6 &&
+            hanging.baseline-first.baseline<hanging.em*1.65 &&
+            glyphs.every(c => !glyphText(c).trim() || (c.fontName===hanging.font && DeepRead.Typography.bold(c)))) {
+          // The continuation starts at the title text, indented beyond its number.
+          const prev = output.at(-1);
+          const joined = [...hanging.glyphs, ...glyphs];
+          output[output.length-1] = {...prev, paragraphText:prev.paragraphText+" "+value,
+            rects:linesOf(joined), inlineGlyphs:joined, points:[], translationLayout:null};
+          hanging.glyphs = joined; hanging.baseline = glyphs.at(-1).baseline;
+          continue;
+        }
+        const source = groups.length === 1 ? p : {...p, paragraphText:value, rects:linesOf(glyphs), inlineGlyphs:glyphs,
+          minerUid:i ? String(p.minerUid)+":heading:"+i : p.minerUid, points:[], translationLayout:null};
+        output.push(source);
+        hanging = null;
+        if (!prefix) continue;
+        const firstLine = glyphStream(lines[0]);
+        const body = lines[0][firstLine.mapping[prefix[0].length]];
+        if (body && DeepRead.Typography.bold(body) && body.rect[0]-first.rect[0]>body.fontSize)
+          hanging = {left:body.rect[0], em:body.fontSize, font:body.fontName, baseline:glyphs.at(-1).baseline, glyphs};
+      }
+    }
+    return output;
+  }
+
+  // A proceedings imprint often uses two tightly set lines, separate from
+  // the normal footer and folio. Their font bounding boxes can overlap even
+  // though the two printed baselines are distinct.
+  function joinPublicationImprint(sources, chars, view) {
+    const band = view[1] + (view[3]-view[1])*.08;
+    const imprint = sources.find(p=>/^Proceedings of\b/iu.test(p.paragraphText) && p.bbox &&
+      fromPermille(p.bbox,view)?.[3] <= band);
+    if (!imprint) return sources;
+    const note = sources.find(p => p !== imprint && /(?:©|copyright)\s*\d{4}/iu.test(p.paragraphText) && p.bbox &&
+      fromPermille(p.bbox,view)?.[3] <= band);
+    if (!note) return sources;
+    const run = p=>p.inlineGlyphs || match(charactersIn(fromPermille(p.bbox,view),chars),p.paragraphText);
+    const first = run(imprint), second = run(note);
+    const a = linesOf(first), b = linesOf(second);
+    if (a.length!==1 || b.length!==1) return sources;
+    const delta = first[0].baseline-second[0].baseline, em=first[0].fontSize;
+    if (!(delta>=em*.7 && delta<=em*1.4) || Math.abs(a[0][0]+a[0][2]-b[0][0]-b[0][2])>em*1.5) return sources;
+    return sources.filter(p=>p!==note).map(p=>p!==imprint?p:{
+      ...p,paragraphType:"footnote",paragraphText:p.paragraphText+" "+note.paragraphText,
+      inlineGlyphs:[...first,...second],rects:[...a,...b],points:[],translationLayout:null
+    });
   }
 
   // Cached paragraph IDs are physical IDs. A joined translation may cross a page or
@@ -436,6 +822,7 @@
     continuationFor,
     language = "zh",
     rasterLabels = [],
+    clippedLabels, panelColors,
     saved = []
   }) {
     chars = DeepRead.ParallelFrames.repairScripts(DeepRead.Typography.composeAccents(chars));
@@ -449,6 +836,8 @@
       barriers = [];
     const parsed = items.map(sourceParagraph);
     const primaryTitle = parsed.find((it) => it.docTitle)?.minerUid;
+    const creditSection = parsed.some(p => p.paragraphType === "title" &&
+      /^(?:author\s+)?(?:contributions?|contributors)\s*[:.]?$/iu.test(p.paragraphText));
     // Cards can combine prose + a display equation + its explanation. For a
     // page translation the original parser frames own these three positions.
     const parsedIDs = new Set(parsed.map((p) => p.minerUid));
@@ -489,8 +878,13 @@
       valid(p.bbox) &&
       p.bbox[1] >= paperTitle.bbox[3] - 3 &&
       p.bbox[1] < (firstSection?.bbox?.[1] ?? paperTitle.bbox[3] + 230);
-    const physicalSources = splitFrontmatter(sources, chars, view, authorArea, saved);
-    for (const p of joinSplitFormula(physicalSources, chars, view)) {
+    // Some PDF text layers group the second title line with the author grid.
+    const physicalSources = restoreTitleContinuation(
+      splitFrontmatter(sources, chars, view, authorArea, saved), chars, view, primaryTitle
+    );
+    const excerpts = prepareTypewriterExcerpts(joinPublicationImprint(physicalSources,chars,view),chars,view);
+    const paragraphsWithHeadings = numberedHeadingLines(joinCaptionCitation(excerpts, chars, view), chars, view);
+    for (const p of joinSplitFormula(restoreParentheticalLine(paragraphsWithHeadings,chars,view), chars, view)) {
       if (p.coveredByOCR) continue;
       let type = p.paragraphType || "text";
       const caption = visual.has(type) || type === "caption";
@@ -505,14 +899,23 @@
       }
       if (!p.paragraphText?.trim()) continue;
       if (/^\s*[\w.%+'-]+@[\w.-]+\.[A-Za-z]{2,}\s*$/i.test(p.paragraphText)) continue;
+      // A footnote consisting solely of a number and a URL has no prose
+      // to reflow. Keep its original type, single line and link target.
+      if (/^\s*(?:\[\d+\]|\d+[.)]?)\s*https?:\/\/\S+\s*$/iu.test(p.paragraphText)) continue;
+      // A name at the left margin and an email at the right often share one
+      // physical row. Both retain their exact spelling and alignment.
+      if (p.frontMatterLine || authorArea(p)) {
+        const byline = /^([^:@]+?)\s+[\w.%+'-]+@[\w.-]+\.[A-Za-z]{2,}\s*$/iu.exec(p.paragraphText);
+        if (byline && DeepRead.ParallelVisual.isName(byline[1].trim())) continue;
+      }
       let bounded = charactersIn(region, chars);
       if (type === "header" && !bounded.length) continue; // journal logos can be single bitmaps
       if (
         authorArea(p) &&
         type === "text" &&
         !p.context &&
-        DeepRead.ParallelVisual.isName(p.paragraphText) &&
-        bounded.filter(DeepRead.Typography.bold).length > bounded.length * 0.55
+        DeepRead.ParallelVisual.isName(p.paragraphText.replace(/[∗†‡*]/gu, " ")) &&
+        (/\p{L}[∗†‡*\d]/u.test(p.paragraphText) || bounded.filter(DeepRead.Typography.bold).length > bounded.length * 0.55)
       )
         continue;
       let ocr = DeepRead.ParallelInline.alignOCR(bounded, p.paragraphText);
@@ -538,7 +941,7 @@
       let layout = oldLayout;
       if (!layout?.length || (layout.length === 1 && glyphs.length && type === "text")) {
         const current = DeepRead.TranslationLayout.analyze(stream.text || p.paragraphText, stream.mapping, glyphs, {
-          type: type === "list" ? "list" : "text"
+          type: type === "list" ? "list" : "text", dashMarkers: creditSection
         }).units;
         if (!layout?.length || current.length > 1) layout = current;
       }
@@ -559,9 +962,18 @@
         const single = layout.length === 1;
         let source = u.sourceText || p.paragraphText;
         if (tag && source.startsWith(tag.label)) source = source.slice(tag.label.length).trimStart();
-        const local = single ? glyphs : match(glyphs.length ? glyphs : bounded, source);
+        let local = single ? glyphs : match(glyphs.length ? glyphs : bounded, source);
+        if (!single && !local.length && u.marker) {
+          const pool = glyphs.length ? glyphs : bounded;
+          const rows = linesOf(pool).map(box=>charactersIn(box,pool));
+          const matches = rows.filter(row=>normalized(glyphStream(row).text)===normalized(source));
+          if (matches.length===1) local=matches[0];
+        }
         const orient = local.find((c) => c.rotation != null)?.rotation || 0;
         let rects = orient && type==="figure_label" && local.length ? [union(local.map(c=>c.rect))] : linesOf(local);
+        // OCR of a misencoded PDF font verifies the visible words and both
+        // ends of their original text run, even when its character map fails.
+        if (p.nativeOCR && single && valid(p.inkMask)) rects = existingRects;
         // Whole-figure boxes are not caption frames. For OCR-only prose a typed
         // text box is usable; never guess a split between unmapped list items.
         if (
@@ -606,8 +1018,25 @@
           language,
           ocr,
           type === "text" && authorArea(p),
-          type === "title"
+          type === "title",
+          { creditList: creditSection, excerptCommands:p.excerptCommands }
         );
+        const colorRanges = p.panelHeading && panelColors?.get(String(rect));
+        if (colorRanges && /^\*\*[^*]+\*\*$/u.test(inline.modelText)) {
+          let marked = inline.modelText.slice(2,-2);
+          const spans = [];
+          for (const range of colorRanges) {
+            const at = marked.indexOf(range.text);
+            if (at < 0 || marked.indexOf(range.text, at+1) !== -1) continue;
+            marked = marked.slice(0,at) + "**" + range.text + "**" + marked.slice(at+range.text.length);
+            spans.push({face:"**",text:range.text,samples:range.samples});
+          }
+          if (spans.length) {
+            inline.modelText = inline.styled = marked;
+            inline.emphasis = spans;
+            inline.panelBold = true;
+          }
+        }
         if (type === "table_label")
           for (const token of inline.tokens) {
             if (token.kind === "math" && /^[\p{Script=Greek}\p{Sm}]$/u.test(token.display)) token.kind = "literal";
@@ -643,34 +1072,47 @@
           allItalic: bodyChars.length > 0 && bodyChars.every(DeepRead.Typography.italic),
           boldTitle: !bodyChars.length || bodyChars.filter(DeepRead.Typography.bold).length > bodyChars.length / 2,
           owner: p.minerUid,
-          matched: !!local.length,
+          matched: !!local.length || !!p.nativeOCR,
           mixed:
             disconnected ||
             (type === "text_with_equation" && !local.length && !inline.tokens.some((t) => t.kind === "tex"))
         };
         block.visualOwner = p.visualOwner;
+        if (p.panelHeading) block.panelHeading = true;
+        if (p.stageNote) block.stageNote = true;
+        block.typewriterBody = p.typewriterBody;
+        block.typewriterHeading = p.typewriterHeading;
         block.role = type;
         block.headingLevel=p.headingLevel;
         block.layoutPart=p.layoutPart;
+        if (p.layoutPart === "runningTitle" && local.some(c => /CMCSC|small[-_ ]?caps/iu.test(c.fontName || "")))
+          block.boldTitle = true;
+        block.contentsLeader=p.contentsLeader;
         block.captionKind=p.captionKind;
         block.frontMatter=authorArea(p) && type==="text" &&
           (p.frontMatterLine || p.verbatim || DeepRead.ParallelVisual.isName(p.paragraphText) ||
           (p.paragraphText.match(/\p{Lu}[\p{L}.’-]+\s+\p{Lu}[\p{L}.’-]+[\d,;¹²³∗†]/gu)||[]).length>=2 || /@|^\s*[\d*∗†‡]|\b(?:University|Institute|Laboratory)\b/u.test(p.paragraphText.slice(0,80)));
         if (p.flushLeft) block.flushLeft = true;
+        if (p.flushRight) block.flushRight = true;
         block.verbatim = !!p.verbatim || !/[\p{L}\p{N}]/u.test(block.modelText.replace(/⟦D+\d+⟧/gu,""));
         block.context = p.context;
         block.hint = p.hint;
+        if (p.panelCaption) block.panelCaption = true;
         block.documentTitle = type === "title" && primaryTitle != null && p.minerUid === primaryTitle;
         if (["table_label", "figure_label", "formula_note", "code_comment"].includes(type)) {
           block.caption = true;
           block.verifiedLabel = true;
         }
         if (type === "algorithm_step" && rects.length === 1) block.verifiedLabel = true;
-        if (block.title || type === "code_comment" || type === "figure_label")
+        if (!block.panelBold && (block.title || type === "header" || type === "code_comment" || type === "figure_label" || type === "table_label"))
           block.styleSamples = local
             .filter((c) => valid(c.rect))
             .slice(0, 15)
             .map((c) => c.rect);
+        if (p.creditLabel) {
+          block.creditLabel = true;
+          block.styleSamples = local.filter(c=>valid(c.rect) && /\p{L}/u.test(glyphText(c))).map(c=>c.rect);
+        }
         if (rects.length === 1 && bodyChars.length > 0 && bodyChars.length <= 90) {
           block.linkSamples = local
             .slice(firstBody)
@@ -678,6 +1120,8 @@
             .map((c) => c.rect);
         }
         if (p.inkMask) block.inkMask = p.inkMask;
+        if (p.originalLabelRect) block.originalLabelRect=p.originalLabelRect;
+        if (p.nativeOCR) { block.nativeOCR = true; block.lightInk = p.lightInk; block.labelBold = p.labelBold; }
         if (type === "ref_text" && rects.length > 1 && !orient) {
           const starts = rects
             .slice(1)
@@ -689,7 +1133,7 @@
         if (block.allItalic && rects.length === 1 && /^[A-Z]\.$/u.test(block.marker)) block.title = true;
         const label = inline.tokens[0];
         block.centered = !!p.centered;
-        if (rect && !orient && (type === "title" || authorArea(p) || type === "header")) {
+        if (rect && !orient && !p.flushLeft && (type === "title" || authorArea(p) || type === "header")) {
           const middle = (rect[0] + rect[2]) / 2,
             pageMiddle = (view[0] + view[2]) / 2;
           const sameCenter = rects.every((r) => Math.abs((r[0] + r[2]) / 2 - middle) < size * 0.9);
@@ -734,15 +1178,37 @@
           block.markerIndent = Math.max(0, (local[firstBody].rect[0] - rect[0]) / size);
           if (rects.length > 1) block.hanging = Math.max(0, (rects[1][0] - rect[0]) / size);
         }
+        // Some list frames start at the first word, with the printed dash
+        // outside the frame. Keep that glyph on the page as the list marker.
+        if (!block.markerRect && /^[•–—-]$/u.test(block.marker) && rects.length && !orient) {
+          const line = rects[0];
+          block.outsideMarker = chars.some(c => glyphText(c) === block.marker && valid(c.rect) &&
+            c.rect[2] <= line[0] - 1 && line[0] - c.rect[2] < size * 1.5 &&
+            Math.abs((c.rect[1] + c.rect[3] - line[1] - line[3]) / 2) < size * .4);
+        }
         const old = reuse ? (single && fragment) || u.translation || (single ? pointTranslation : "") : "";
         const contact=(p.frontMatterLine || authorArea(p)) && contactTranslation(inline.modelText,source,language);
         if (contact) block.verbatim=true;
-        const fixed = contact || (type === "table_label" &&
+        const peerReview = /^zh(?:-|$)/iu.test(language) && u.marker && withoutMarker(source,u.marker).trim()==="Review" &&
+          /\bReview\s+[•‣◦▪●]\s*Repository\s+[•‣◦▪●]\s*Archive\b/iu.test(p.paragraphText)
+          ? (language==="zh-TW" || language==="zh-Hant" ? "評審" : "评审") : "";
+        const fixed = contact || peerReview || (p.creditLabel && /^(?:zh|zh-CN|zh-Hans)$/iu.test(language) && p.creditLabel) || (["table_label","figure_label"].includes(type) &&
           DeepRead.ParallelVisual.compactLabel(source, language, p.languagePairs, inline.modelText));
         block.translation =
           fixed || (block.verbatim ? inline.modelText : DeepRead.ParallelInline.fromLegacy(block, old));
-        units.push(block);
+        if (!clippedLabels?.has(block.owner)) units.push(block);
       }
+    }
+    // An estimated figure box can include a neighbouring caption's last
+    // printed line. One physical line then appears as both label and caption.
+    const captions = units.filter(u => u.caption && u.role !== "figure_label" && u.matched &&
+      /^(?:Fig(?:ure)?\.?|Table)\s+\d+/iu.test(u.source));
+    for (let i = units.length - 1; i >= 0; i--) {
+      const label = units[i];
+      if (label.role !== "figure_label" || !label.rect || label.source.length < 6) continue;
+      if (captions.some(c => c !== label && normalized(c.source).includes(normalized(label.source)) &&
+          c.rects.some(r => inside(r, label.rect[0], label.rect[1], 1) && inside(r, label.rect[2], label.rect[3], 1))))
+        units.splice(i, 1);
     }
     const bbox = (r) => ({ left: r[0], top: r[1], right: r[2], bottom: r[3] });
     const { layoutRectsOverlap } = DeepRead.ParallelTypeset.engine().FitModelParts.rects;
@@ -754,7 +1220,11 @@
           (b) =>
             b.rect &&
             overlaps(candidate, b.rect, tolerance) &&
-            !(b.estimatedGraphic && unit.caption && unit.matched && /^(?:Fig(?:ure)?\.?|Table|Tab\.)\s+\d+/iu.test(unit.source)) &&
+            // Old text-layer caches may extend the next figure's estimated
+            // region above the previous caption. The label's own PDF glyphs
+            // and identified figure still determine its physical location.
+            !(b.estimatedGraphic && unit.matched && unit.verifiedLabel && unit.visualOwner != null) &&
+            !(b.estimatedGraphic && unit.caption && unit.matched && /^(?:Fig(?:ure)?\.?|Table|Tab\.)\s+(?:\d+|[IVXLCDM]+)\b/iu.test(unit.source)) &&
             !(unit.caption && unit.matched && unit.owner != null && b.owner === unit.owner) &&
             !(unit.visualOwner != null && b.owner === unit.visualOwner && (unit.verifiedLabel || unit.matched))
         ) ||
@@ -856,7 +1326,7 @@
     return units;
   }
 
-  const identity = (u) => JSON.stringify([u.source, u.styled, u.rect, u.marker]);
+  const identity = (u) => JSON.stringify([u.source, u.styled, u.originalLabelRect || u.rect, u.marker]);
   const contract = u => JSON.stringify([u.modelText,(u.tokens || []).map(s=>[s.kind,s.source,s.display]),
     ...(u.context?.length || u.hint ? [u.context || null,u.hint || ""] : [])]);
   // v1.11 split interval endpoints into citation slots and could include
@@ -986,6 +1456,17 @@
       else if (!cached.contract) u.translation=DeepRead.ParallelInline.fromLegacy(u,cached.text);
       else u.translation=migrateInlineMath(u,cached);
     }
+    for (const u of units) {
+      if (!u.panelCaption || u.translation || u.tokens?.length || !u.rect) continue;
+      const name = normalized(u.source);
+      const translations = new Set(units.filter(cell => cell.role==="table_label" && cell.translation &&
+        !cell.tokens?.length && cell.rect && normalized(cell.source)===name &&
+        u.rect[1]-cell.rect[3]>=6 && u.rect[1]-cell.rect[3]<=55).map(cell=>cell.translation.replace(/\*+/ug,"")));
+      if (translations.size === 1) {
+        const [text] = translations;
+        if (DeepRead.ParallelInline.valid(u,text)) u.translation = text;
+      }
+    }
   }
   function records(units) {
     return units.filter((u) => u.translation).map((u) => ({ identity: identity(u), contract: contract(u), text: u.translation,
@@ -998,10 +1479,18 @@
       return { page_idx: item.page_idx, paragraph_idx: i, paragraph_text: p.paragraphText, paragraph_type: p.paragraphType, bbox: p.bbox };
     });
     const bySource = new Map();
-    for (const group of DeepRead.Continuations.candidates(nearby)) {
+    const columnSources = new Set();
+    for (const group of DeepRead.Continuations.candidates(nearby,{includeColumns:true})) {
       const texts = group.parts.map((p) => p.paragraph_text);
       for (const p of group.parts) if (p.page_idx === pageIndex) bySource.set(normalized(p.paragraph_text), texts);
+      group.boundaries.forEach((kind,i) => {
+        if (kind==="column" && group.parts[i].page_idx===pageIndex) {
+          columnSources.add(normalized(texts[i]));
+          columnSources.add(normalized(texts[i+1]));
+        }
+      });
     }
+    bySource.columnSources=columnSources;
     return bySource;
   }
 
@@ -1015,6 +1504,10 @@
       const own=normalized(u.source), fragments=u.context || context?.get(own) || [];
       const index=fragments.findIndex(s=>normalized(s)===own);
       if (index<0) continue;
+      // A previously standalone translation may have guessed the comparison
+      // target in the next column. Include the actual continuation in its
+      // cache identity on both sides before accepting a saved translation.
+      if (!u.context && context?.columnSources?.has(own)) u.context=fragments;
       const before=index>0 ? fragments[index-1] : "";
       const after=index+1<fragments.length ? fragments[index+1] : "";
       u.before=edge(before,true);
@@ -1049,6 +1542,10 @@
     return han + Math.min(retained, words / 4) >= words * 0.58;
   }
 
+  function translationIssue(unit, text = unit.translation) {
+    return DeepRead.ParallelInline.issue(unit, text) || (coversProse(unit, text) ? "" : "coverage");
+  }
+
   async function translate(units, { language, signal, request, context, concurrency = 1, onProgress, preview=false }) {
     setContext(units,context);
     const copies = new Map(), pending = [];
@@ -1073,28 +1570,32 @@
       cost += length;
     }
     if (batch.length) batches.push(batch);
-    const accepted = new Map();
+    const accepted = new Map(), repairIssues = new Map();
     async function attempt(group, repair) {
       const rows = group.map((u, i) => ({
         id: i + ":u0", kind: u.marker ? "list-item" : (u.role || "paragraph"),
         source_text: u.modelText || u.styled || u.source,
-        ...(u.rects?.length>=2 && (u.title || u.caption || u.role==="text") ? {source_lines:u.rects.length} : {}),
         ...(u.title ? {kind:"heading"} : {}),
         ...(u.hint ? {source_context:u.hint} : {}),
-        ...(!repair && u.before ? {preceding_context:u.before} : {}),
-        ...(!repair && u.after ? {following_context:u.after} : {}),
+        ...(u.before && (!repair || u.context) ? {preceding_context:u.before} : {}),
+        ...(u.after && (!repair || u.context) ? {following_context:u.after} : {}),
+        ...(repair ? {repair_issue: repairIssues.get(u)} : {}),
         ...(u.tokens?.length ? { protected:u.tokens.map(t => ({id:t.id,source:t.source,meaning:t.display})) } : {})
       }));
       const replies = await DeepRead.TranslationLayout.requestUnits(rows, { request, targetLang: language, signal, repair });
+      const byId = new Map(replies.map(row => [row.id, row.translation]));
       const missing = [], changed = [];
       for (const [i,u] of group.entries()) {
-        const candidates = replies.filter(r => r.id === rows[i].id);
-        const text = candidates.length === 1 && candidates[0].translation;
-        if (!DeepRead.ParallelInline.valid(u,text) || !coversProse(u,text)) {missing.push(u);continue;}
-        const cleaned = DeepRead.TranslationLayout.accept({units:[{id:"u0",marker:u.marker}]}, [{unit_id:"u0",translation:text}]).units[0].translation;
+        const text = byId.get(rows[i].id);
+        const issue = translationIssue(u, text ?? "");
+        if (issue) {
+          repairIssues.set(u, issue);
+          missing.push(u);
+          continue;
+        }
         for (const copy of matches.get(u)) {
-          accepted.set(copy, cleaned);
-          if (onProgress) { copy.translation = cleaned; changed.push(copy); }
+          accepted.set(copy, text);
+          if (onProgress) { copy.translation = text; changed.push(copy); }
         }
       }
       if (changed.length) await onProgress(changed);
@@ -1125,7 +1626,7 @@
         }
       }
       const text=parts.join("");
-      return DeepRead.ParallelInline.valid(u,text) && coversProse(u,text) ? text : "";
+      return translationIssue(u, text) ? "" : text;
     }
     let next = 0, failure, incomplete = 0;
     async function worker() {
@@ -1157,5 +1658,5 @@
     }
     for (const [u, text] of accepted) u.translation = text;
   }
-  DeepRead.ParallelPage = { fromPermille, plan, hydrate, records, translate, interruptedContext, setContext };
+  DeepRead.ParallelPage = { fromPermille, restoreRunningTitle, plan, hydrate, records, translate, translationIssue, interruptedContext, setContext };
 })();

@@ -50,6 +50,13 @@ assert.equal(T.analyze(wrapped.text, wrapped.charMapping, wrapped.chars).units.l
 assert.equal(T.analyze("Figure 1: caption", [], [], { type: "image" }), null);
 assert.equal(T.analyze("Body and display equation", [], [], { type: "text_with_equation" }), null);
 assert.ok(T.analyze("•First item\n\n•Second item", [], [], { type: "list" }).units.every((u) => u.marker === "•"));
+const credits = source([
+  ["– Engineering: Mei Chen, Jane Doe,", 48, 700, 14],
+  ["Alex Wang, John Li", 59, 688],
+  ["– Data & Art Design: Rui Liu, Wei Lin", 48, 676, 21]
+]);
+const creditItems = T.analyze(credits.text, credits.charMapping, credits.chars, { dashMarkers: true });
+assert.deepEqual(Array.from(creditItems.units, u => u.marker), ["–", "–"]);
 assert.equal(T.accept(list, [{ unit_id: "u0", translation: "缺少第二项" }]), null);
 assert.equal(T.accept(list, [{ unit_id: "u0", translation: "a" }, { unit_id: "u0", translation: "b" }]), null, "duplicate IDs are rejected");
 
@@ -57,6 +64,34 @@ const translated = T.accept(list, [{ unit_id: "u1", translation: "• **视觉�
 assert.equal(translated.units[0].translation, "**闭环动作序列。** 第一项。");
 assert.equal(translated.units[1].translation, "**视觉条件。** 第二项。");
 assert.equal(T.markdown(translated), "• **闭环动作序列。** 第一项。\n\n• **视觉条件。** 第二项。");
+const batch = [
+  { id: "0:u0", kind: "list-item", source_text: "Decrease by ⟦D0⟧.", protected: [{ id: "⟦D0⟧" }] },
+  { id: "1:u0", kind: "text", source_text: "Keep the settings." }
+];
+const output = [{ id: "1:u0", translation: "保留设置。" }, { id: "0:u0", translation: "• 降低 ⟦D ０⟧。" }];
+const sent = await T.requestUnits(batch, { targetLang: "zh", request: async opts => {
+  const tool = opts.tools[0].function;
+  assert.equal(tool.name, "submit_pdf_translation");
+  assert.equal(opts.toolChoice.function.name, tool.name);
+  return { raw: { choices: [{ message: { tool_calls: [
+    { function: { name: tool.name, arguments: JSON.stringify({ translations: output }) } }
+  ] } }] } };
+} });
+const legacy = await T.requestUnits(batch, { targetLang: "zh", request: async () => ({
+  content: "<think>ignored</think>\n```json\n" + JSON.stringify({
+    translations: [{ id: "0:u0 ", translation: "降低 ⟦D0⟧。\r\n" }, output[0]]
+  }) + "\n```"
+}) });
+assert.deepEqual(plain(sent), [
+  { id: "0:u0", translation: "降低 ⟦D0⟧。" },
+  { id: "1:u0", translation: "保留设置。" }
+]);
+assert.deepEqual(plain(legacy), plain(sent), "transport and model formatting map to the same result");
+const duplicates = await T.requestUnits(batch, { targetLang: "zh", request: async () => ({
+  content: JSON.stringify({ translations: [...output, { id: "0:u0", translation: "另一版。" }, { id: "9:u0", translation: "多余段落。" }] })
+}) });
+assert.deepEqual(plain(duplicates), [output[0]], "only unique requested ids are accepted");
+
 let calls = 0;
 const restored = await T.complete([{ translationLayout: paragraphs, points: [{ translation: "旧的混合译文", sentenceIndices: [0, 1] }], sentences: [{ text: prose.text }] }], {
   request: async (args) => {

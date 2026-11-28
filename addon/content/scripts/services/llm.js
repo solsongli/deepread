@@ -7,6 +7,7 @@ DeepRead.LLM = (function () {
   // Session cache of downgraded json modes, keyed by "baseURL\nmodel".
   const modeCache = new Map();
   const unsupportedEffort = new Set();
+  const unsupportedSubmission = new Set();
 
   function cfgOf(config) {
     return config || DeepRead.prefs.llmConfig();
@@ -118,6 +119,8 @@ DeepRead.LLM = (function () {
     const url = `${config.baseURL}/chat/completions`;
     const headers = buildHeaders(config);
     const modelKey = `${config.baseURL}\n${config.model}`;
+    const terminalTool = body.tool_choice?.type === "function" && !!responseFormat;
+    let retryAsJSON = false;
     let mode = effectiveMode(config);
     let netRetries = 0;
     let rateRetries = 0;
@@ -125,8 +128,13 @@ DeepRead.LLM = (function () {
 
     for (;;) {
       if (signal && signal.aborted) throw abortError();
-      const rf = formatFor(mode, responseFormat);
       const payload = Object.assign({}, body);
+      if (terminalTool && (retryAsJSON || unsupportedSubmission.has(modelKey))) {
+        delete payload.tools;
+        delete payload.tool_choice;
+      }
+      // Named submission and JSON response formatting are alternative transports.
+      const rf = terminalTool && payload.tool_choice ? undefined : formatFor(mode, responseFormat);
       if (unsupportedEffort.has(modelKey)) delete payload.reasoning_effort;
       if (rf) payload.response_format = rf;
 
@@ -182,6 +190,13 @@ DeepRead.LLM = (function () {
         unsupportedEffort.add(modelKey);
         continue;
       }
+      if (terminalTool && payload.tool_choice && (status === 400 || status === 422)) {
+        retryAsJSON = true;
+        if (/\btools?\b|tool[ _-]choice|function[ _-]call/i.test(failure.body || "")) {
+          unsupportedSubmission.add(modelKey);
+        }
+        continue;
+      }
       if ((status === 400 || status === 422) && rf
         && /response_format|json_schema|json_object/i.test(failure.body || "")) {
         const next = MODES[MODES.indexOf(mode) + 1];
@@ -210,7 +225,7 @@ DeepRead.LLM = (function () {
     }
   }
 
-  function baseBody(config, { messages, system, temperature, maxTokens, reasoningEffort }, stream) {
+  function baseBody(config, { messages, system, temperature, maxTokens, reasoningEffort, tools, toolChoice }, stream) {
     const body = {
       model: config.model,
       messages: buildMessages(messages, system),
@@ -219,6 +234,10 @@ DeepRead.LLM = (function () {
     };
     if (body.temperature === undefined) delete body.temperature;
     if (maxTokens) body.max_tokens = maxTokens;
+    if (tools?.length) {
+      body.tools = tools;
+      if (toolChoice) body.tool_choice = toolChoice;
+    }
     if (reasoningEffort && /^(?:gpt-(?:5|6)(?:[-.]|$)|o[134](?:[-.]|$))/i.test(config.model)) {
       body.reasoning_effort = reasoningEffort;
       delete body.temperature;

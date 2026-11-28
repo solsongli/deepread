@@ -12,12 +12,22 @@
   const box = (p) => Array.isArray(p.bbox) && p.bbox.length === 4 && p.bbox.every(Number.isFinite) ? p.bbox : null;
   const overlap = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
 
-  function boundary(a, b, visuals) {
+  function boundary(a, b, visuals, includeColumns) {
     const A = box(a), B = box(b);
     if (!A || !B || textOf(a).length < 20 || textOf(b).length < 8) return null;
     const sizeA = a.typography?.fontSize, sizeB = b.typography?.fontSize;
     if (sizeA && sizeB && Math.abs(sizeA - sizeB) / Math.max(sizeA, sizeB) > 0.2) return null;
     if (b.page_idx === a.page_idx) {
+      const wA=A[2]-A[0], wB=B[2]-B[0], gutter=B[0]-A[2];
+      // The reading order jumps from the foot of a column to the head of
+      // the next. Require similarly sized columns and an unfinished clause,
+      // so that two independently headed columns are never joined by layout alone.
+      const aText=textOf(a), bText=textOf(b);
+      const open = !/[.!?。！？:：;；]["'”’)\]]*$/u.test(aText) ||
+        (/\bet al\.$/iu.test(aText) && /^\(\d{4}[a-z]?\)/u.test(bText));
+      if (includeColumns && wA>=160 && wB>=160 && Math.max(wA,wB)<=510 && Math.min(wA,wB)>=.8*Math.max(wA,wB) &&
+          gutter>=-3 && gutter<=110 && A[3]>=600 && B[1]<=425 && A[1]-B[1]>180 &&
+          open && /^(?:\p{Ll}|[(（][\p{Lu}\d])/u.test(bText)) return "column";
       if (!visuals.length || B[1] < A[3] - 5 || overlap(A, B) < Math.min(A[2] - A[0], B[2] - B[0]) * 0.6) return null;
       const between = visuals.some((v) => {
         const V = box(v);
@@ -34,7 +44,7 @@
     return (atEnd && atStart) || unfinished ? "page" : null;
   }
 
-  function candidates(paragraphs, { visuals: extraVisuals = [] } = {}) {
+  function candidates(paragraphs, { visuals: extraVisuals = [], includeColumns = false } = {}) {
     const units = [];
     const visuals = [...(paragraphs || []).filter(isVisual), ...(extraVisuals || []).filter(isVisual)];
     let previous = null;
@@ -42,7 +52,7 @@
       if (isVisual(p)) continue;
       if (!TEXT.has(typeOf(p)) || p.continuationChecked || p.translationLayout?.units?.length > 1
           || p.translationLayout?.units?.[0]?.kind === "list-item") { previous = null; continue; }
-      const gap = previous && boundary(previous, p, visuals);
+      const gap = previous && boundary(previous, p, visuals, includeColumns);
       if (gap) {
         const last = units.at(-1);
         if (last?.parts.at(-1) === previous && last.parts.length < 6

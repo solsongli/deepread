@@ -4,16 +4,27 @@ import fs from "node:fs";
 import vm from "node:vm";
 const scope = { DeepRead: {}, console, setTimeout, clearTimeout, Intl };
 vm.createContext(scope);
-for (const name of ["services/typography", "pipeline/summaryManager", "pipeline/languages", "pipeline/pipeline", "reader/overlay"]) {
+for (const name of ["services/typography", "pipeline/summaryManager", "pipeline/languages", "pipeline/pipeline", "reader/overlay", "panes/common"]) {
   vm.runInContext(fs.readFileSync(new URL(`../addon/content/scripts/${name}.js`, import.meta.url), "utf8"), scope);
 }
 const D = scope.DeepRead;
+vm.runInContext(fs.readFileSync(new URL("../addon/content/lib/marked/marked.js", import.meta.url), "utf8"), scope);
+D.Markdown._libs = { marked: scope.marked };
+const captionHTML = D.Markdown.toHTML("图 1：**HY-World 的多样化应用。**我们的框架统一了*世界生成*与*世界重建*。", true);
+assert.match(captionHTML, /<strong>HY-World 的多样化应用。<\/strong>我们的框架统一了<em>世界生成<\/em>与<em>世界重建<\/em>/u);
+assert.match(D.Markdown.toHTML("**⟦D3⟧**和**⟦D4⟧**分别展示了均值和标准差。", true),
+  /<strong>⟦D3⟧<\/strong>和<strong>⟦D4⟧<\/strong>分别/u);
+assert.match(D.Markdown.toHTML("方法使用 `a ** b`。", true), /<code>a \*\* b<\/code>/u);
+const spaced = D.Markdown.toHTML("它的* AP*⟦D7⟧ *达到* ⟦D6⟧*，运行时间为 51 ms。*", true);
+assert.doesNotMatch(spaced, /\*/u);
+assert.match(spaced, /<em> AP<\/em>⟦D7⟧ <em>达到<\/em>/u);
 const plain = (x) => JSON.parse(JSON.stringify(x));
 function chars(text, size = 10, boldUntil = 0, offset = 0, y = 700) {
   return [...text].map((u, i) => ({ u, fontSize: size, fontName: i < boldUntil ? "Times-Bold" : "Times-Roman",
     offset: offset + i, pageIndex: 0, rect: [40 + i * 4, y, 44 + i * 4, y + size], lineBreakAfter: i === text.length - 1 }));
 }
 const source = "Important result. Ordinary explanation.";
+assert.ok(D.Typography.italic({fontName:"MDJHVI+SFTI0800"}), "CM-Super table group labels retain source italics");
 const cs = chars(source, 10, 17);
 const sentence = { text: source, charMapping: cs.map((c) => c.offset) };
 assert.equal(D.Typography.styledSentence(sentence, cs), "**Important result.** Ordinary explanation.");

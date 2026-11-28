@@ -2,13 +2,13 @@
 @font-face {
   font-family: "DeepRead Roman";
   src: url("../lib/paper-fonts/roman-regular.woff2") format("woff2");
-  font-weight: 400;
+  font-weight: 400 550;
   font-style: normal;
 }
 @font-face {
   font-family: "DeepRead Roman";
   src: url("../lib/paper-fonts/roman-italic.woff2") format("woff2");
-  font-weight: 400;
+  font-weight: 400 550;
   font-style: italic;
 }
 @font-face {
@@ -24,9 +24,22 @@
 }
 @font-face {
   font-family: "DeepRead Song";
-  src: url("../lib/paper-fonts/song-text.woff2") format("woff2");
+  src: local("SimSun"), local("AR PL UMing CN"), local("STSong"),
+       url("../lib/paper-fonts/song-text.woff2") format("woff2");
   unicode-range: U+00B7, U+2018-201D, U+2026, U+3000-303F, U+3400-9FFF, U+FF01-FF60;
   font-weight: 400;
+}
+@font-face {
+  font-family: "DeepRead Song";
+  src: url("../lib/paper-fonts/song-text.woff2") format("woff2");
+  unicode-range: U+00B7, U+2018-201D, U+2026, U+3000-303F, U+3400-9FFF, U+FF01-FF60;
+  font-weight: 500;
+}
+@font-face {
+  font-family: "DeepRead Song";
+  src: url("../lib/paper-fonts/song-caption.woff2") format("woff2");
+  unicode-range: U+00B7, U+2018-201D, U+2026, U+3000-303F, U+3400-9FFF, U+FF01-FF60;
+  font-weight: 550;
 }
 @font-face {
   font-family: "DeepRead Song";
@@ -38,6 +51,12 @@
   font-family: "DeepRead Hei";
   src: url("../lib/paper-fonts/hei-text.woff2") format("woff2");
   font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "DeepRead Hei";
+  src: url("../lib/paper-fonts/hei-medium.woff2") format("woff2");
+  font-weight: 500;
   font-style: normal;
 }
 @font-face {

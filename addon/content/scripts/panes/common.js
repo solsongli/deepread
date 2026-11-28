@@ -206,7 +206,7 @@
       }
     },
 
-    toHTML(text) {
+    toHTML(text, pdfEmphasis = false) {
       const { marked } = this.libs();
       const maths = [];
       const stash = (tex, display) => {
@@ -219,11 +219,24 @@
       const segments = String(text || "").split(/(```[\s\S]*?```|`[^`\n]*`)/g);
       const processed = segments.map((seg, i) => {
         if (i % 2 === 1) return seg;
-        return seg
+        const prose = seg
           .replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => stash(tex, true))
           .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => stash(tex, true))
           .replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => stash(tex, false))
           .replace(/(^|[^\\$\w])\$(?!\s)([^\n$]+?)(?<!\s)\$(?!\d)/g, (_, pre, tex) => pre + stash(tex, false));
+        // The PDF translator returns explicit style runs. CommonMark can pair
+        // different runs across Chinese words and punctuation, particularly
+        // around the protected panel labels in “**⟦D1⟧**和**⟦D2⟧**”.
+        if (!pdfEmphasis || !/\p{Script=Han}/u.test(seg)) return prose;
+        return prose.replace(/(?<![\\*])(\*{1,3})(?!\*)([^*\n]+?)(?<!\\)\1(?!\*)/gu,
+          (match, marker, body) => {
+            // Models sometimes place a neighboring ASCII space inside a
+            // delimiter. Leave ordinary spaced multiplication in plain text.
+            if (!body.trim() || (/^\s/u.test(body) && /\s$/u.test(body))) return match;
+            const tag = marker.length === 1 ? "em" : "strong";
+            const inner = marker.length === 3 ? "<em>" + body + "</em>" : body;
+            return "<" + tag + ">" + inner + "</" + tag + ">";
+          });
       }).join("");
       let html = marked.parse(processed, { gfm: true, breaks: true });
       html = html.replace(/@@DRMATH(\d+)@@/g, (_, i) => maths[Number(i)] ?? "");
@@ -231,10 +244,10 @@
     },
 
     /** Returns a sanitized DocumentFragment for `doc`. */
-    render(doc, text, contextElement) {
+    render(doc, text, options) {
       let html;
       try {
-        html = this.toHTML(text);
+        html = this.toHTML(text, options?.pdfEmphasis === true);
       }
       catch (e) {
         DeepRead.log("markdown render failed", String(e));

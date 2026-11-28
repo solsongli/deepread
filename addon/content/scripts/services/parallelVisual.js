@@ -133,7 +133,7 @@
   function lines(chars) {
     const rows = [];
     for (const c of chars) {
-      if (!valid(c.rect) || c.rotation || !glyph(c).trim()) continue;
+      if (!valid(c.rect) || c.rotation || c.diagonal || !glyph(c).trim()) continue;
       const size = c.fontSize || c.rect[3] - c.rect[1],
         y = Number.isFinite(c.baseline) ? c.baseline : c.rect[1];
       let row = rows.find((r) => Math.abs(r.y - y) < Math.max(1, size * 0.28));
@@ -261,7 +261,19 @@
 
   function compactLabel(source, language, pairs, template) {
     if (!/^zh(?:-|$)/i.test(language)) return "";
-    if (/^avg\.?$/i.test(source)) return "平均";
+    const labels = {
+      "(ours)": "本文",
+      avg: "平均", "bn ops": "十亿次", "(dev)": "开发集", convolutional: "卷积", residual: "残差",
+      avgpool: "平均池化", time: "时间", crop: "裁剪", "success rate (%)": "成功率/%", "succ%": "成功率%"
+    };
+    const key = source.trim().toLowerCase().replace(/\.$/u,"");
+    if (Object.hasOwn(labels,key)) {
+      const face = /^(\*{1,3})[^*]+\1$/u.exec(template || "")?.[1] || "";
+      const label = language === "zh-TW" || language === "zh-Hant"
+        ? labels[key].replace(/亿|开|发|卷|积|残|时|间/gu, c => ({亿:"億",开:"開",发:"發",卷:"卷",积:"積",残:"殘",时:"時",间:"間"})[c])
+        : labels[key];
+      return face + label + face;
+    }
     if (/^rank\s*[<>≤≥]$/i.test(source)) return (template || source).replace(/rank/i, "排名");
     if (!pairs) return "";
     const codes = {

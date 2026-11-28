@@ -6,6 +6,25 @@
   const mathFont = (name) =>
     /CMMI|CMSY|CMEX|MS[AB]M|rsfs|txsy|wasy|stmary|math|symbol|StandardSym/i.test(name || "");
   const isHan = (lang) => /^zh(?:-|$)/i.test(lang);
+  // Shift the decimal point without rounding exact counts or dropping the
+  // written precision of a quantity such as “3.30 billion”.
+  function chineseCount(coefficient, unit, language) {
+    const sign = coefficient.match(/^[+−-]/u)?.[0] || "";
+    const [whole, fraction = ""] = coefficient.slice(sign.length).replace(/,/gu, "").split(".");
+    const digits = whole + fraction;
+    const first = digits.search(/[1-9]/u);
+    if (first < 0 && !fraction) return sign + "0";
+    const exponent = {million:6,billion:9,trillion:12}[unit.toLowerCase()];
+    const places = first < 0 ? exponent + 1 : whole.length + exponent - first;
+    const scale = places > 12 ? 12 : places > 8 ? 8 : places > 4 ? 4 : 0;
+    const point = whole.length + exponent - scale;
+    const integer = (digits.slice(0,point).padEnd(point,"0") || "0").replace(/^0+(?=\d)/u,"");
+    let decimals = digits.slice(point);
+    if (!fraction) decimals = decimals.replace(/0+$/u,"");
+    let suffix = {0:"",4:"万",8:"亿",12:"万亿"}[scale];
+    if (/^zh-(?:TW|Hant|HK|MO)/iu.test(language)) suffix = suffix.replace("万","萬").replace("亿","億");
+    return sign + integer + (decimals ? "." + decimals : "") + suffix;
+  }
   const texPattern = /(?<!\$)\$(?!\$)[^$\n]+\$(?!\$)|\\\([^\n]+?\\\)/gu;
   const letters = (text) =>
     text
@@ -78,6 +97,28 @@
     return { text, offsets, map };
   }
 
+  // A final metadata field can share a parser paragraph with the preceding
+  // prose. Identify its printed label separately from its URL annotation.
+  function urlFieldLabel(chars, stream, span) {
+    if (!/^[.。]?$/u.test(stream.text.slice(span.end).trim())) return;
+    const urlAt = stream.map[span.start], urlGlyph = chars[urlAt];
+    if (!urlGlyph?.rect) return;
+    let first = urlAt;
+    while (first > 0) {
+      const prev = chars[first-1];
+      if (prev.lineBreakAfter || prev.paragraphBreakAfter ||
+          Math.abs(prev.baseline-urlGlyph.baseline) > urlGlyph.fontSize*.5) break;
+      first--;
+    }
+    const start = stream.offsets[first][0];
+    const label = stream.text.slice(start,span.start).trim();
+    if (!/^[\p{L}][\p{L}\p{N} &/_.-]{0,40}[:：]$/u.test(label)) return;
+    const preceding = stream.text.slice(0,start).trimEnd();
+    if (preceding && !/[.!?。！？]$/u.test(preceding)) return;
+    const samples = chars.slice(first,urlAt).filter(c=>c.rect && value(c).trim()).map(c=>c.rect);
+    if (samples.length) return {samples,startsLine:!!preceding};
+  }
+
   // Only isolated styled Latin letters are candidates. An italic word in prose is
   // translated as emphasis, while e.g. italic k or bold x with a superscript travels as a unit.
   function mathRuns(chars, stream, size, ocr, reserved) {
@@ -106,7 +147,18 @@
       a = b;
     }
     const operators = new Set();
-    for (const m of text.matchAll(/\b(?:log|ln|exp|sin|cos|tan|min|max|argmin|argmax)(?=\s*(?:[A-Za-z]\s*)?\()/gu)) {
+    for (const m of text.matchAll(/\b(?:log|ln|exp|sinh?|cosh?|tanh?|min|max|argmin|argmax)(?=\s*(?:[A-Za-z]\s*)?\()/gu)) {
+      const end = m.index + m[0].length;
+      if (/[A-Za-z]/u.test(text[end] || "")) {
+        // PDF extraction may join log and its subscript k as “logk(n)”.
+        // Without a word boundary, require evidence of a separate variable.
+        // Plain “sink (76 rounds)” and “cost (He et al.)” are whole words.
+        const name = chars[stream.map[end-1]], operand = chars[stream.map[end]];
+        const subscript = operand.fontSize < name.fontSize*.9 &&
+          Math.abs(operand.baseline-name.baseline)>size*.07;
+        if (!(ocr?.has(operand) || mathFont(operand.fontName) || subscript ||
+              (operand.fontName!==name.fontName && DeepRead.Typography.italic(operand)))) continue;
+      }
       for (let j = m.index; j < m.index + m[0].length; j++) operators.add(stream.map[j]);
     }
     // A dimensional adjective starts prose after an inline expression, e.g.
@@ -114,6 +166,27 @@
     const prose = new Set();
     for (const part of text.matchAll(/,\s+(?:a|an)\s+[23][dD](?=\s+[a-z]{2})/gu))
       for (let j=part.index+1;j<part.index+part[0].length;j++) prose.add(stream.map[j]);
+    // “A_t. b) In the CNN ...” starts the next figure panel after a
+    // formula. Its panel letter is independent of the preceding indices.
+    for (const label of text.matchAll(/(?:^|[.!?])\s*[a-z]\)(?=\s+\p{Lu})/gu)) {
+      const end=label.index+label[0].length;
+      for (let j=end-2;j<end;j++) if (!ocr?.has(chars[stream.map[j]])) prose.add(stream.map[j]);
+    }
+    // Publishers commonly italicize e.g. and i.e. Their two isolated
+    // letters would otherwise seed a formula and swallow the opening bracket.
+    for (const abbreviation of text.matchAll(/(?:\(\s*)?\b(?:e\.\s*g|i\.\s*e)\.(?=[,;:)\s]|$),?/giu)) {
+      const end = abbreviation.index + abbreviation[0].length;
+      for (let j = abbreviation.index; j < end; j++) {
+        if (!ocr?.has(chars[stream.map[j]])) prose.add(stream.map[j]);
+      }
+    }
+    // A caption can use smaller type for its prose than for a formula base.
+    // Baseline-aligned small capitals remain ordinary text.
+    const indexGlyph = (glyph, baseline, baseEm = size) => {
+      const measured = Number.isFinite(baseline) && Number.isFinite(glyph.baseline);
+      return glyph.fontSize > 0 && glyph.fontSize < .82 * (measured ? baseEm : size) &&
+        (!measured || Math.abs(glyph.baseline-baseline) > size*.07);
+    };
     for (let i = 0; i < chars.length; i++) {
       const c = chars[i],
         v = value(c),
@@ -127,27 +200,38 @@
         roles.push({ seed: false, eligible: false });
         continue;
       }
-      const article =
-        /^[Aa]$/.test(v) &&
-        /^(?:\s+)\p{L}{2}/u.test(text.slice(b, b + 12)) &&
-        (!a || /(?:^|[:.!?])\s*$/u.test(text.slice(Math.max(0, a - 4), a)));
+      const followsA = /^[Aa]$/u.test(v) && /^(\s+)([A-Za-z][A-Za-z0-9-]+|[23]D)\b/u.exec(text.slice(b, b + 80));
+      const nextWord = followsA && chars[stream.map[b + followsA[1].length]];
+      // Raster labels can be separate physical rows ending mid-sentence,
+      // e.g. “This is a” / “panoramic scene”. Keep the unfinished article
+      // available to the translator just like an article followed by a noun.
+      const trailingArticle = v === "a" && !text.slice(b).trim() &&
+        /\b(?:is|was|as|with|using|creating|forming|building|constructing)\s+$/iu.test(text.slice(Math.max(0,a-22),a)) &&
+        c.fontName === chars[stream.map[text.slice(0,a).trimEnd().length - 1]]?.fontName;
+      const article = trailingArticle || followsA && (
+        !a || /(?:^|[:.!?])\s*$/u.test(text.slice(Math.max(0, a - 4), a)) ||
+        (nextWord?.fontName === c.fontName && !/^(?:is|was|denotes?|equals?|represents?|varies|takes?|and|or|in|of|to)$/iu.test(followsA[2]))
+      );
       const wordPrefix = /^[A-Za-z]$/.test(v) && /^[-‐‑]\p{L}{2}/u.test(text.slice(b, b + 12));
       if ((article || wordPrefix) && !mathFont(c.fontName) && !ocr?.has(c)) {
         roles.push({ seed: false, eligible: false });
         continue;
       }
-      const script =
-        c.fontSize > 0 &&
-        c.fontSize < 0.82 * size &&
-        (!Number.isFinite(bodyBaseline) ||
-          !Number.isFinite(c.baseline) ||
-          Math.abs(c.baseline - bodyBaseline) > size * 0.07);
+      let baseEm = size;
+      if (c.fontSize >= .82*size && c.fontSize < .9*size && Number.isFinite(bodyBaseline) &&
+          Math.abs(c.baseline-bodyBaseline) > size*.07 && c.rect) {
+        // Sub- and superscripts can have the same x. Check one glyph farther
+        // back for their common base before assigning the second index.
+        for (const base of chars.slice(Math.max(0,i-2),i)) {
+          if (base.rect && /^[A-Za-z\p{Script=Greek}]$/u.test(value(base)) &&
+              Math.abs(base.baseline-bodyBaseline) < size*.07 &&
+              Math.abs(c.rect[0]-base.rect[2]) < size*.4) baseEm=Math.max(baseEm,base.fontSize);
+        }
+      }
+      const script = indexGlyph(c,bodyBaseline,baseEm);
       const scriptOrAccent = (neighbour) =>
         neighbour &&
-        ((neighbour.fontSize < size * 0.82 &&
-          (!Number.isFinite(c.baseline) ||
-            !Number.isFinite(neighbour.baseline) ||
-            Math.abs(c.baseline - neighbour.baseline) > size * 0.07)) ||
+        (indexGlyph(neighbour,c.baseline,Math.max(size,c.fontSize)) ||
           (mathFont(neighbour.fontName) &&
             neighbour.rect &&
             c.rect &&
@@ -164,7 +248,7 @@
             /[\p{Sm}\p{Script=Greek}]/u.test(v) ||
             (single && (DeepRead.Typography.italic(c) || DeepRead.Typography.bold(c))) ||
             script));
-      roles.push({ seed, eligible: seed || single || /^[\d\s()[\]{},.:;!+−–=^_×÷*\/…]+$/u.test(v) });
+      roles.push({ seed, script, eligible: seed || single || /^[\d\s()[\]{},.:;!+−–=^_×÷*\/…]+$/u.test(v) });
     }
     const found = [];
     for (let i = 0; i < chars.length; ) {
@@ -188,6 +272,10 @@
         b = j;
       while (a < b && /^[\s.,:;!]+$/u.test(value(chars[a]))) a++;
       while (b > a && /^[\s.,:;!]+$/u.test(value(chars[b - 1]))) b--;
+      // The closing bracket in "(vs. 53% for π₀.₅)" belongs to the
+      // surrounding comparison, and must move with the translated prose.
+      if (b > a && /^[)\]]$/u.test(value(chars[b - 1])) && !ocr?.has(chars[b - 1]) &&
+          !chars.slice(a, b - 1).some(c => /[(\[]/u.test(value(c)))) b--;
       // An unstyled article next to a variable is prose; a delimiter belongs to the expression.
       if (b - a > 1 && !roles[a].seed && /^[aAI]$/.test(value(chars[a])) && chars[a].spaceAfter) a++;
       if (b - a > 1 && !roles[b - 1].seed && /^[aAI]$/.test(value(chars[b - 1])) && chars[b - 2].spaceAfter) b--;
@@ -195,7 +283,7 @@
         const run = chars.slice(a, b),
           rect = DeepRead.Overlay.unionRect(run.map((c) => c.rect).filter(Boolean));
         if (rect) {
-          const body = run.filter((c) => c.fontSize >= size * 0.84 && Number.isFinite(c.baseline));
+          const body = run.filter((c,k) => !roles[a+k].script && Number.isFinite(c.baseline));
           const base =
             body[0]?.baseline ?? run.find((c) => Number.isFinite(c.baseline))?.baseline ?? rect[1] + size * 0.2;
           const clip = rect.slice();
@@ -212,11 +300,11 @@
           clip[3] += size * 0.1;
           let label = "",
             script = "";
-          for (const c of run) {
+          for (const [k,c] of run.entries()) {
             const position =
-              c.fontSize < size * 0.83 && c.baseline > base + size * 0.12
+              roles[a+k].script && c.baseline > base + size * 0.12
                 ? "^"
-                : c.fontSize < size * 0.83 && c.baseline < base - size * 0.06
+                : roles[a+k].script && c.baseline < base - size * 0.06
                   ? "_"
                   : "";
             if (position !== script) {
@@ -255,7 +343,8 @@
     "no more than": "不超过",
     "no less than": "不低于"
   };
-  const terms = { "negative sampling": "负采样", "positive sampling": "正采样" };
+  const terms = { "negative sampling": "负采样", "positive sampling": "正采样",
+    "under sampling":"欠采样", "over sampling":"过采样" };
   function chinese(text, language) {
     if (language !== "zh-TW") return text;
     const traditional = { 于: "於", 过: "過", 为: "為", 负: "負", 采: "採", 样: "樣", 严: "嚴" };
@@ -293,7 +382,7 @@
     const letter = greek[name.toLowerCase()];
     return letter && (name[0] === name[0].toUpperCase() ? letter.toUpperCase() : letter);
   }
-  function describe(glyphs, source, fallbackStyle, size, language, ocr, affiliation = false, heading = false) {
+  function describe(glyphs, source, fallbackStyle, size, language, ocr, affiliation = false, heading = false, { creditList = false, excerptCommands } = {}) {
     const stream = glyphStream(glyphs),
       text = glyphs.length ? stream.text : fallbackStyle || source;
     const spans = [];
@@ -303,6 +392,26 @@
       return true;
     };
     for (const m of text.matchAll(/⟦D+\d+⟧/gu)) add(m.index, m.index + m[0].length, "literal", m[0]);
+    if (excerptCommands) {
+      for (const word of text.matchAll(/\b[a-z][\w.-]*/gu)) {
+        if (!excerptCommands.has(word[0])) continue;
+        const tail = /^\s+[a-z][\w-]*(?:\s+--[\w-]+(?:\s+(?:[‘’'][^‘’']+[‘’']|[\w./-]+))?)*/u.exec(text.slice(word.index+word[0].length));
+        if (tail) add(word.index,word.index+word[0].length+tail[0].length,"code",word[0]+tail[0]);
+      }
+      for (const m of text.matchAll(/^#{1,6}(?=\s)|\b(?:[\w.-]+\/)*[\w.-]+\.(?:py|md|json|yaml|yml|usd|urdf)\b|\b\w+\[(?:"[^"]+"|'[^']+')\]/giu))
+        add(m.index,m.index+m[0].length,"code",m[0]);
+    }
+    if (creditList) {
+      // Names retain their exact source spelling. Only the credited role is
+      // translated, so a long list of names cannot be mistaken for lost prose.
+      const credit = /^((?:\*{1,3})?[\p{L}][\p{L} &/-]{1,52}:(?:\*{1,3})?\s*)([^:]+)$/u.exec(text);
+      if (credit) {
+        const names = credit[2].trim();
+        const people = names.split(",");
+        if (people.length >= 2 && people.every(name => DeepRead.ParallelVisual.isName(name.trim())))
+          add(credit[1].length, credit[1].length + names.length, "proper", names);
+      }
+    }
     if (heading) {
       const section = /^(?:\d+(?:\.\d+)*\.?|[IVXLCDM]+\.)(?=\s+\S)/u.exec(text);
       if (section) add(0, section[0].length, "section", section[0]);
@@ -321,9 +430,9 @@
       // both survive validation while being assigned to the wrong fields.
       const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
       const date =
-        /\b(?:(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?|([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?),?\s+((?:18|19|20|21)\d{2})\b/gi;
+        /\b(?:(\d{1,2})(?:st|nd|rd|th)?(?:\s*[-‐‑–—]\s*(\d{1,2})(?:st|nd|rd|th)?)?\s+([A-Za-z]{3,9})\.?|([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*[-‐‑–—]\s*(\d{1,2})(?:st|nd|rd|th)?)?),?\s+((?:18|19|20|21)\d{2})\b/gi;
       for (const m of text.matchAll(date)) {
-        const word = (m[2] || m[3]).toLowerCase(),
+        const word = (m[3] || m[4]).toLowerCase(),
           month = months.indexOf(word.slice(0, 3)) + 1;
         if (
           !/^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$/u.test(
@@ -331,10 +440,10 @@
           )
         )
           continue;
-        const day = Number(m[1] || m[4]),
-          year = Number(m[5]);
-        if (day >= 1 && day <= new Date(Date.UTC(year, month, 0)).getUTCDate())
-          add(m.index, m.index + m[0].length, "date", year + "年" + month + "月" + day + "日");
+        const day = Number(m[1] || m[5]), last = Number(m[2] || m[6] || day),
+          year = Number(m[7]);
+        if (day >= 1 && last >= day && last <= new Date(Date.UTC(year, month, 0)).getUTCDate())
+          add(m.index, m.index + m[0].length, "date", year+"年"+month+"月"+day+(last===day?"":"日至"+last)+"日");
       }
       const relation =
         /(?<![\p{L}\p{N}_])(\$\s*(?:\\[a-z]+|[A-Za-z\p{Script=Greek}])\s*\$|\\\(\s*(?:\\[a-z]+|[A-Za-z\p{Script=Greek}])\s*\\\)|[\p{Script=Greek}A-Za-z])\s+(?:(?:is|was|are|were)\s+)?(?:(slightly|strictly)\s+)?(no more than|no less than|greater than|larger than|higher than|less than|smaller than|lower than|at least|at most)\s+([+−-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+−-]?\d+)?(?:%|‰)?)(?![\p{L}\p{N}.]\d|\p{L})/giu;
@@ -349,9 +458,13 @@
           chinese(symbol + " " + qualifier + comparisons[m[3].toLowerCase()] + " " + m[4], language)
         );
       }
-      for (const m of text.matchAll(/\b(?:negative|positive)\s+sampling\b/gi)) {
-        const name = m[0].toLowerCase().replace(/\s+/g, " ");
+      for (const m of text.matchAll(/\b(negative|positive|under|over)[\s‐‑-]*sampling\b/gi)) {
+        const name = m[1].toLowerCase() + " sampling";
         add(m.index, m.index + m[0].length, "term", chinese(terms[name], language));
+      }
+      if (/\bGAMs?\b/u.test(text)) {
+        for (const m of text.matchAll(/\bgrounded\s+action\s+models?\b/giu))
+          add(m.index,m.index+m[0].length,"term",language==="zh-TW"?"空間定位動作模型":"空间定位动作模型");
       }
     }
     // Complete URLs, citations and OCR LaTeX are indivisible before individual numbers.
@@ -365,6 +478,15 @@
       const doi = m[0].replace(/[.,;:]+$/u, "");
       add(m.index, m.index + doi.length, "identifier", doi);
     }
+    // A printed license abbreviation can itself carry a PDF link. Keep its
+    // original glyph samples so the translated label retains the same action.
+    for (const m of text.matchAll(/\bCC[-‐‑]BY(?:[-‐‑](?:NC|ND|SA))*\b/gu))
+      add(m.index,m.index+m[0].length,"identifier",m[0]);
+    // A bold model or dataset name can end in a size (e.g. "10K").
+    // Keep the name together so that K cannot start a formula covering the
+    // next statistic in "RoboUniverse-10K, 10,807 interactive ...".
+    for (const m of text.matchAll(/\b[A-Z][A-Za-z][A-Za-z0-9]*(?:\.\d+)*[-‐‑]\d+(?:\.\d+)?[KMB](?:[-‐‑][A-Z]\d+[KMB]?)*\b/gu))
+      add(m.index, m.index + m[0].length, "identifier", m[0]);
     for (const m of text.matchAll(texPattern)) add(m.index, m.index + m[0].length, "tex", m[0]);
     for (const m of text.matchAll(
       /\b[A-Z][\p{L}’'-]+(?:\s+et\s+al\.|\s+(?:and|&)\s+[A-Z][\p{L}’'-]+)\s*\(\s*(?:19|20)\d{2}[a-z]?\s*\)|\[(?:\d+(?:\s*[,–-]\s*\d+)*)\]/gu
@@ -392,6 +514,22 @@
       i = end;
     }
     for (const m of mathRuns(glyphs, stream, size, ocr, spans)) add(m.start, m.end, "math", m.display, m);
+    if (isHan(language)) {
+      const scaled = /(?<![\p{L}\p{N}_.,])([+−-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+))\s+(million|billion|trillion)\b/giu;
+      const protectCount = (m, unit) => {
+        // A range with a shared scale, e.g. “1 to 3 billion”, is one
+        // construction. Don't convert its final endpoint in isolation.
+        const before=text.slice(Math.max(0,m.index-20),m.index);
+        if (/[\d.][eE][+−-]?$/u.test(before) || /\d\s*(?:[-‐‑–—~±/,]|to\s+|and\s+|or\s+)\s*$/iu.test(before) ||
+            (/^[−-]/u.test(m[1]) && /\d\s*$/u.test(before))) return;
+        add(m.index,m.index+m[0].length,"scaled_count",chineseCount(m[1],unit,language));
+      };
+      for (const m of text.matchAll(scaled)) protectCount(m,m[2]);
+      // Only a joined uppercase M with an explicit count noun qualifies.
+      // Keep tagged model names, SI notation and other abbreviations intact.
+      const millions = /(?<![\p{L}\p{N}_.,/−+‐‑–—-])((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)M(?=\s+(?:sentence pairs?|sentences?|tokens?|words?)\b)/gu;
+      for (const m of text.matchAll(millions)) protectCount(m,"million");
+    }
     if (!glyphs.length)
       for (const m of text.matchAll(
         /[\p{Script=Greek}](?:[_^](?:\{[^{}\n]{1,40}\}|[\p{L}\d]))*|\b[A-Za-z](?:[_^](?:\{[^{}\n]{1,40}\}|[\p{L}\d]))+/gu
@@ -402,12 +540,18 @@
     ))
       add(m.index, m.index + m[0].length, "number", m[0]);
     spans.sort((a, b) => a.start - b.start);
-    const styled = (a, b) =>
+    const emphasis = [];
+    const rememberFace = (face, text, chars) => {
+      const boxes = [...new Set(chars.filter(c => c?.rect && value(c).trim()).map(c => c.rect))];
+      const stride = Math.max(1, Math.ceil(boxes.length / 16));
+      emphasis.push({face, text, samples: boxes.filter((r, i) => i % stride === 0)});
+    };
+    const styled = (a, b, onEmphasis) =>
       glyphs.length
-        ? DeepRead.Typography.styledSentence({ text: text.slice(a, b), charMapping: stream.map.slice(a, b) }, glyphs)
+        ? DeepRead.Typography.styledSentence({ text: text.slice(a, b), charMapping: stream.map.slice(a, b) }, glyphs, onEmphasis)
         : text.slice(a, b);
     const tidy = (s) => s.replace(/\s+/gu, " ").trim();
-    const sourceStyled = glyphs.length ? tidy(styled(0, text.length)) : fallbackStyle || source;
+    const sourceStyled = glyphs.length ? tidy(styled(0, text.length, spans.length ? undefined : rememberFace)) : fallbackStyle || source;
     let prefix = "D";
     while (text.includes(`⟦${prefix}`)) prefix += "D";
     let last = 0,
@@ -422,12 +566,28 @@
     spans.forEach((s, i) => {
       s.id = `⟦${prefix}${i}⟧`;
       s.source = tidy(text.slice(s.start, s.end));
+      if (glyphs.length && s.kind === "code" && s.display.includes(" ")) {
+        const offset = text.indexOf(s.display,s.start);
+        if (offset>=s.start && offset+s.display.length<=s.end) {
+          for (const space of s.display.matchAll(/(?<=[A-Za-z0-9_]) (?=[A-Za-z0-9_])/gu)) {
+            const at=offset+space.index, left=glyphs[stream.map[at-1]], right=glyphs[stream.map[at+1]];
+            if (!left?.rect || !right?.rect || !Number.isFinite(left.baseline) || !Number.isFinite(right.baseline) ||
+                !DeepRead.Typography.monospace(left) || left.fontName!==right.fontName ||
+                Math.abs(left.baseline-right.baseline)>.1*left.fontSize) continue;
+            const gap=right.rect[0]-left.rect[2];
+            if (gap>=.17*left.fontSize && gap<=.85*left.fontSize)
+              (s.codeSpaces ||= []).push({at:space.index,left:left.rect[2],right:right.rect[0],
+                baseline:left.baseline,em:left.fontSize});
+          }
+        }
+      }
       const owned = glyphs.length
         ? glyphs.slice(stream.map[s.start], stream.map[s.end - 1] + 1).filter((c) => value(c).trim())
         : [];
       s.bold = owned.length > 0 && owned.every(DeepRead.Typography.bold);
       s.italic = owned.length > 0 && owned.every(DeepRead.Typography.italic);
       s.mono = owned.length > 0 && owned.every(DeepRead.Typography.monospace);
+      if (s.kind === "url" && owned.length) s.fieldLabel = urlFieldLabel(glyphs,stream,s);
       if (!s.rect && owned.length) s.rect = DeepRead.Overlay.unionRect(owned.map((c) => c.rect).filter(Boolean));
       if (s.kind !== "math" && owned.length)
         s.samples = owned
@@ -449,9 +609,9 @@
     });
     if (glyphs.length && spans.length) {
       copyPlain(last, text.length);
-      modelText = tidy(DeepRead.Typography.styledSentence({ text: modelPlain, charMapping: modelMap }, modelGlyphs));
+      modelText = tidy(DeepRead.Typography.styledSentence({ text: modelPlain, charMapping: modelMap }, modelGlyphs, rememberFace));
     } else modelText = spans.length ? tidy(modelText + styled(last, text.length)) : sourceStyled;
-    return { tokens: spans, modelText, styled: sourceStyled, language };
+    return { tokens: spans, modelText, styled: sourceStyled, language, emphasis };
   }
 
   const pattern = /⟦D+\d+⟧/gu;
@@ -495,28 +655,48 @@
     return new Set(text.match(/\d+(?:\.\d+)*(?:%)?/gu) || []);
   }
 
-  function valid(unit, text) {
-    if (typeof text !== "string" || !text.trim()) return false;
-    if (copiedEnglish(unit, text)) return false;
-    if (unit.foreignNumbers?.length && [...numbers(text)].some(n=>unit.foreignNumbers.includes(n))) return false;
+  function issue(unit, text) {
+    if (typeof text !== "string" || !text.trim()) return "missing";
+    if (copiedEnglish(unit, text)) return "source_echo";
+    // Training, implementation and deployment are separate claims about a
+    // model. A fluent translation can keep “easy” while changing its scope.
+    const source = unit.modelText || unit.source || "";
+    if (isHan(unit.language) && !/…|\.{3}/u.test(source+" "+(unit.source || "")) &&
+        /(?:与|與|和|跟|如|像)\s*(?:…+|\.{3,})\s*(?:相似|类似|類似|一样|一樣|相比)/u.test(text)) return "missing_comparison";
+    if (isHan(unit.language) && /\b(?:easy|straightforward)\s+to\s+train\b/iu.test(source) &&
+        !/\b(?:implement|deploy)\w*/iu.test(source) &&
+        /(?:易于|易於|便于|便於|容易)\s*(?:实施|實施|实现|實現|部署)/u.test(text)) return "training_scope";
+    if (unit.foreignNumbers?.length && [...numbers(text)].some(n=>unit.foreignNumbers.includes(n))) return "foreign_number";
     const actual = text.match(pattern) || [],
       expected = unit.tokens || [];
-    if (actual.length !== expected.length || !expected.every((s) => actual.includes(s.id))) return false;
+    if (actual.length !== expected.length || !expected.every((s) => actual.includes(s.id))) return "placeholders";
     if (
       actual.length &&
       /(?:\$[^$\n]*⟦D+\d+⟧[^$\n]*\$|<[^>]*⟦D+\d+⟧[^>]*>|`[^`]*⟦D+\d+⟧[^`]*`|\\\([^)]*⟦D+\d+⟧[^)]*\\\))/u.test(text)
     )
-      return false;
+      return "placeholder_markup";
     const unlocked = text.replace(pattern, " ");
+    if (expected.some(t=>t.kind==="scaled_count" &&
+        /^(?:\s|\*)*(?:[十百千]?[万萬亿億]|million\b|billion\b|trillion\b)/iu.test(text.slice(text.indexOf(t.id)+t.id.length))))
+      return "protected_value";
+    if (isHan(unit.language) && /\bfrom\b/iu.test(unit.modelText || "")) {
+      // Both numbers can be present yet assigned to opposite endpoints.
+      // Check explicit directional wording only. Other valid Chinese word
+      // orders, such as stating the result before the baseline, stay available.
+      const ranges = Array.from((unit.modelText || "").matchAll(/\bfrom\s+(⟦D+\d+⟧)\s+to\s+(⟦D+\d+⟧)/giu));
+      for (const [, start, end] of text.matchAll(/[从從由]\s*(⟦D+\d+⟧)\s*[\p{Script=Han}]{0,5}(?:到|至|为|為)\s*(⟦D+\d+⟧)/gu)) {
+        if (ranges.some(([, a, b]) => a === end && b === start)) return "reversed_range";
+      }
+    }
     if(expected.some(s=>s.kind==="date" && text.includes(s.id+"年")) ||
-       (expected.some(s=>s.kind==="date") && /\d{4}\s*年\s*\d{1,2}\s*月/u.test(unlocked))) return false;
+       (expected.some(s=>s.kind==="date") && /\d{4}\s*年\s*\d{1,2}\s*月/u.test(unlocked))) return "protected_value";
     if (
       expected.some((s) => s.kind === "relation") &&
       /(?:[大小低高][于於]|超[过過]|至少|至多|[<>≤≥])\s*[-+−]?\d/u.test(unlocked)
     )
-      return false;
+      return "protected_value";
     if (expected.some((s) => s.kind === "number" && /[%‰]/u.test(s.display)) && /\d\s*[%‰％]/u.test(unlocked))
-      return false;
+      return "protected_value";
     // Count ordinary emphasis after protected literals and complete-heading styles are handled.
     if (unit.modelText && !unit.title) {
       const counts = (s) => {
@@ -529,15 +709,16 @@
       };
       const wanted = counts(unit.modelText),
         got = counts(text);
-      if (got.italic < wanted.italic || got.bold < wanted.bold) return false;
+      if (got.italic < wanted.italic || got.bold < wanted.bold) return "emphasis";
       if (
         /^(?:[•‣◦▪●]\s*)?\*\*[^*]+\*\*\s*\p{L}/u.test(unit.modelText) &&
         !/^\*\*[^*]+\*\*[\s\S]*\p{L}/u.test(text)
       )
-        return false;
+        return "emphasis";
     }
-    return true;
+    return "";
   }
+  const valid = (unit, text) => !issue(unit, text);
 
   function fromLegacy(unit, translation) {
     if (!translation) return "";
@@ -572,5 +753,5 @@
       .replace(/[ˆˇ˘˙˚˜]/gu, "")
       .replace(/[^\p{L}\p{N}]/gu, "");
   }
-  DeepRead.ParallelInline = { describe, valid, fromLegacy, alignOCR, geometryText, numbers };
+  DeepRead.ParallelInline = { describe, valid, issue, fromLegacy, alignOCR, geometryText, numbers };
 })();

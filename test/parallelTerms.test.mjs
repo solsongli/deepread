@@ -26,6 +26,14 @@ const list = T.candidates(sources, ["Adaptive planning", "Adaptive planning obje
 assert.ok(list.some((t) => /^model predictive control$/i.test(t.source)));
 assert.ok(list.some((t) => /^adaptive planning$/i.test(t.source)));
 assert.ok(!list.some((t) => /^(?:local temporal|stray setting|publication example)$/i.test(t.source)));
+const longProse = "adaptive scene reconstruction, ".repeat(1800) + "described in 2024.";
+assert.ok(T.candidates([
+  { page_idx: 0, type: "text", text: longProse },
+  { page_idx: 1, type: "text", text: "Adaptive scene reconstruction estimates camera poses." }
+]).some(t => /^adaptive scene reconstruction$/i.test(t.source)), "comma-rich prose still supplies terms");
+assert.equal(T.candidates([0, 1].map(page_idx => ({
+  page_idx, type: "text", text: "Doe, J., Chen, M. Uniform citation titles. Publisher, 2024."
+}))).length, 0, "references are excluded even without a bibliography heading");
 assert.deepEqual(
   asJSON(
     T.shortLabels([

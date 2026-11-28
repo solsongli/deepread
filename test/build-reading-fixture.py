@@ -4,7 +4,7 @@ from pathlib import Path
 out = Path(__file__).parent / "fixtures" / "reading" / "typography.pdf"
 out.parent.mkdir(parents=True, exist_ok=True)
 stream = b"""BT /F2 16 Tf 50 740 Td (Reading layout regression) Tj ET
-BT /F2 10 Tf 50 690 Td (Important result.) Tj /F1 10 Tf ( Ordinary explanation.) Tj ET
+BT /F2 10 Tf 50 690 Td 0.75 0 0.25 rg (Important result.) Tj 0 0 0 rg /F1 10 Tf ( Ordinary explanation.) Tj ET
 BT /F1 10 Tf 50 676 Td (The body text should stay separate from the chart.) Tj ET
 0.9 0.93 0.96 rg 50 350 230 230 re f
 0 0 0 rg BT /F1 10 Tf 70 460 Td (AXIS LABEL) Tj ET

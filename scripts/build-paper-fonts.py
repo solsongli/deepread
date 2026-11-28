@@ -61,7 +61,7 @@ def build(directory):
     OUTPUT.mkdir(parents=True, exist_ok=True)
     ideographs = chinese_characters()
     for source, family, name, chars, normal, bold in [
-        ("NotoSerifSC.ttf", "DeepRead Song", "song", ideographs, 450, 680),
+        ("NotoSerifSC.ttf", "DeepRead Song", "song", ideographs, 500, 750),
         ("NotoSansSC.ttf", "DeepRead Hei", "hei", ideographs | set(range(0x20, 0x180)), 400, 700),
     ]:
         font = read_font(directory, source)
@@ -71,6 +71,10 @@ def build(directory):
         subsetter.populate(unicodes=chars)
         subsetter.subset(font)
         write_face(font, family, "Regular", normal, name + "-text.woff2")
+        if name == "song":
+            write_face(font, family, "Caption", 550, "song-caption.woff2")
+        if name == "hei":
+            write_face(font, family, "Medium", 500, "hei-medium.woff2")
         write_face(font, family, "Bold", bold, name + "-bold.woff2")
     for source, regular, bold in [("STIXTwoText.ttf", "Regular", "Bold"),
                                    ("STIXTwoText-Italic.ttf", "Italic", "Bold Italic")]:

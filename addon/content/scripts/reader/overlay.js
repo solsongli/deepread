@@ -129,9 +129,9 @@ ${STRUCTURE_CSS}
   }
 
   /** One line/paragraph of LLM text (may hold **bold** and $math$) as an inline fragment for `doc`. */
-  function inlineMarkdown(doc, text) {
+  function inlineMarkdown(doc, text, options) {
     try {
-      let frag = DeepRead.Markdown.render(doc, text);
+      let frag = DeepRead.Markdown.render(doc, text, options);
       const only = frag.childNodes.length === 1 ? frag.firstChild : null;
       if (only?.localName === "p") {
         const inner = doc.createDocumentFragment();
@@ -621,14 +621,14 @@ ${STRUCTURE_CSS}
               node.style.setProperty("--dr-hang", `${unit.hangingEm || 1.2}em`);
               node.append(el(this.pdfDoc, "span", "dr-list-marker", unit.marker));
               const body = el(this.pdfDoc, "div", "dr-list-body");
-              body.append(inlineMarkdown(this.pdfDoc, unit.translation));
+              body.append(inlineMarkdown(this.pdfDoc, unit.translation, { pdfEmphasis: true }));
               node.append(body);
             }
-            else { node.style.textIndent = `${unit.indentEm || 0}em`; node.append(inlineMarkdown(this.pdfDoc, unit.translation)); }
+            else { node.style.textIndent = `${unit.indentEm || 0}em`; node.append(inlineMarkdown(this.pdfDoc, unit.translation, { pdfEmphasis: true })); }
             frag.append(node);
           }
         }
-        else frag = inlineMarkdown(this.pdfDoc, text);
+        else frag = inlineMarkdown(this.pdfDoc, text, { pdfEmphasis: true });
         // CommonMark rejects closing emphasis after CJK punctuation immediately
         // followed by CJK text (e.g. **图 1：**结果). Repair literal markers in
         // sanitized text nodes only; never reinterpret HTML or formula/code nodes.
@@ -655,6 +655,83 @@ ${STRUCTURE_CSS}
         this._trContent.set(paragraph, { text, layout, language, frag });
       }
       return frag.cloneNode(true);
+    }
+
+    _hoverFace(paragraph) {
+      this._hoverFaces ??= new WeakMap();
+      const previous = this._hoverFaces.get(paragraph);
+      if (previous) return previous.promise;
+      const state = {face:null};
+      this._hoverFaces.set(paragraph,state);
+      state.promise = (async () => {
+        // One source page cannot describe both halves of a joined translation.
+        if (this.session.continuationFor?.(paragraph)) return;
+        const index = paragraph.pageIndex, doc = this.pdfDoc;
+        if (this._hoverGlyphs?.doc !== doc || this._hoverGlyphs.index !== index) {
+          this._hoverGlyphs = {doc,index,data:this.session.pdfAdapter().pdfDocument.getPageData({pageIndex:index})};
+        }
+        const {chars} = await this._hoverGlyphs.data;
+        const rects = paragraph.rects?.length ? paragraph.rects : [paragraph.bbox];
+        const region = chars.filter(c => c.rect && rects.some(r => r &&
+          inRect(r,(c.rect[0]+c.rect[2])/2,(c.rect[1]+c.rect[3])/2,.6)));
+        const source = paragraph.paragraphText || "";
+        const norm = DeepRead.ParallelInline.geometryText;
+        const run = norm(region.map(c=>c.u ?? c.c).join("")) === norm(source)
+          ? region : DeepRead.Typography.match(region,source);
+        if (!run?.length) return;
+        const glyphs = run.map((c,offset)=>({...c,offset}));
+        const formatted = DeepRead.Pipeline.prototype._extractFormattedText(glyphs);
+        const letters = glyphs.filter(c=>/[\p{L}\p{N}]/u.test(c.u ?? c.c ?? ""));
+        if (!letters.length) return;
+        const sample = group => {
+          const step = Math.max(1,Math.ceil(group.length/24));
+          return group.filter((c,i)=>c.rect && i % step === 0).map(c=>c.rect);
+        };
+        const emphasis = [];
+        DeepRead.Typography.styledSentence(formatted,glyphs,(face,text,owned) => {
+          emphasis.push({face,text,samples:sample([...new Set(owned)].filter(c=>c && (c.u ?? c.c ?? "").trim()))});
+        });
+        const citations = new Map();
+        for (const match of formatted.text.matchAll(/\[\s*\d+(?:\s*[,–—-]\s*\d+)*\s*\]/gu)) {
+          const owned = formatted.charMapping.slice(match.index,match.index+match[0].length)
+            .map(i=>glyphs[i]).filter(c=>c && /\d/u.test(c.u ?? c.c ?? ""));
+          citations.set(match[0].replace(/\s/gu,""), sample(owned));
+        }
+        const ordinary = letters.filter(c=>!DeepRead.Typography.bold(c) && !DeepRead.Typography.italic(c));
+        state.face = {emphasis,citations,samples:sample(ordinary.length ? ordinary : letters),
+          rect:unionRect(run.map(c=>c.rect).filter(Boolean)),
+          allBold:letters.every(DeepRead.Typography.bold),allItalic:letters.every(DeepRead.Typography.italic),
+          boldCaptionLabel:DeepRead.Typography.bold(letters[0])};
+      })().catch(error => {
+        if (this._hoverGlyphs?.index === paragraph.pageIndex) this._hoverGlyphs=null;
+        this._hoverFaces.delete(paragraph);
+        DeepRead.log("Hover source typography unavailable",String(error));
+      });
+      return state.promise;
+    }
+
+    _paintHoverFace(box, geom, face) {
+      if (face.allBold) {
+        box.style.fontWeight = "700";
+        for (const mark of box.querySelectorAll("strong,b")) mark.style.fontWeight = "inherit";
+      }
+      if (face.allItalic) box.style.fontStyle = "italic";
+      const canvas = geom.div.querySelector(".canvasWrapper canvas");
+      if (!canvas?.width || !canvas.height) return;
+      const ink = DeepRead.ParallelInk, r = ink.project(face.rect,geom.t);
+      const sx = canvas.width/geom.w, sy = canvas.height/geom.h;
+      const x=Math.max(0,Math.floor(r.left*sx)-2), y=Math.max(0,Math.floor(r.top*sy)-2);
+      const w=Math.min(canvas.width,Math.ceil((r.left+r.width)*sx)+2)-x;
+      const h=Math.min(canvas.height,Math.ceil((r.top+r.height)*sy)+2)-y;
+      if (w<=0 || h<=0) return;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      let pixels;
+      try { pixels = context.getImageData(x,y,w,h); }
+      catch { return; } // The PDF view may discard its canvas while zooming.
+      const [a,b,c,d,e,f] = geom.t;
+      const page = {width:w,height:h,transform:[a*sx,b*sy,c*sx,d*sy,e*sx-x,f*sy-y]};
+      ink.paintHoverColors(box,face,page,pixels);
     }
 
     /**
@@ -724,7 +801,10 @@ ${STRUCTURE_CSS}
       const scale=Math.hypot(geom.t[0],geom.t[1])*(geom.div.clientWidth || geom.w)/geom.w/(geom.userUnit || 1);
       DeepRead.PaperStyles.apply(box,type,scale);
       DeepRead.ParallelTypeset.fitMath(box,box,type,scale);
-      if (type.role.endsWith("Caption")) DeepRead.PaperStyles.captionLabel(box);
+      const face = this._hoverFaces?.get(paragraph)?.face;
+      if (face) this._paintHoverFace(box,geom,face);
+      if (type.role.endsWith("Caption") && (face ? face.boldCaptionLabel : !paragraph.sourceStyledText))
+        DeepRead.PaperStyles.captionLabel(box);
       const target=Math.min(visibleHeight,Math.max(type.step*scale+6,sources.length>1?Math.min(rawHeight,visibleHeight*.5):rawHeight));
       const units=box.querySelectorAll(".dr-layout-unit");
       if (units.length) {box.style.textIndent="0";box.dataset.layoutUnits=String(units.length);}
@@ -868,7 +948,7 @@ ${STRUCTURE_CSS}
         const fonts = Promise.all([DeepRead.PaperType.ready(doc, this.session.data?.language || DeepRead.prefs.language()),
           DeepRead.PaperStyles.resolve(this.session)]);
         this._timers.translation = setTimeout(async () => {
-          await fonts;
+          await Promise.all([fonts,this._hoverFace(paragraph)]);
           if (!this.attached || this.pdfDoc !== doc || this.hoverPara !== paragraph || !this._translationAllowed(paragraph)) return;
           this.trPara = paragraph;
           this._drawHover(paragraph);

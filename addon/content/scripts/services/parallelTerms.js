@@ -55,6 +55,19 @@
     return output;
   }
 
+  function looksLikeReference(text) {
+    if (!/\b(?:19|20)\d{2}\b/u.test(text)) return false;
+    let start = 0, authors = 0;
+    // Scan the author delimiters once. A repeated wildcard can exhaust Gecko's
+    // regex stack on long prose containing many commas.
+    for (;;) {
+      const comma = text.indexOf(", ", start);
+      if (comma < 0 || comma - start > 120) return false;
+      start = comma + 2;
+      if (++authors >= 2 && /^[^.]{0,70}\. [A-Z]/u.test(text.slice(start, start + 73))) return true;
+    }
+  }
+
   function candidates(items, labels = []) {
     const phrases = new Map(),
       counts = new Map();
@@ -68,11 +81,7 @@
           (item.text_level > 0 && /^(?:[A-Z]|\d+)[.\s]+[A-Z]/u.test(heading)))
       )
         references = false;
-      if (
-        references ||
-        (/^(?:.{0,120}?, ){2,}[^.]{0,70}\. [A-Z]/u.test(heading) && /\b(?:19|20)\d{2}\b/u.test(heading))
-      )
-        continue;
+      if (references || looksLikeReference(heading)) continue;
       for (const source of sources(item)) {
         let run = [],
           lastEnd = 0;
